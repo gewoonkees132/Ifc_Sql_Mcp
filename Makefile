@@ -7,7 +7,7 @@ UV ?= uv
 -include .env
 export
 
-.PHONY: help install up down reset-db migrate lint fmt typecheck test test-unit check samples
+.PHONY: help install up down reset-db migrate lint fmt typecheck test test-unit check samples fixture
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -49,3 +49,6 @@ check: lint typecheck test ## Everything CI runs
 
 samples: ## Download the pinned, checksum-verified Duplex sample files into data/samples/
 	$(UV) run python scripts/download_samples.py
+
+fixture: ## Regenerate the synthetic test fixture tests/fixtures/revit_quirks.ifc
+	$(UV) run python tests/fixtures/make_revit_quirks.py

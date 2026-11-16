@@ -94,9 +94,9 @@ follow_imports = "skip"
 [tool.pytest]
 minversion = "9.0"
 testpaths = ["tests"]
-# Neither folder is a package; this lets tests `import download_samples` and the shared
-# helpers in tests/support (`raw_builders`, `record_contract`).
-pythonpath = ["scripts", "tests/support"]
+# None of these folders is a package; this lets tests `import download_samples`, the
+# fixture generator (`make_revit_quirks`) and shared helpers (`record_contract`).
+pythonpath = ["scripts", "tests/fixtures", "tests/support"]
 strict = true
 addopts = ["-ra", "-m", "not sample"]
 markers = [
