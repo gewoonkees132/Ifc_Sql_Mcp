@@ -6,7 +6,6 @@ each test) rather than the rolled-back ``conn``.
 
 import dataclasses
 import logging
-import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -15,6 +14,7 @@ from typing import Any
 import make_revit_quirks
 import pytest
 from counts import FIXTURE_ROWS, table_counts, total_rows
+from locks import wait_until_a_session_waits_on_a_lock
 from rows import add_model
 from sqlalchemy import Engine, RowMapping, text
 
@@ -244,24 +244,6 @@ def test_a_file_that_changes_while_it_is_ingested_fails(
 # --------------------------------------------------------------------------- concurrency
 
 
-def _wait_until_a_session_waits_on_a_lock(engine: Engine, timeout_s: float = 30.0) -> None:
-    deadline = time.monotonic() + timeout_s
-    with engine.connect() as connection:
-        while time.monotonic() < deadline:
-            waiting = connection.execute(
-                text(
-                    "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
-                )
-            ).scalar_one()
-            # pg_stat_activity is read once per transaction; end it to see fresh values.
-            connection.rollback()
-            if waiting:
-                return
-            time.sleep(0.02)
-    pytest.fail("the ingest never started waiting for the other transaction")
-
-
 def _race(engine: Engine, sha256: str, *, winner_commits: bool) -> tuple[IngestResult, int]:
     """Run an ingest of the fixture while another transaction holds its model row.
 
@@ -281,7 +263,7 @@ def _race(engine: Engine, sha256: str, *, winner_commits: bool) -> tuple[IngestR
         with ThreadPoolExecutor(max_workers=1) as pool:
             ingest = pool.submit(ingest_file, engine, FIXTURE, "ARC")
             try:
-                _wait_until_a_session_waits_on_a_lock(engine)
+                wait_until_a_session_waits_on_a_lock(engine)
                 if winner_commits:
                     transaction.commit()
             finally:

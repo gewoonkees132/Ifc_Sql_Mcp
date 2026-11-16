@@ -166,3 +166,9 @@ def add_classification(
             object_id=object_id, system=system, code=code, title=title
         )
     )
+
+
+def add_dq_run(conn: Connection, model_id: int) -> int:
+    """Insert a ``running`` data quality run for a model and return its id."""
+    statement = insert(schema.dq_run).values(model_id=model_id).returning(schema.dq_run.c.dq_run_id)
+    return int(conn.execute(statement).scalar_one())

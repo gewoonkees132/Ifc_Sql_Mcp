@@ -71,12 +71,14 @@ def ingest_settings(create_database: CreateDatabase) -> Settings:
 def ingest_engine(ingest_settings: Settings) -> Iterator[Engine]:
     """Engine on the ingest database, emptied after the test.
 
-    These tests commit, so no rollback cleans up after them. Truncating ``model`` and
-    ``ingestion_run`` cascades to every table that references them, and restarting the
-    identities makes run and model ids start at 1 in every test.
+    These tests commit, so no rollback cleans up after them. Truncating ``model``,
+    ``ingestion_run`` and ``dq_rule`` cascades to every table that references them, and
+    restarting the identities makes run and model ids start at 1 in every test.
     """
     engine = make_engine(ingest_settings.database_url)
     yield engine
     with engine.begin() as connection:
-        connection.execute(text("TRUNCATE ifc.model, ifc.ingestion_run RESTART IDENTITY CASCADE"))
+        connection.execute(
+            text("TRUNCATE ifc.model, ifc.ingestion_run, ifc.dq_rule RESTART IDENTITY CASCADE")
+        )
     engine.dispose()
