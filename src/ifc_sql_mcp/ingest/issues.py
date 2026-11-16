@@ -3,8 +3,9 @@
 An IFC export is untrusted input with many small defects. Failing a whole file over one
 negative area would make the pipeline useless, and dropping the value silently would
 hide the defect. So each such value becomes an :class:`Issue` with a stable code, the
-GlobalId of the object it concerns and a readable message. The data quality stage maps
-codes to rules and stores the issues as findings.
+GlobalId of the object it concerns and a readable message. The loader stores them in
+``ifc.ingest_issue`` with the model; the data quality stage maps codes to rules and turns
+them into findings.
 """
 
 from dataclasses import dataclass
