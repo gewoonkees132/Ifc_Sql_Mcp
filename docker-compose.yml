@@ -1,0 +1,26 @@
+# Local PostgreSQL for development and integration tests.
+# Values come from .env when present (see .env.example); the defaults match
+# src/ifc_sql_mcp/config.py so a fresh clone works without any configuration.
+name: ifc-sql-mcp
+
+services:
+  db:
+    # Major version pinned (the migrations target 16); patch releases float for fixes.
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-ifc}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ifc-dev-only}
+      POSTGRES_DB: ${POSTGRES_DB:-ifc}
+    ports:
+      # Bound to loopback only: the dev password is public, so never expose this port.
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+volumes:
+  pgdata:
