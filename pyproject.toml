@@ -7,6 +7,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20,<2",
     "psycopg[binary]>=3.2,<4",
     "sqlalchemy>=2.0,<3",
     "typer>=0.16",
@@ -27,6 +28,12 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.17.5",
 ]
+
+# --------------------------------------------------------------------------- alembic
+# For the plain `alembic` CLI (history, new revisions). `make migrate` / `ifc-sql migrate`
+# build the same configuration in code; the database URL always comes from IFC_SQL_*.
+[tool.alembic]
+script_location = "%(here)s/src/ifc_sql_mcp/db/migrations"
 
 # --------------------------------------------------------------------------- ruff
 [tool.ruff]

@@ -7,6 +7,8 @@ safety settings on top.
 
 from sqlalchemy import Engine, create_engine, make_url
 
+from ifc_sql_mcp.db.schema import READER_ROLE
+
 APPLICATION_NAME = "ifc-sql-mcp"
 
 
@@ -22,6 +24,16 @@ def make_engine(database_url: str) -> Engine:
         pool_pre_ping=True,
         connect_args={"application_name": APPLICATION_NAME},
     )
+
+
+def reader_database_url(database_url: str, reader_password: str) -> str:
+    """Return ``database_url`` with the credentials of the read-only role swapped in.
+
+    Host, port and database stay those of the owner URL, so there is one place to point
+    the project at a database, and one secret per role.
+    """
+    url = make_url(database_url).set(username=READER_ROLE, password=reader_password)
+    return url.render_as_string(hide_password=False)
 
 
 def redact(database_url: str) -> str:
