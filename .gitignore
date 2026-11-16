@@ -1,0 +1,31 @@
+# Python / tooling
+__pycache__/
+*.py[cod]
+.venv/
+build/
+dist/
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Downloaded sample data (CC BY 4.0, fetched by scripts/download_samples.py; not redistributed)
+data/
+*.ifc
+*.part
+# ...except the small synthetic fixture generated for the tests
+!tests/fixtures/*.ifc
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

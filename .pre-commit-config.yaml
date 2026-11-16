@@ -1,0 +1,32 @@
+# Install once with `make install` (runs `pre-commit install`).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: detect-private-key
+      # Keeps sample IFC files (MBs) out of git; the synthetic fixture is far smaller.
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.5  # keep in step with the ruff version in uv.lock
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # mypy runs from the project environment so it sees the same dependencies and config
+  # as `make typecheck`, instead of a separately pinned copy inside pre-commit.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (strict)
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
