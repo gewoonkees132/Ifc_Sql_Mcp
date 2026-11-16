@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from typer.testing import CliRunner
 
@@ -6,6 +8,14 @@ from ifc_sql_mcp.cli import app, resolve_settings
 from ifc_sql_mcp.config import SettingsError
 
 runner = CliRunner()
+
+# Typer forces coloured Rich output when it detects CI (GITHUB_ACTIONS, FORCE_COLOR), so
+# help text can contain ANSI escape codes. Compare against the plain text instead.
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    return _ANSI_ESCAPE.sub("", text)
 
 
 def test_version_flag_prints_version() -> None:
@@ -20,7 +30,7 @@ def test_no_arguments_shows_help() -> None:
 
     # Click-style groups exit with 2 when invoked without a command.
     assert result.exit_code == 2
-    assert "Usage: ifc-sql" in result.output
+    assert "Usage: ifc-sql" in _plain(result.output)
 
 
 def test_resolve_settings_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
