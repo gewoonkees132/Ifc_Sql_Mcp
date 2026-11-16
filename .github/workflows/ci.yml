@@ -36,6 +36,8 @@ jobs:
 
     env:
       IFC_SQL_DATABASE_URL: postgresql+psycopg://ifc:ifc-dev-only@localhost:5432/ifc
+      # Password the migrations give the read-only role in the throwaway test databases.
+      IFC_SQL_READER_PASSWORD: ifc-reader-dev-only
 
     steps:
       # Third-party actions are pinned to full commit SHAs; Dependabot proposes updates.

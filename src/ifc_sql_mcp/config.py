@@ -15,6 +15,9 @@ ENV_PREFIX = "IFC_SQL_"
 # Local development only: the compose service binds to 127.0.0.1 and this password is
 # public in the repository. Override it with IFC_SQL_DATABASE_URL anywhere else.
 DEFAULT_DATABASE_URL = "postgresql+psycopg://ifc:ifc-dev-only@localhost:5432/ifc"
+# Password that migration 0003 gives the read-only ``ifc_reader`` role. Same caveat: it is
+# public, so set IFC_SQL_READER_PASSWORD for any database reachable by anyone but you.
+DEFAULT_READER_PASSWORD = "ifc-reader-dev-only"  # noqa: S105 (public dev default, above)
 DEFAULT_LOG_LEVEL = "INFO"
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
@@ -42,10 +45,13 @@ class Settings:
 
     Attributes:
         database_url: SQLAlchemy URL for the owning role, used by migrations and ingest.
+        reader_password: Password for the read-only ``ifc_reader`` role. Migrations set
+            it; read-only clients connect with it (see ``reader_database_url``).
         log_level: One of ``LOG_LEVELS``.
     """
 
     database_url: str
+    reader_password: str
     log_level: str
 
     @classmethod
@@ -64,9 +70,13 @@ class Settings:
                 "(e.g. postgresql+psycopg://user:password@host:5432/db)"
             )
 
+        reader_password = source.get(f"{ENV_PREFIX}READER_PASSWORD", DEFAULT_READER_PASSWORD)
+        if not reader_password:
+            raise SettingsError(f"{ENV_PREFIX}READER_PASSWORD must not be empty")
+
         try:
             log_level = parse_log_level(source.get(f"{ENV_PREFIX}LOG_LEVEL", DEFAULT_LOG_LEVEL))
         except SettingsError as exc:
             raise SettingsError(f"{ENV_PREFIX}LOG_LEVEL: {exc}") from exc
 
-        return cls(database_url=database_url, log_level=log_level)
+        return cls(database_url=database_url, reader_password=reader_password, log_level=log_level)
