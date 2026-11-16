@@ -1,5 +1,7 @@
 """The four Duplex files, ingested into a throwaway database: every row and the storeys.
 
+The ``duplex`` fixture (``conftest.py``) ingests them once per session.
+
 Deselected by default. Run with::
 
     make samples && uv run pytest -m sample
@@ -10,25 +12,18 @@ issue codes must match ``test_duplex_samples.EXPECTED``, the figures the transfo
 pin for docs/revit-ifc-quirks.md.
 """
 
-from collections.abc import Callable, Iterator
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 import quirks_report as report
 from counts import table_counts
-from download_samples import DEFAULT_DEST, SAMPLES, ensure_sample
+from duplex import DISCIPLINES, sample_path
 from sqlalchemy import Engine, text
 from test_duplex_samples import EXPECTED as TRANSFORM_FIGURES
 
-from ifc_sql_mcp.config import Settings
-from ifc_sql_mcp.db.engine import make_engine
-from ifc_sql_mcp.db.migrate import upgrade
 from ifc_sql_mcp.ingest.pipeline import IngestResult, ingest_file
 
 pytestmark = pytest.mark.sample
-
-DISCIPLINES = {"arc": "ARC", "mep": "MEP", "ele": "ELE", "plu": "PLU"}
 
 # Rows per table: the record counts the transform produces for each file.
 EXPECTED_ROWS = {
@@ -77,23 +72,6 @@ EXPECTED_ROWS = {
         "ingest_issue": 550,
     },
 }
-
-
-def _sample(key: str) -> Path:
-    path, _ = ensure_sample(SAMPLES[key], Path(DEFAULT_DEST))
-    return path
-
-
-@pytest.fixture(scope="module")
-def duplex(
-    create_database: Callable[[str], Settings],
-) -> Iterator[tuple[Engine, dict[str, IngestResult]]]:
-    settings = create_database("test_samples")
-    upgrade(settings)
-    engine = make_engine(settings.database_url)
-    results = {key: ingest_file(engine, _sample(key), DISCIPLINES[key]) for key in report.FILES}
-    yield engine, results
-    engine.dispose()
 
 
 @pytest.mark.parametrize("key", report.FILES)
@@ -155,7 +133,7 @@ def test_ingesting_the_four_files_again_skips_them_all(
 ) -> None:
     engine, results = duplex
 
-    again = {key: ingest_file(engine, _sample(key), DISCIPLINES[key]) for key in report.FILES}
+    again = {key: ingest_file(engine, sample_path(key), DISCIPLINES[key]) for key in report.FILES}
 
     assert {key: (r.status, r.model_id) for key, r in again.items()} == {
         key: ("skipped", r.model_id) for key, r in results.items()
