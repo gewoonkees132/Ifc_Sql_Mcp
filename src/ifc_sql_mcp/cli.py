@@ -5,13 +5,19 @@ so individual commands stay focused on their own job.
 """
 
 import dataclasses
+import logging
 from typing import Annotated
 
 import typer
+from sqlalchemy.exc import OperationalError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.config import LOG_LEVELS, Settings, SettingsError, parse_log_level
+from ifc_sql_mcp.db.engine import redact
+from ifc_sql_mcp.db.migrate import current_revision, upgrade
 from ifc_sql_mcp.logging_config import configure_logging
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(
     name="ifc-sql",
@@ -65,3 +71,25 @@ def main(
 
     configure_logging(settings.log_level)
     ctx.obj = settings
+
+
+@app.command()
+def migrate(
+    ctx: typer.Context,
+    revision: Annotated[
+        str, typer.Option(help="Revision to upgrade to; the default is the latest.")
+    ] = "head",
+) -> None:
+    """Create or upgrade the ifc schema: tables, views and the read-only role."""
+    settings: Settings = ctx.obj
+    database = redact(settings.database_url)
+    logger.info("migrating", extra={"database": database, "target": revision})
+    try:
+        upgrade(settings, revision)
+        reached = current_revision(settings)
+    except OperationalError as exc:
+        # Connection problems are the common failure; say where we tried, without the
+        # password, instead of printing a traceback.
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"database is at revision {reached}")

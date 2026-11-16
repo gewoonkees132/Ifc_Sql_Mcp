@@ -50,3 +50,29 @@ def test_resolve_settings_rejects_bad_flag(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(SettingsError):
         resolve_settings("loud")
+
+
+def test_migrate_reports_an_unreachable_database_without_its_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Port 1 on loopback refuses connections at once; no database is needed.
+    monkeypatch.setenv("IFC_SQL_DATABASE_URL", "postgresql+psycopg://ifc:s3cret@127.0.0.1:1/ifc")
+
+    result = runner.invoke(app, ["migrate"])
+
+    assert result.exit_code == 1
+    assert "cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc" in (
+        _plain(result.output)
+    )
+    assert "s3cret" not in result.output
+
+
+def test_invalid_environment_setting_is_reported_as_a_usage_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IFC_SQL_LOG_LEVEL", "verbose")
+
+    result = runner.invoke(app, ["migrate"])
+
+    assert result.exit_code == 2
+    assert "IFC_SQL_LOG_LEVEL" in _plain(result.output)

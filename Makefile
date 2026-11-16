@@ -7,7 +7,7 @@ UV ?= uv
 -include .env
 export
 
-.PHONY: help install up down reset-db lint fmt typecheck test test-unit check samples
+.PHONY: help install up down reset-db migrate lint fmt typecheck test test-unit check samples
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
@@ -25,6 +25,9 @@ down: ## Stop PostgreSQL, keeping its data volume
 reset-db: ## Stop PostgreSQL and delete its data volume
 	docker compose down --volumes
 
+migrate: ## Create or upgrade the ifc schema in the configured database (needs `make up`)
+	$(UV) run ifc-sql migrate
+
 lint: ## Lint and check formatting (ruff)
 	$(UV) run ruff check .
 	$(UV) run ruff format --check .
@@ -36,7 +39,7 @@ fmt: ## Auto-format and apply safe lint fixes
 typecheck: ## Static type check (mypy --strict on src/ and scripts/)
 	$(UV) run mypy
 
-test: ## Unit + integration tests with coverage (needs `make up`)
+test: ## Unit + integration tests with coverage (needs `make up`; migrates its own throwaway databases)
 	$(UV) run pytest --cov --cov-report=term-missing
 
 test-unit: ## Unit tests only, no database needed
