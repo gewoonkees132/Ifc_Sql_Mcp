@@ -57,6 +57,7 @@ def test_every_foreign_key_is_backed_by_an_index(engine: Engine) -> None:
 
 def test_views_are_the_documented_set(engine: Engine) -> None:
     assert sorted(inspect(engine).get_view_names(schema=SCHEMA)) == [
+        "v_dq_finding",
         "v_element",
         "v_model_summary",
         "v_quantity",

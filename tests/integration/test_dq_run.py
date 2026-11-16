@@ -194,7 +194,7 @@ def test_an_unknown_model_is_refused_before_anything_is_written(
     assert _runs(ingest_engine) == []
 
 
-# --------------------------------------------------------------------------- summary
+# --------------------------------------------------------------------------- views
 
 
 def test_the_model_summary_counts_the_latest_successful_run(
@@ -221,6 +221,38 @@ def test_the_model_summary_counts_the_latest_successful_run(
     with pytest.raises(DqRunError):
         check_model(ingest_engine, model_id, rules)
     assert _summary(ingest_engine, model_id) == checked
+
+
+def test_v_dq_finding_lists_the_latest_run_with_rule_and_object(
+    ingest_engine: Engine, model_id: int
+) -> None:
+    check_model(ingest_engine, model_id, RULES)
+    latest = check_model(ingest_engine, model_id, RULES)
+
+    with ingest_engine.connect() as connection:
+        rows = list(
+            connection.execute(
+                text("SELECT * FROM ifc.v_dq_finding WHERE model_id = :m ORDER BY rule_id"),
+                {"m": model_id},
+            ).mappings()
+        )
+        summary = _summary(ingest_engine, model_id)
+
+    assert {row["dq_run_id"] for row in rows} == {latest.run_id}
+    assert len(rows) == 16
+    severities = Counter(row["severity"] for row in rows)
+    assert (severities["error"], severities["warning"], severities["info"]) == (
+        summary["dq_error_count"],
+        summary["dq_warning_count"],
+        summary["dq_info_count"],
+    )
+    slab = next(row for row in rows if row["rule_id"] == "negative_quantity")
+    assert {key: slab[key] for key in ("dimension", "global_id", "ifc_class", "object_name")} == {
+        "dimension": "validity",
+        "global_id": make_revit_quirks.SLAB,
+        "ifc_class": "IfcSlab",
+        "object_name": "Floor:Generic 150mm:200401",
+    }
 
 
 # --------------------------------------------------------------------------- deletes
