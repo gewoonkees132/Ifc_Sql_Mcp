@@ -33,6 +33,7 @@ from sqlalchemy import (
     ForeignKey,
     Identity,
     Index,
+    Integer,
     MetaData,
     Numeric,
     PrimaryKeyConstraint,
@@ -581,6 +582,61 @@ classification = Table(
     _not_blank("code"),
     comment="Classification codes, from IfcClassificationReference or from Revit "
     "parameters such as OmniClass Table 13 Category.",
+)
+
+ingest_issue = Table(
+    "ingest_issue",
+    metadata,
+    Column(
+        "model_id",
+        BigInteger,
+        ForeignKey(model.c.model_id, ondelete="CASCADE"),
+        nullable=False,
+        comment="Model whose ingest reported the issue.",
+    ),
+    Column(
+        "issue_index",
+        Integer,
+        nullable=False,
+        comment="1-based position in the order the pipeline reported its issues. The "
+        "pipeline is deterministic, so the same file always gives the same numbering.",
+    ),
+    Column(
+        "code",
+        Text,
+        nullable=False,
+        comment="Stable issue code (IssueCode in ingest/issues.py), e.g. "
+        "quantity_not_a_measure. The data quality stage maps codes to rules.",
+    ),
+    Column(
+        "object_id",
+        BigInteger,
+        ForeignKey(object_.c.object_id, ondelete="CASCADE"),
+        index=True,
+        comment="Object the issue is about; NULL when it concerns the model as a whole or "
+        "no loaded object has its GlobalId (a malformed one). For a repeated GlobalId it is "
+        "the object that kept it.",
+    ),
+    Column(
+        "global_id",
+        Text,
+        comment="GlobalId of the object as written in the file, kept even when the object "
+        "was not loaded; NULL when the issue concerns the model as a whole.",
+    ),
+    Column(
+        "message",
+        Text,
+        nullable=False,
+        comment="What could not be represented, the offending value, and what was done "
+        "instead (dropped, left NULL, first value kept...).",
+    ),
+    PrimaryKeyConstraint("model_id", "issue_index"),
+    CheckConstraint("issue_index >= 1", name="issue_index_positive"),
+    CheckConstraint("code ~ '^[a-z][a-z0-9_]*$'", name="code_format"),
+    _not_blank("message"),
+    comment="What the ingest pipeline could not represent as written in the file, one row "
+    "per issue. Loaded with the model in one transaction; the raw input for data quality "
+    "findings.",
 )
 
 # --------------------------------------------------------------------------- data quality

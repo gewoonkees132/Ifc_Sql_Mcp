@@ -12,6 +12,7 @@ def test_tables_live_in_the_ifc_schema() -> None:
         "dq_run",
         "element",
         "element_material_layer",
+        "ingest_issue",
         "ingestion_run",
         "material",
         "model",

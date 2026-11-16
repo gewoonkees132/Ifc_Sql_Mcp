@@ -1,6 +1,6 @@
 """Check transform output against every rule the ``ifc`` schema enforces.
 
-The loader (Phase 4) must never hit a constraint, so the records have to satisfy the
+The loader must never hit a constraint, so the records have to satisfy the
 CHECK constraints, keys and foreign keys of ``db/schema.py`` before they reach the
 database. This module restates those rules in Python, using the patterns and value lists
 exported by ``schema.py`` where it has them, and collects every violation so a failing
@@ -21,6 +21,7 @@ _IFC_CLASS = re.compile(schema.IFC_CLASS_PATTERN)
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _IFC_SCHEMA = re.compile(r"^IFC[0-9A-Z_]+$")
 _PREDEFINED = re.compile(r"^[A-Z][A-Z0-9_]*$")
+_ISSUE_CODE = re.compile(r"^[a-z][a-z0-9_]*$")
 _BIGINT_MAX = 2**63 - 1
 _SMALLINT_MAX = 2**15 - 1
 
@@ -158,4 +159,11 @@ def violations(records: ModelRecords) -> list[str]:
             found.append(f"classification {c.global_id}: unknown object")
         if _blank(c.system) or _blank(c.code):
             found.append(f"classification {c.global_id}: blank system or code")
+
+    # ingest_issue: the loader numbers issues itself and resolves global_id when it can.
+    for number, issue in enumerate(records.issues, start=1):
+        if not _ISSUE_CODE.match(issue.code):
+            found.append(f"issue {number}: code {issue.code!r}")
+        if _blank(issue.message):
+            found.append(f"issue {number}: blank message")
     return found
