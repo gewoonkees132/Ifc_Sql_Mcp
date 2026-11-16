@@ -16,6 +16,15 @@ from ifc_sql_mcp import __version__
 from ifc_sql_mcp.config import LOG_LEVELS, Settings, SettingsError, parse_log_level
 from ifc_sql_mcp.db.engine import make_engine, redact
 from ifc_sql_mcp.db.migrate import current_revision, head_revision, upgrade
+from ifc_sql_mcp.dq.catalogue import CATALOGUE, CatalogueError, load_catalogue
+from ifc_sql_mcp.dq.run import (
+    DqResult,
+    DqRunError,
+    UnknownModelError,
+    check_model,
+    loaded_model_ids,
+)
+from ifc_sql_mcp.dq.sync import sync_rules
 from ifc_sql_mcp.ingest.pipeline import IngestError, IngestResult, check_discipline, ingest_file
 from ifc_sql_mcp.logging_config import configure_logging
 
@@ -97,6 +106,19 @@ def migrate(
     typer.echo(f"database is at revision {reached}")
 
 
+def _require_latest_revision(settings: Settings, command: str) -> None:
+    """Exit with 1 unless the database is at the latest migration, which ``command`` needs."""
+    revision = current_revision(settings)
+    if revision != head_revision():
+        found = "not migrated" if revision is None else f"at revision {revision}"
+        typer.echo(
+            f"the database at {redact(settings.database_url)} is {found}, but {command} needs "
+            f"revision {head_revision()}: run `ifc-sql migrate` first",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+
 def _discipline(value: str) -> str:
     try:
         return check_discipline(value)
@@ -150,15 +172,7 @@ def ingest(
     logger.info("ingesting", extra={"file": str(path), "discipline": discipline})
     engine = make_engine(settings.database_url)
     try:
-        revision = current_revision(settings)
-        if revision != head_revision():
-            found = "not migrated" if revision is None else f"at revision {revision}"
-            typer.echo(
-                f"the database at {database} is {found}, but ingest needs revision "
-                f"{head_revision()}: run `ifc-sql migrate` first",
-                err=True,
-            )
-            raise typer.Exit(1)
+        _require_latest_revision(settings, "ingest")
         result = ingest_file(engine, path, discipline)
     except OperationalError as exc:
         typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
@@ -172,3 +186,74 @@ def ingest(
     finally:
         engine.dispose()
     typer.echo(_summary(path.name, result))
+
+
+def _dq_summary(result: DqResult) -> str:
+    """One line for stdout saying what a run found."""
+    counts = result.severity_counts
+    return (
+        f"checked model {result.model_id} ({result.discipline}, {result.file_name}) in dq run "
+        f"{result.run_id}: {counts['error']:,} error, {counts['warning']:,} warning, "
+        f"{counts['info']:,} info findings"
+    )
+
+
+@app.command()
+def dq(
+    ctx: typer.Context,
+    model_ids: Annotated[
+        list[int] | None,
+        typer.Argument(
+            metavar="MODEL_ID",
+            help="Models to check, by model_id; every loaded model when none is given.",
+            show_default=False,
+        ),
+    ] = None,
+) -> None:
+    """Check models against the data quality rules. Every check is a new, recorded run.
+
+    The rule catalogue is synchronised into ifc.dq_rule first. A failed run does not stop
+    the others. Exit codes: 0 when every model was checked (or none is loaded); 1 when a
+    run failed, the rule catalogue is invalid, or the database is unreachable or not
+    migrated; 2 for a usage error (no model with a given id).
+    """
+    settings: Settings = ctx.obj
+    database = redact(settings.database_url)
+    engine = make_engine(settings.database_url)
+    failed = False
+    try:
+        _require_latest_revision(settings, "dq")
+        rules = load_catalogue(CATALOGUE)
+        with engine.begin() as connection:
+            loaded = loaded_model_ids(connection)
+            unknown = [model_id for model_id in model_ids or [] if model_id not in loaded]
+            if unknown:
+                # Raised inside the transaction, so the sync below is not committed either.
+                raise typer.BadParameter(f"no model with id {unknown[0]}", param_hint="MODEL_ID")
+            sync_rules(connection, rules)
+        # Each id once, in the order given.
+        targets = list(dict.fromkeys(model_ids)) if model_ids else loaded
+        if not targets:
+            typer.echo("no models are loaded; nothing to check")
+        for model_id in targets:
+            try:
+                result = check_model(engine, model_id, rules)
+            except DqRunError as exc:
+                typer.echo(f"dq of model {model_id} failed (dq run {exc.run_id}): {exc}", err=True)
+                failed = True
+                continue
+            except UnknownModelError as exc:
+                typer.echo(f"model {model_id} was deleted before it was checked: {exc}", err=True)
+                failed = True
+                continue
+            typer.echo(_dq_summary(result))
+    except OperationalError as exc:
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    except CatalogueError as exc:
+        typer.echo(f"invalid rule catalogue: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
+    if failed:
+        raise typer.Exit(1)

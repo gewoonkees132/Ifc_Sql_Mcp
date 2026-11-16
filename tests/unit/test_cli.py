@@ -119,3 +119,27 @@ def test_ingest_reports_an_unreachable_database_without_its_password(
         _plain(result.output)
     )
     assert "s3cret" not in result.output
+
+
+# --------------------------------------------------------------------------- dq
+
+
+def test_dq_reports_an_unreachable_database_without_its_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IFC_SQL_DATABASE_URL", "postgresql+psycopg://ifc:s3cret@127.0.0.1:1/ifc")
+
+    result = runner.invoke(app, ["dq"])
+
+    assert result.exit_code == 1
+    assert "cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc" in (
+        _plain(result.output)
+    )
+    assert "s3cret" not in result.output
+
+
+def test_dq_refuses_a_model_id_that_is_not_a_number() -> None:
+    result = runner.invoke(app, ["dq", "ARC"])
+
+    assert result.exit_code == 2
+    assert "Invalid value for 'MODEL_ID'" in _plain(result.output)
