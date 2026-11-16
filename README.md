@@ -15,6 +15,7 @@ Requires [uv](https://docs.astral.sh/uv/) and Docker.
 
 ```bash
 make up        # start PostgreSQL 16 (docker compose) and wait until it is healthy
+make migrate   # create the ifc schema: tables, views and the read-only role
 make test      # unit + integration tests with coverage (needs `make up`)
 make lint      # ruff lint + format check
 make help      # every target
@@ -25,6 +26,9 @@ Download the pinned, checksum-verified sample models (not stored in this repo):
 ```bash
 make samples   # or: uv run python scripts/download_samples.py arc
 ```
+
+The schema is described in [docs/data-model.md](docs/data-model.md); design decisions are
+recorded in [docs/adr/](docs/adr/).
 
 ## Licences
 
