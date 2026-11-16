@@ -43,7 +43,8 @@ constraint in `db/schema.py` (`tests/support/record_contract.py` restates them a
 tests apply it to the fixture and to all four files). Anything that cannot be
 represented is dropped or left NULL, never guessed, and reported as an `Issue` with a
 stable code. The loader stores the issues in `ifc.ingest_issue` with the model (ADR 4),
-and the data quality stage will turn them into findings. On the four files:
+and `ifc-sql dq` turns them into findings ([data-quality.md](data-quality.md)). On the
+four files:
 
 | Issue | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
@@ -248,9 +249,11 @@ The 225 PLU issues are one parameter: the two `Mechanical` sets disagree on
 
 Revit 2011 fills many unset parameters with their own name; Revit 2013 writes `N/A`.
 
-**Handling:** kept verbatim, with their IFC type, so the data quality rules can find
-them with plain SQL (`WHERE value_text = prop_name`). A loader that turned them into
-NULL would hide the defect it is supposed to report.
+**Handling:** kept verbatim, with their IFC type, so the data quality rules find them
+with plain SQL (`WHERE value_text = prop_name`): `value_is_property_name`,
+`value_is_not_applicable` and `value_is_empty` in [data-quality.md](data-quality.md),
+which count exactly the figures above. A loader that turned them into NULL would hide
+the defect it is supposed to report.
 
 ## 9. Property values are shared between elements
 

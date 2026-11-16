@@ -1,6 +1,6 @@
 # Data model
 
-Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 6 views and a read-only
+Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 7 views and a read-only
 role. It is created by Alembic migrations:
 
 ```bash
@@ -21,8 +21,9 @@ Two decisions shape most of the model. [ADR 1](adr/0001-postgresql.md) covers wh
 PostgreSQL, and [ADR 2](adr/0002-properties-eav-vs-jsonb.md) covers how properties are
 stored and why everything hangs off one `object` table.
 [ADR 3](adr/0003-quantity-sources-and-precedence.md) covers where quantities come from,
-and [ADR 4](adr/0004-idempotent-ingest.md) how files are loaded
-([Loading](#loading) below).
+[ADR 4](adr/0004-idempotent-ingest.md) how files are loaded ([Loading](#loading) below),
+and [ADR 5](adr/0005-data-quality-rules.md) how models are checked against the data
+quality rules, which [data-quality.md](data-quality.md) describes with their findings.
 
 ## Entity-relationship diagram
 
@@ -152,6 +153,7 @@ erDiagram
         text description
         text severity
         text dimension
+        timestamptz retired_at "removed from the catalogue, kept for its findings"
     }
     dq_run {
         bigint dq_run_id PK
@@ -186,7 +188,7 @@ erDiagram
 | `element_material_layer` | one layer (or list entry) per element | Ordered by `layer_index`. A single `IfcMaterial` is one row without thickness. |
 | `classification` | one code per object and system | From `IfcClassificationReference` or from Revit parameters such as OmniClass. |
 | `ingest_issue` | one issue the transform reported | What could not be stored as written, and what was done instead. Written with the model, deleted with it; the input for data-quality findings ([ADR 4](adr/0004-idempotent-ingest.md)). `object_id` is NULL when the object was never loaded, and `global_id` keeps what the file said. |
-| `dq_rule`, `dq_run`, `dq_result` | rule catalogue, one evaluation, one finding | Results are kept per run so quality can be compared over time. `dq_result.severity` records the severity at run time. |
+| `dq_rule`, `dq_run`, `dq_result` | rule catalogue, one evaluation, one finding | `dq_rule` is synchronised from `rules/dq_rules.yaml` by every `ifc-sql dq`; a removed rule that findings refer to stays, with `retired_at` set. Results are kept per run so quality can be compared over time. `dq_result.severity` records the severity at run time ([data-quality.md](data-quality.md)). |
 
 ### How the Revit quirks map onto the schema
 
@@ -276,6 +278,7 @@ column's), which wrongly said the type may contain colons.
 | `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height and the OmniClass Table 13 code and title. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |
+| `v_dq_finding` | finding of each model's latest successful data-quality run | The rule's dimension and the object's GlobalId, class and name next to each finding, for the run `v_model_summary` counts ([data-quality.md](data-quality.md#reading-the-findings)). |
 | `v_storey_alignment` | storey and model, for models that share a project name | The storey matched across disciplines on a normalised name, each model's elevation, how many of the project's models have the storey, and the spread of their elevations ([below](#storeys-across-disciplines)). |
 
 `tests/integration/test_views.py` builds a small building that reproduces these cases
@@ -370,7 +373,7 @@ come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):
 | Unreadable file | `failed` | 1 | `ingest of corrupt.ifc failed (run 9): ExtractError: corrupt.ifc: not a readable IFC file (Unable to parse IFC SPF header)` |
 | Truncated file | `failed` | 1 | `ingest of truncated.ifc failed (run 10): ExtractError: truncated.ifc: the file ends before END-ISO-10303-21; (truncated)` |
 | Database unreachable | none | 1 | `cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc: connection failed: …` (the password is masked) |
-| Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but ingest needs revision 0006: run `ifc-sql migrate` first`` |
+| Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but ingest needs revision 0008: run `ifc-sql migrate` first`` |
 | No such file; missing or invalid `--discipline` | none | 2 | Usage error, e.g. `Invalid value for '--discipline': discipline must be 2 to 8 capital letters, e.g. ARC; got 'arc'` |
 
 The outputs are from runs of the command in this container, except the concurrent one,
@@ -485,7 +488,8 @@ GROUP BY m.discipline, i.code ORDER BY m.discipline, i.code;
  PLU        | quantity_not_a_measure              |     61
 ```
 
-These are the counts in [revit-ifc-quirks.md](revit-ifc-quirks.md), now stored. Each
+These are the counts in [revit-ifc-quirks.md](revit-ifc-quirks.md), now stored, and
+`ifc-sql dq` turns each into a finding ([data-quality.md](data-quality.md)). Each
 row names its object and says what happened, for example
 `PSet_Revit_Dimensions.Length (IfcReal) is not a measure in m; no length_m` for the MEP
 fitting `M_Transition - Generic:Transition - Generic:Transition - Generic:550098`.
@@ -555,7 +559,7 @@ throwaway test databases share one server, and therefore one `ifc_reader`. So:
   to hash the password.
 
 **Writing a new migration.** Change `schema.py`, then run
-`uv run alembic revision --autogenerate --rev-id 0007 -m "…"` against a migrated
+`uv run alembic revision --autogenerate --rev-id 0009 -m "…"` against a migrated
 database. Review the result, then run `make check`.
 
 These tests keep the migrations honest:
