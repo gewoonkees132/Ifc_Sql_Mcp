@@ -72,6 +72,11 @@ _QUANTITY_VALUE_INDEX = 3
 # Attributes every property set definition has; any other non-empty one is data.
 _PROPERTY_SET_HEADER = frozenset({"type", "GlobalId", "OwnerHistory", "Name", "Description"})
 
+# An ISO 10303-21 (STEP) file opens and closes with these keywords.
+_STEP_START = b"ISO-10303-21;"
+_STEP_END = b"END-ISO-10303-21;"
+_ENDS_BYTES = 256
+
 
 class ExtractError(Exception):
     """The file cannot be read as an IFC model at all."""
@@ -91,15 +96,35 @@ def read_model(path: Path) -> RawModel:
 
     Raises:
         FileNotFoundError: if there is no such file.
-        ExtractError: if IfcOpenShell cannot parse it, or it has no IfcProject.
+        ExtractError: if the file is empty or truncated, IfcOpenShell cannot parse it, or
+            it has no IfcProject.
     """
     size_bytes = path.stat().st_size
     sha256 = sha256_file(path)
+    _check_complete(path, size_bytes)
     try:
         model = ifcopenshell.open(str(path))
     except ifcopenshell.Error as exc:
         raise ExtractError(f"{path.name}: not a readable IFC file ({exc})") from exc
     return _Extractor(model, path.name, sha256, size_bytes).run()
+
+
+def _check_complete(path: Path, size_bytes: int) -> None:
+    """Refuse an empty file, or a STEP file that stops before its closing keyword.
+
+    IfcOpenShell reads as many entities as it can and does not complain when a file
+    stops halfway, so a cut-off copy would load as a smaller model that looks valid. A
+    STEP file starts with ``ISO-10303-21;`` and ends with ``END-ISO-10303-21;``. A file
+    that does not start that way is left to IfcOpenShell to accept or reject.
+    """
+    if size_bytes == 0:
+        raise ExtractError(f"{path.name}: the file is empty")
+    with path.open("rb") as handle:
+        start = handle.read(_ENDS_BYTES).lstrip()
+        handle.seek(max(0, size_bytes - _ENDS_BYTES))
+        end = handle.read().rstrip()
+    if start.startswith(_STEP_START) and not end.endswith(_STEP_END):
+        raise ExtractError(f"{path.name}: the file ends before END-ISO-10303-21; (truncated)")
 
 
 def _text(value: object) -> str | None:

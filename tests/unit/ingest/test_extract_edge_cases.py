@@ -81,6 +81,33 @@ def test_a_file_that_is_not_ifc_raises_extract_error(tmp_path: Path) -> None:
         read_model(path)
 
 
+def test_an_empty_file_raises_extract_error(tmp_path: Path) -> None:
+    path = tmp_path / "empty.ifc"
+    path.write_bytes(b"")
+
+    with pytest.raises(ExtractError, match="empty"):
+        read_model(path)
+
+
+def test_a_truncated_file_raises_extract_error_instead_of_loading_part_of_it(
+    tmp_path: Path,
+) -> None:
+    """IfcOpenShell itself reads the first half of a file without complaint."""
+    data = Tiny().model.to_string().encode()
+    path = tmp_path / "truncated.ifc"
+    path.write_bytes(data[: len(data) // 2])
+
+    with pytest.raises(ExtractError, match="truncated"):
+        read_model(path)
+
+
+def test_whitespace_after_the_closing_keyword_is_accepted(tmp_path: Path) -> None:
+    path = tmp_path / "trailing.ifc"
+    path.write_bytes(Tiny().model.to_string().encode() + b"\r\n\r\n")
+
+    assert read_model(path).project.name == "P"
+
+
 def test_a_file_without_a_project_raises_extract_error(tmp_path: Path) -> None:
     model = ifcopenshell.file(schema="IFC4")
     model.create_entity("IfcWall", GlobalId=ifcopenshell.guid.new())
