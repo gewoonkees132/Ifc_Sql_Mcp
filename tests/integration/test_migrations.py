@@ -62,7 +62,7 @@ def test_migration_history_is_one_linear_chain() -> None:
     script = ScriptDirectory(str(MIGRATIONS_DIR))
 
     assert script.get_heads() == [head_revision()]
-    assert _revisions_oldest_first() == ["0001", "0002", "0003"]
+    assert _revisions_oldest_first() == ["0001", "0002", "0003", "0004"]
 
 
 def test_test_database_is_at_head(test_settings: Settings) -> None:

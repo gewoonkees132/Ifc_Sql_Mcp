@@ -378,7 +378,9 @@ element = Table(
     Column(
         "revit_type",
         Text,
-        comment="Type part of a Revit name. It may itself contain ':' characters.",
+        comment="Type part of a Revit name: its second segment, so never containing ':'. In "
+        "Family:Type:Label:ElementId the third segment is an instance label, not part of "
+        "the type.",
     ),
     Column(
         "revit_element_id",

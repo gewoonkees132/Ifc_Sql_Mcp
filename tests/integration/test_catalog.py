@@ -63,3 +63,27 @@ def test_views_are_the_documented_set(engine: Engine) -> None:
         "v_space_schedule",
         "v_takeoff",
     ]
+
+
+def test_revit_type_comments_say_the_type_has_no_colons(engine: Engine) -> None:
+    """Migration 0004 corrected both comments; Phase 3 showed the type is one segment."""
+    with engine.connect() as connection:
+        comments = (
+            connection.execute(
+                text(
+                    """
+                SELECT col_description(CAST(relation AS regclass), attnum)
+                FROM (VALUES ('ifc.element'), ('ifc.v_element')) AS r (relation)
+                JOIN pg_attribute
+                    ON attrelid = CAST(relation AS regclass) AND attname = 'revit_type'
+                ORDER BY relation
+                """
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    table_comment, view_comment = comments
+    assert "never containing ':'" in table_comment
+    assert "Never contains a colon" in view_comment
