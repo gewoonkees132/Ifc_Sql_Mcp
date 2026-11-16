@@ -75,6 +75,7 @@ DISCIPLINE_PATTERN = r"^[A-Z]{2,8}$"
 QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m")
 QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "geometry")
 SEVERITIES = ("error", "warning", "info")
+DIMENSIONS = ("completeness", "validity", "consistency", "uniqueness")
 OBJECT_KINDS = ("spatial_element", "element")
 
 
@@ -660,14 +661,20 @@ dq_rule = Table(
         nullable=False,
         comment="Data quality dimension: completeness | validity | consistency | uniqueness.",
     ),
+    Column(
+        "retired_at",
+        DateTime(timezone=True),
+        comment="When the rule was removed from the catalogue; NULL while it is in it and "
+        "every run evaluates it. A retired rule is kept only while findings of earlier runs "
+        "refer to it.",
+    ),
     CheckConstraint("rule_id ~ '^[a-z][a-z0-9_]*$'", name="rule_id_format"),
     _not_blank("description"),
     CheckConstraint(_in("severity", SEVERITIES), name="severity_valid"),
-    CheckConstraint(
-        _in("dimension", ("completeness", "validity", "consistency", "uniqueness")),
-        name="dimension_valid",
-    ),
-    comment="Catalogue of data quality rules, synchronised from rules/dq_rules.yaml.",
+    CheckConstraint(_in("dimension", DIMENSIONS), name="dimension_valid"),
+    comment="Catalogue of data quality rules, synchronised from the package file "
+    "rules/dq_rules.yaml at the start of every `ifc-sql dq`. Rules removed from the file "
+    "are kept, with retired_at set, while findings refer to them.",
 )
 
 dq_run = Table(
