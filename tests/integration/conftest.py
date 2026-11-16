@@ -9,7 +9,7 @@ migrate step, and no test can depend on (or damage) data a developer has loaded.
 from collections.abc import Callable, Iterator
 
 import pytest
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, text
 
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.engine import make_engine, reader_database_url
@@ -56,4 +56,27 @@ def reader_engine(test_settings: Settings) -> Iterator[Engine]:
     url = reader_database_url(test_settings.database_url, test_settings.reader_password)
     engine = make_engine(url)
     yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def ingest_settings(create_database: CreateDatabase) -> Settings:
+    """A second migrated database, for tests that commit (the pipeline and the CLI)."""
+    settings = create_database("test_ingest")
+    upgrade(settings)
+    return settings
+
+
+@pytest.fixture
+def ingest_engine(ingest_settings: Settings) -> Iterator[Engine]:
+    """Engine on the ingest database, emptied after the test.
+
+    These tests commit, so no rollback cleans up after them. Truncating ``model`` and
+    ``ingestion_run`` cascades to every table that references them, and restarting the
+    identities makes run and model ids start at 1 in every test.
+    """
+    engine = make_engine(ingest_settings.database_url)
+    yield engine
+    with engine.begin() as connection:
+        connection.execute(text("TRUNCATE ifc.model, ifc.ingestion_run RESTART IDENTITY CASCADE"))
     engine.dispose()

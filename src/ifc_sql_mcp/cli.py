@@ -6,6 +6,7 @@ so individual commands stay focused on their own job.
 
 import dataclasses
 import logging
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -13,8 +14,9 @@ from sqlalchemy.exc import OperationalError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.config import LOG_LEVELS, Settings, SettingsError, parse_log_level
-from ifc_sql_mcp.db.engine import redact
-from ifc_sql_mcp.db.migrate import current_revision, upgrade
+from ifc_sql_mcp.db.engine import make_engine, redact
+from ifc_sql_mcp.db.migrate import current_revision, head_revision, upgrade
+from ifc_sql_mcp.ingest.pipeline import IngestError, IngestResult, check_discipline, ingest_file
 from ifc_sql_mcp.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -93,3 +95,80 @@ def migrate(
         typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
         raise typer.Exit(1) from exc
     typer.echo(f"database is at revision {reached}")
+
+
+def _discipline(value: str) -> str:
+    try:
+        return check_discipline(value)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
+def _summary(file_name: str, result: IngestResult) -> str:
+    """One line for stdout saying what the run did."""
+    model = f"model {result.model_id} ({result.discipline})"
+    if result.status == "succeeded":
+        counts = result.row_counts
+        return (
+            f"loaded {file_name} as {model}: {counts['object']:,} objects, "
+            f"{counts['property']:,} property values, {counts['ingest_issue']:,} issues "
+            f"(run {result.run_id})"
+        )
+    skipped = f"run {result.run_id}, skipped"
+    if result.concurrent:
+        return (
+            f"{file_name} was loaded as {model} by another ingest running at the same time; "
+            f"nothing written ({skipped})"
+        )
+    return f"{file_name} is already loaded as {model}; nothing written ({skipped})"
+
+
+@app.command()
+def ingest(
+    ctx: typer.Context,
+    path: Annotated[
+        Path,
+        typer.Argument(exists=True, dir_okay=False, readable=True, help="The IFC file to load."),
+    ],
+    discipline: Annotated[
+        str,
+        typer.Option(
+            "--discipline",
+            callback=_discipline,
+            help="Discipline of the model: 2 to 8 capital letters, e.g. ARC, MEP, ELE, PLU.",
+        ),
+    ],
+) -> None:
+    """Load one IFC file. A file whose exact bytes are already loaded is skipped.
+
+    Exit codes: 0 when the file was loaded or already was; 1 when the ingest failed
+    (unreadable file, database unreachable or not migrated, load error); 2 for a usage
+    error (no such file, invalid discipline).
+    """
+    settings: Settings = ctx.obj
+    database = redact(settings.database_url)
+    logger.info("ingesting", extra={"file": str(path), "discipline": discipline})
+    engine = make_engine(settings.database_url)
+    try:
+        revision = current_revision(settings)
+        if revision != head_revision():
+            found = "not migrated" if revision is None else f"at revision {revision}"
+            typer.echo(
+                f"the database at {database} is {found}, but ingest needs revision "
+                f"{head_revision()}: run `ifc-sql migrate` first",
+                err=True,
+            )
+            raise typer.Exit(1)
+        result = ingest_file(engine, path, discipline)
+    except OperationalError as exc:
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    except IngestError as exc:
+        typer.echo(f"ingest of {path.name} failed (run {exc.run_id}): {exc}", err=True)
+        raise typer.Exit(1) from exc
+    except OSError as exc:
+        typer.echo(f"cannot read {path}: {exc.strerror or exc}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
+    typer.echo(_summary(path.name, result))

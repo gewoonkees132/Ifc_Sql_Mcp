@@ -1,5 +1,7 @@
 import re
+from pathlib import Path
 
+import make_revit_quirks
 import pytest
 from typer.testing import CliRunner
 
@@ -76,3 +78,44 @@ def test_invalid_environment_setting_is_reported_as_a_usage_error(
 
     assert result.exit_code == 2
     assert "IFC_SQL_LOG_LEVEL" in _plain(result.output)
+
+
+# --------------------------------------------------------------------------- ingest
+
+FIXTURE = str(make_revit_quirks.OUTPUT)
+
+
+@pytest.mark.parametrize("discipline", ["arc", "A", "ARCHITECT", "AR1", ""])
+def test_ingest_refuses_an_invalid_discipline_as_a_usage_error(discipline: str) -> None:
+    result = runner.invoke(app, ["ingest", FIXTURE, "--discipline", discipline])
+
+    assert result.exit_code == 2
+    assert "capital letters" in _plain(result.output)
+
+
+def test_ingest_requires_a_discipline() -> None:
+    result = runner.invoke(app, ["ingest", FIXTURE])
+
+    assert result.exit_code == 2
+    assert "--discipline" in _plain(result.output)
+
+
+def test_ingest_refuses_a_missing_file_as_a_usage_error(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["ingest", str(tmp_path / "nope.ifc"), "--discipline", "ARC"])
+
+    assert result.exit_code == 2
+    assert "does not exist" in _plain(result.output)
+
+
+def test_ingest_reports_an_unreachable_database_without_its_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IFC_SQL_DATABASE_URL", "postgresql+psycopg://ifc:s3cret@127.0.0.1:1/ifc")
+
+    result = runner.invoke(app, ["ingest", FIXTURE, "--discipline", "ARC"])
+
+    assert result.exit_code == 1
+    assert "cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc" in (
+        _plain(result.output)
+    )
+    assert "s3cret" not in result.output

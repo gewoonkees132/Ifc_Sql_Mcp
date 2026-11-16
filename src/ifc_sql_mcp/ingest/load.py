@@ -1,7 +1,8 @@
 """Write one model's records into the database: the load stage.
 
 Everything goes in on the caller's connection, inside the caller's transaction, so a
-model is either loaded completely or not at all.
+model is either loaded completely or not at all. The pipeline (``pipeline.py``) wraps
+:func:`load` in ``engine.begin()``.
 
 Two kinds of insert, chosen by measuring both on the largest table of the samples with
 ``make bench-load``:

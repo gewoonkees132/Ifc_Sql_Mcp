@@ -69,6 +69,8 @@ metadata = MetaData(schema=SCHEMA, naming_convention=NAMING_CONVENTION)
 # is 132 bits, so the first character only carries the top two bits and is 0-3.
 GLOBAL_ID_PATTERN = r"^[0-3][0-9A-Za-z_$]{21}$"
 IFC_CLASS_PATTERN = r"^Ifc[A-Z][A-Za-z0-9]*$"
+# Discipline codes are supplied at ingest (IFC files do not state one): ARC, MEP, ELE...
+DISCIPLINE_PATTERN = r"^[A-Z]{2,8}$"
 
 QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m")
 QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "geometry")
@@ -191,7 +193,7 @@ model = Table(
     CheckConstraint("file_sha256 ~ '^[0-9a-f]{64}$'", name="file_sha256_hex"),
     CheckConstraint("file_size_bytes > 0", name="file_size_bytes_positive"),
     CheckConstraint("ifc_schema ~ '^IFC[0-9A-Z_]+$'", name="ifc_schema_format"),
-    CheckConstraint("discipline ~ '^[A-Z]{2,8}$'", name="discipline_format"),
+    CheckConstraint(f"discipline ~ '{DISCIPLINE_PATTERN}'", name="discipline_format"),
     CheckConstraint(f"project_global_id ~ '{GLOBAL_ID_PATTERN}'", name="project_global_id_format"),
     _not_blank("length_unit"),
     comment="One row per ingested IFC file version. Deleting a model deletes everything "
