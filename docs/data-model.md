@@ -1,6 +1,6 @@
 # Data model
 
-Everything lives in one PostgreSQL schema, `ifc`: 13 tables, 5 views and a read-only
+Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 6 views and a read-only
 role. It is created by Alembic migrations:
 
 ```bash
@@ -20,6 +20,9 @@ generated from those comments, so the catalogue documents itself
 Two decisions shape most of the model. [ADR 1](adr/0001-postgresql.md) covers why
 PostgreSQL, and [ADR 2](adr/0002-properties-eav-vs-jsonb.md) covers how properties are
 stored and why everything hangs off one `object` table.
+[ADR 3](adr/0003-quantity-sources-and-precedence.md) covers where quantities come from,
+and [ADR 4](adr/0004-idempotent-ingest.md) how files are loaded
+([Loading](#loading) below).
 
 ## Entity-relationship diagram
 
@@ -41,6 +44,9 @@ erDiagram
     object ||--o{ classification : "has"
     element ||--o{ element_material_layer : "made of"
     material ||--o{ element_material_layer : "used in"
+
+    model ||--o{ ingest_issue : "reported"
+    object |o--o{ ingest_issue : "about"
 
     dq_run ||--o{ dq_result : "found"
     dq_rule ||--o{ dq_result : "violated in"
@@ -133,6 +139,14 @@ erDiagram
         text code PK
         text title
     }
+    ingest_issue {
+        bigint model_id PK, FK
+        int issue_index PK "order the pipeline reported it"
+        text code "quantity_not_a_measure..."
+        bigint object_id FK "NULL: model-level, or object not loaded"
+        text global_id "as written in the file"
+        text message
+    }
     dq_rule {
         text rule_id PK
         text description
@@ -171,6 +185,7 @@ erDiagram
 | `material` | one material name per model | IFC materials have no GlobalId, so the name is the key within a file. |
 | `element_material_layer` | one layer (or list entry) per element | Ordered by `layer_index`. A single `IfcMaterial` is one row without thickness. |
 | `classification` | one code per object and system | From `IfcClassificationReference` or from Revit parameters such as OmniClass. |
+| `ingest_issue` | one issue the transform reported | What could not be stored as written, and what was done instead. Written with the model, deleted with it; the input for data-quality findings ([ADR 4](adr/0004-idempotent-ingest.md)). `object_id` is NULL when the object was never loaded, and `global_id` keeps what the file said. |
 | `dq_rule`, `dq_run`, `dq_result` | rule catalogue, one evaluation, one finding | Results are kept per run so quality can be compared over time. `dq_result.severity` records the severity at run time. |
 
 ### How the Revit quirks map onto the schema
@@ -204,7 +219,7 @@ accommodates:
   parameter.
 - **Project GlobalIds don't match.** The architectural model's `IfcProject` GlobalId
   differs from the other three files, so `project_global_id` is stored but cannot
-  match models; Phase 4 matches across disciplines by name.
+  match models. `v_storey_alignment` matches the disciplines by project name instead.
 - **Quantity sets coexist with Revit parameters.** Spaces carry a `GSA Space Areas`
   quantity set (an `IfcElementQuantity`) next to the Revit `Area` parameter, which is
   why a quantity can have more than one source.
@@ -214,7 +229,9 @@ accommodates:
 - **Keys.** Entity tables (`model`, `object`, `material`, runs, results) have a
   `bigint GENERATED ALWAYS AS IDENTITY` key named `<table>_id`. Dependent attribute
   tables (`property`, `quantity`, `classification`, `element_material_layer`) use their
-  natural composite key, because nothing references their rows individually. Foreign
+  natural composite key, because nothing references their rows individually.
+  `ingest_issue` has no natural key, so it is keyed by its position in the pipeline's
+  deterministic output, `(model_id, issue_index)`. Foreign
   key columns are named after the key they reference, or after their role (`parent_id`,
   `storey_id`, `container_id`).
 - **Constraint names** follow one convention (`pk_`, `fk_`, `uq_`, `ix_`, `ck_<table>_…`).
@@ -237,8 +254,8 @@ accommodates:
   therefore `DEFERRABLE INITIALLY DEFERRED`. A storey or material that is still in use
   cannot be deleted on its own (the commit fails), but a whole model can.
   `test_deleting_a_model_removes_everything_loaded_from_it` failed before this change.
-- **What the database does not enforce** is left to the loader, which writes one model
-  in one transaction:
+- **What the database does not enforce** is left to the loader (`ingest/load.py`), which
+  writes one model in one transaction:
   - an object has exactly one subtype row, matching `object_kind`;
   - `storey_id` points at a storey;
   - every row of an element's graph belongs to the same model.
@@ -249,6 +266,8 @@ accommodates:
 ## Views
 
 Each view is a versioned file (`v_element.v1.sql`) that also carries its `COMMENT`s.
+`v_element` is at version 2: migration 0004 corrected its `revit_type` comment (and the
+column's), which wrongly said the type may contain colons.
 
 | View | One row per | What it adds |
 |---|---|---|
@@ -257,9 +276,219 @@ Each view is a versioned file (`v_element.v1.sql`) that also carries its `COMMEN
 | `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height and the OmniClass Table 13 code and title. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |
+| `v_storey_alignment` | storey and model, for models that share a project name | The storey matched across disciplines on a normalised name, each model's elevation, how many of the project's models have the storey, and the spread of their elevations ([below](#storeys-across-disciplines)). |
 
 `tests/integration/test_views.py` builds a small building that reproduces these cases
-and checks each figure.
+and checks each figure. `tests/integration/test_load.py` loads the synthetic fixture and
+checks the views on it, and `tests/samples/test_duplex_ingest.py` checks
+`v_storey_alignment` on the four Duplex files.
+
+### Storeys across disciplines
+
+Discipline models of one building are exported separately, and each can define its own
+levels. `v_storey_alignment` puts them side by side:
+
+- **Same project** means the same `model.project_name` (`IfcProject.Name`, Revit's
+  Project Number), compared exactly. The project GlobalId cannot be used because ARC's
+  differs from the other three. Models without a project name are left out.
+- **Same storey** means the same `storey_key`: the `IfcBuildingStorey` name with every
+  run of whitespace replaced by one space, trimmed and lower-cased. `'Level 2'`,
+  `' LEVEL  2'` and `'level\t2'` match. `'Level 02'`, `'L2'` and a storey at the same
+  elevation under another name do not: guessing those would hide exactly the
+  inconsistencies the view is for. Unnamed storeys are left out.
+- **One row per storey and model**, with the model's own name and elevation, plus
+  `storey_model_count` (how many of the project's models have this key),
+  `project_model_count` and `elevation_spread_m` (highest minus lowest elevation). A
+  storey lines up when the counts are equal and the spread is 0. Every loaded version of
+  a model counts as a model, so load one version per discipline to compare disciplines.
+
+On the four Duplex files, after `make ingest-samples` (`make psql`):
+
+```sql
+SELECT storey_key, discipline, storey_name, elevation_m,
+       storey_model_count AS models_with_it, project_model_count AS models,
+       elevation_spread_m AS spread_m
+FROM ifc.v_storey_alignment WHERE project_name = '0001'
+ORDER BY elevation_m, storey_key, discipline;
+```
+
+```
+ storey_key | discipline | storey_name | elevation_m | models_with_it | models | spread_m
+------------+------------+-------------+-------------+----------------+--------+----------
+ t/fdn      | ARC        | T/FDN       |      -1.250 |              1 |      4 |    0.000
+ level 1    | ARC        | Level 1     |       0.000 |              4 |      4 |    0.000
+ level 1    | ELE        | Level 1     |       0.000 |              4 |      4 |    0.000
+ level 1    | MEP        | Level 1     |       0.000 |              4 |      4 |    0.000
+ level 1    | PLU        | Level 1     |       0.000 |              4 |      4 |    0.000
+ level 2    | ARC        | Level 2     |       3.100 |              4 |      4 |    0.000
+ level 2    | ELE        | Level 2     |       3.100 |              4 |      4 |    0.000
+ level 2    | MEP        | Level 2     |       3.100 |              4 |      4 |    0.000
+ level 2    | PLU        | Level 2     |       3.100 |              4 |      4 |    0.000
+ roof       | ARC        | Roof        |       6.000 |              4 |      4 |    0.000
+ roof       | ELE        | Roof        |       6.000 |              4 |      4 |    0.000
+ roof       | MEP        | Roof        |       6.000 |              4 |      4 |    0.000
+ roof       | PLU        | Roof        |       6.000 |              4 |      4 |    0.000
+(13 rows)
+```
+
+Level 2 is 3.100 m in all four files although they declare metres, feet and
+millimetres. The foundation level exists only in the architectural model. The
+mismatches are one `WHERE` away:
+
+```sql
+SELECT DISTINCT storey_key FROM ifc.v_storey_alignment
+WHERE storey_model_count < project_model_count OR elevation_spread_m <> 0;
+-- t/fdn
+```
+
+## Loading
+
+```bash
+make ingest-samples                          # make samples + make migrate, then the four files
+uv run ifc-sql ingest path/to/model.ifc --discipline ARC
+```
+
+`ifc-sql ingest` loads one file through `ingest/pipeline.py`. The steps, and why they
+come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):
+
+1. Refuse an invalid discipline (two to eight capital letters, the CHECK on
+   `model.discipline`) and a database that is not at the latest migration.
+2. Hash the file. If a model has the same SHA-256, record a `skipped` run and stop,
+   without parsing.
+3. Record a `running` run and commit it.
+4. Extract and transform, outside any transaction.
+5. In one transaction, insert the model with every row that belongs to it, including
+   its `ingest_issue` rows, and mark the run `succeeded` with `row_counts`.
+6. On an error the load has rolled back, so nothing of the model exists. The run is
+   marked `failed`, with the error.
+
+| Outcome | Run | Exit | Output |
+|---|---|---|---|
+| Loaded | `succeeded` | 0 | `loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property values, 46 issues (run 2)` |
+| Already loaded | `skipped` | 0 | `Duplex_MEP_20110907.ifc is already loaded as model 2 (MEP); nothing written (run 6, skipped)` |
+| Loaded meanwhile by a concurrent ingest | `skipped` | 0 | `<file> was loaded as model <id> (<discipline>) by another ingest running at the same time; nothing written (run <id>, skipped)` |
+| Unreadable file | `failed` | 1 | `ingest of corrupt.ifc failed (run 9): ExtractError: corrupt.ifc: not a readable IFC file (Unable to parse IFC SPF header)` |
+| Truncated file | `failed` | 1 | `ingest of truncated.ifc failed (run 10): ExtractError: truncated.ifc: the file ends before END-ISO-10303-21; (truncated)` |
+| Database unreachable | none | 1 | `cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc: connection failed: …` (the password is masked) |
+| Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but ingest needs revision 0006: run `ifc-sql migrate` first`` |
+| No such file; missing or invalid `--discipline` | none | 2 | Usage error, e.g. `Invalid value for '--discipline': discipline must be 2 to 8 capital letters, e.g. ARC; got 'arc'` |
+
+The outputs are from runs of the command in this container, except the concurrent one,
+whose wording is checked by `tests/integration/test_cli_ingest.py`. An empty file and a
+database error during the load also end as `failed` runs.
+
+The summary goes to stdout and errors to stderr. Logs go to stderr as `key=value` lines:
+one per stage with its duration, and one per issue code. These are the MEP lines from
+`make ingest-samples`, without the timestamp and logger fields:
+
+```
+msg=extracted run_id=2 objects=973 seconds=1.463
+msg=transformed run_id=2 properties=63683 issues=46 seconds=0.473
+msg="transform issues" run_id=2 code=conflicting_property count=2
+msg="transform issues" run_id=2 code=quantity_not_a_measure count=44
+msg=loaded run_id=2 model_id=2 rows=66868 seconds=1.358
+```
+
+### How rows are inserted
+
+`ingest/load.py` writes one model in the caller's transaction. Records carry natural
+keys (GlobalId, material name), so the loader needs generated ids before it can write
+the rows that reference them:
+
+- **INSERT … RETURNING** for `model`, `object` and `material`. Each row comes back with
+  its natural key and its new id, so the mapping never depends on the order of the
+  returned rows.
+- **COPY** for the other seven tables, through the psycopg connection under the
+  SQLAlchemy one, in the same transaction.
+- References within the model (`parent_id`, `container_id`, `storey_id`,
+  `material_id`) are deferred to commit, so the order of rows does not matter. The
+  tests run `SET CONSTRAINTS ALL IMMEDIATE` to check them inside a transaction they roll
+  back.
+
+COPY was chosen by measurement on the largest table of the samples, MEP's 63,683
+property rows. `make bench-load` (`scripts/bench_load.py`) runs each variant five times
+in a throwaway database, in transactions that are rolled back. One run in this
+development container printed:
+
+| Measurement | Median (s) |
+|---|---:|
+| `load()`, whole model, with the checks COMMIT runs | 1.47 |
+| property rows: SQLAlchemy Core executemany | 3.50 |
+| property rows: SQLAlchemy insertmanyvalues (RETURNING) | 6.56 |
+| property rows: COPY (`load.copy_rows`) | 1.29 |
+| property rows: COPY, table without its foreign key | 0.40 |
+| property rows: COPY, table without constraints or indexes | 0.08 |
+
+- **COPY wins: 1.29 s against 3.50 s.** With psycopg 3, SQLAlchemy's executemany hands
+  the rows to psycopg's own `executemany`, which sends one INSERT per row in pipeline
+  mode. SQLAlchemy switches to multi-row INSERTs (insertmanyvalues) only for statements
+  with RETURNING, and that variant was the slowest here.
+- **The integrity rules account for most of what remains.** Dropping the property
+  table's foreign key cuts COPY to 0.40 s, so most of its time is PostgreSQL checking
+  each row's `object_id`. Dropping every constraint and index leaves 0.08 s to move the
+  bytes. Those checks are the point of the schema (ADR 1), so they stay.
+
+Timings for the four files come from one `make ingest-samples` run on an empty
+database, in the same container. The stage times are the logged `seconds`; the run time
+is `finished_at - started_at` in `ingestion_run`:
+
+| File | Rows written | Extract (s) | Transform (s) | Load (s) | Run (s) |
+|---|---:|---:|---:|---:|---:|
+| `Duplex_A_20110907.ifc` | 14,899 | 0.31 | 0.07 | 0.34 | 0.72 |
+| `Duplex_MEP_20110907.ifc` | 66,868 | 1.46 | 0.47 | 1.36 | 3.28 |
+| `Duplex_Electrical_20121207.ifc` | 7,335 | 0.17 | 0.04 | 0.18 | 0.38 |
+| `Duplex_Plumbing_20121113.ifc` | 43,714 | 1.55 | 0.28 | 0.97 | 2.79 |
+
+A second `make ingest-samples` writes four `skipped` runs (5 to 8) and nothing else.
+`tests/samples/test_duplex_ingest.py` checks that every table holds exactly one row
+per record the transform produced, for each file.
+
+### Quantities after loading
+
+`v_quantity` has two sources to choose from only for the space areas: the GSA quantity
+set and the Revit parameter ([ADR 3](adr/0003-quantity-sources-and-precedence.md)).
+After `make ingest-samples`:
+
+```sql
+SELECT q.name, count(DISTINCT q.object_id) AS objects,
+       max(abs(a.value - b.value)) AS largest_difference
+FROM ifc.quantity AS q
+JOIN ifc.quantity AS a ON a.object_id = q.object_id AND a.name = q.name AND a.source = 'ifc_qto'
+JOIN ifc.quantity AS b ON b.object_id = q.object_id AND b.name = q.name AND b.source = 'revit_pset'
+GROUP BY q.name;
+--  name   | objects |   largest_difference
+-- area_m2 |      65 | 1.0658141036401503e-14
+
+SELECT source, count(*) FROM ifc.v_quantity GROUP BY source;
+-- ifc_qto 65, revit_pset 1182; no geometry rows exist
+```
+
+### Issues after loading
+
+```sql
+SELECT m.discipline, i.code, count(*) AS issues
+FROM ifc.ingest_issue AS i JOIN ifc.model AS m USING (model_id)
+GROUP BY m.discipline, i.code ORDER BY m.discipline, i.code;
+```
+
+```
+ discipline |                code                 | issues
+------------+-------------------------------------+--------
+ ELE        | conflicting_property                |      2
+ ELE        | incomplete_classification_reference |     85
+ ELE        | omniclass_unparsed                  |      1
+ MEP        | conflicting_property                |      2
+ MEP        | quantity_not_a_measure              |     44
+ PLU        | conflicting_property                |    225
+ PLU        | incomplete_classification_reference |    263
+ PLU        | omniclass_unparsed                  |      1
+ PLU        | quantity_not_a_measure              |     61
+```
+
+These are the counts in [revit-ifc-quirks.md](revit-ifc-quirks.md), now stored. Each
+row names its object and says what happened, for example
+`PSet_Revit_Dimensions.Length (IfcReal) is not a measure in m; no length_m` for the MEP
+fitting `M_Transition - Generic:Transition - Generic:Transition - Generic:550098`.
 
 ## The read-only role
 
@@ -326,7 +555,7 @@ throwaway test databases share one server, and therefore one `ifc_reader`. So:
   to hash the password.
 
 **Writing a new migration.** Change `schema.py`, then run
-`uv run alembic revision --autogenerate --rev-id 0004 -m "…"` against a migrated
+`uv run alembic revision --autogenerate --rev-id 0007 -m "…"` against a migrated
 database. Review the result, then run `make check`.
 
 These tests keep the migrations honest:

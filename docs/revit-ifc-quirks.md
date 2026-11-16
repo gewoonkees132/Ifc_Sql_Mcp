@@ -42,7 +42,8 @@ imports IfcOpenShell. Transform is pure and returns records that already satisfy
 constraint in `db/schema.py` (`tests/support/record_contract.py` restates them and the
 tests apply it to the fixture and to all four files). Anything that cannot be
 represented is dropped or left NULL, never guessed, and reported as an `Issue` with a
-stable code; the data quality stage will turn those into findings. On the four files:
+stable code. The loader stores the issues in `ifc.ingest_issue` with the model (ADR 4),
+and the data quality stage will turn them into findings. On the four files:
 
 | Issue | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
@@ -368,8 +369,8 @@ only references create UniFormat rows.
   logs how many of each class it skipped.
 - **Project GlobalIds differ.** ARC's `IfcProject` is `1xS3BCk291UvhgP2a6eflL`, the others'
   is `0o8nNAbaT5OQLV8CAFemQP`, although all four say project `0001`, `Duplex Apartment`.
-  `project_global_id` is stored but cannot match models across disciplines; Phase 4
-  matches by name.
+  `project_global_id` is stored but cannot match models across disciplines, so
+  `v_storey_alignment` matches them by project name instead.
 - **PredefinedType.** A type object's value applies to its occurrences unless it is
   `NOTDEFINED`; `NOTDEFINED` itself is stored as NULL. `USERDEFINED` is kept; the custom
   text that goes with it lives in `ObjectType`, free text the column's format could not
