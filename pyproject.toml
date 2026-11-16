@@ -96,7 +96,9 @@ filterwarnings = ["error"]
 
 # --------------------------------------------------------------------------- coverage
 [tool.coverage.run]
-source = ["ifc_sql_mcp"]
+# A path, not the package name: Alembic loads env.py and the migration scripts by file
+# path under its own module names, and they should be measured too.
+source = ["src/ifc_sql_mcp"]
 branch = true
 
 [tool.coverage.report]
