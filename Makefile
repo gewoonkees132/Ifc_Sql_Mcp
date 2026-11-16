@@ -8,7 +8,7 @@ UV ?= uv
 export
 
 .PHONY: help install up down reset-db migrate psql lint fmt typecheck test test-unit test-samples
-.PHONY: check samples ingest-samples bench-load fixture quirks
+.PHONY: check samples ingest-samples dq dq-samples bench-load fixture quirks
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -62,6 +62,11 @@ ingest-samples: samples migrate ## Load the four Duplex files as ARC, MEP, ELE a
 	$(UV) run ifc-sql ingest data/samples/Duplex_MEP_20110907.ifc --discipline MEP
 	$(UV) run ifc-sql ingest data/samples/Duplex_Electrical_20121207.ifc --discipline ELE
 	$(UV) run ifc-sql ingest data/samples/Duplex_Plumbing_20121113.ifc --discipline PLU
+
+dq: ## Check every loaded model against the data quality rules, as new runs (needs `make up`)
+	$(UV) run ifc-sql dq
+
+dq-samples: ingest-samples dq ## Load the four Duplex files (skipped if loaded), then check every model
 
 bench-load: ## Time the load stage on the MEP sample in a throwaway database (needs `make up`)
 	$(UV) run python scripts/bench_load.py
