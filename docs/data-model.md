@@ -175,10 +175,13 @@ erDiagram
 
 ### How the Revit quirks map onto the schema
 
+[revit-ifc-quirks.md](revit-ifc-quirks.md) shows how often each quirk occurs in the four
+Duplex files and how the extract and transform stages handle it.
+
 | Quirk in Revit exports | Where the schema handles it |
 |---|---|
 | No `Qto_*` base quantities; quantities sit in `PSet_Revit_Dimensions` | `quantity.source` (`revit_pset`), alongside `ifc_qto` and `geometry` rows for the same object. The raw values also stay in `property`. |
-| Names follow `Family:Type:ElementId`, the type may contain `:`, and openings and stair parts add a `:n` suffix | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. |
+| Names follow `Family:Type:ElementId`; loadable families add an instance label (`Family:Type:Label:ElementId`), and openings and stair parts add a `:n` suffix to their host's name | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. |
 | Walls have no `IfcTypeObject`; type data arrives as `PSet_Revit_Type_*` on the instance | `property.is_type_property`, set for those sets and for values inherited from a type object. |
 | Placeholder values (`Manufacturer = 'Manufacturer'`), empty strings | Stored verbatim in `property.value_text` so data-quality rules can find them; nothing rejects them. |
 | Layered walls (`IfcMaterialLayerSetUsage`) | `element_material_layer` keeps layer order and thickness; `v_takeoff` splits area and volume per layer. |
