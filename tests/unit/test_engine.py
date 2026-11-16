@@ -1,4 +1,8 @@
-from ifc_sql_mcp.db.engine import make_engine, reader_database_url, redact
+import pytest
+from sqlalchemy import create_engine
+
+from ifc_sql_mcp.db import migrate
+from ifc_sql_mcp.db.engine import make_engine, psycopg_connection, reader_database_url, redact
 
 
 def test_make_engine_uses_psycopg3_driver_without_connecting() -> None:
@@ -22,3 +26,16 @@ def test_reader_database_url_swaps_in_the_reader_credentials() -> None:
 
     # Special characters in the password are escaped, so the URL still parses.
     assert url == "postgresql+psycopg://ifc_reader:r%3Ae%40d%2Fer@db.example:6543/ifc"
+
+
+def test_psycopg_connection_rejects_other_drivers() -> None:
+    engine = create_engine("sqlite://")
+    try:
+        with engine.connect() as connection, pytest.raises(TypeError, match="psycopg 3"):
+            psycopg_connection(connection)
+    finally:
+        engine.dispose()
+
+
+def test_migrations_still_find_psycopg_connection_where_they_import_it() -> None:
+    assert migrate.psycopg_connection is psycopg_connection

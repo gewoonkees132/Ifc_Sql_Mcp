@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from alembic.script import ScriptDirectory
-from sqlalchemy import create_engine
 
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.migrate import (
@@ -14,7 +13,6 @@ from ifc_sql_mcp.db.migrate import (
     alembic_config,
     head_revision,
     include_name,
-    psycopg_connection,
 )
 
 PROJECT_ROOT = Path(__file__).parents[2]
@@ -71,12 +69,3 @@ def test_each_view_file_creates_the_view_it_is_named_after() -> None:
         match = VIEW_FILE.match(path.name)
         assert match is not None
         assert f"CREATE VIEW ifc.{match.group(1)} AS" in path.read_text(encoding="utf-8")
-
-
-def test_psycopg_connection_rejects_other_drivers() -> None:
-    engine = create_engine("sqlite://")
-    try:
-        with engine.connect() as connection, pytest.raises(TypeError, match="psycopg 3"):
-            psycopg_connection(connection)
-    finally:
-        engine.dispose()

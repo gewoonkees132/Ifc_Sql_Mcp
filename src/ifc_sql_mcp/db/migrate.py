@@ -6,12 +6,14 @@ there is no config file where credentials could be committed; and an installed p
 can migrate a database without any project files on disk. ``[tool.alembic]`` in
 ``pyproject.toml`` points the plain ``alembic`` CLI at the same scripts for development
 tasks such as ``alembic history`` or writing a new revision.
+
+``psycopg_connection`` is re-exported (``import ... as ...``) because migration 0003
+imports it from this module, and released migrations are not edited.
 """
 
 from pathlib import Path
 from typing import Any
 
-import psycopg
 from alembic import command
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
@@ -21,6 +23,7 @@ from sqlalchemy.pool import NullPool
 
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.engine import APPLICATION_NAME
+from ifc_sql_mcp.db.engine import psycopg_connection as psycopg_connection
 from ifc_sql_mcp.db.schema import SCHEMA
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
@@ -113,15 +116,3 @@ def run_sql_file(connection: Connection, relative_path: str) -> None:
     """
     script = (SQL_DIR / relative_path).read_text(encoding="utf-8")
     psycopg_connection(connection).execute(script)
-
-
-def psycopg_connection(connection: Connection) -> psycopg.Connection[Any]:
-    """Return the psycopg connection under ``connection``: same session, same transaction.
-
-    Migrations use it where SQL must be composed with :mod:`psycopg.sql` (quoted names and
-    literals in DDL, which cannot take bind parameters) or run as a script.
-    """
-    driver_connection = connection.connection.driver_connection
-    if not isinstance(driver_connection, psycopg.Connection):
-        raise TypeError("migrations need the psycopg 3 driver (a postgresql+psycopg:// URL)")
-    return driver_connection
