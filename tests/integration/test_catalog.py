@@ -61,6 +61,7 @@ def test_views_are_the_documented_set(engine: Engine) -> None:
         "v_model_summary",
         "v_quantity",
         "v_space_schedule",
+        "v_storey_alignment",
         "v_takeoff",
     ]
 
