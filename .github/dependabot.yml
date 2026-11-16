@@ -1,0 +1,16 @@
+version: 2
+updates:
+  # Bumps the SHA-pinned actions in .github/workflows/.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+
+  # Proposes uv.lock updates (dependency ranges live in pyproject.toml).
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      python-dependencies:
+        patterns: ["*"]

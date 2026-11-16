@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: the workflow only needs to read the repository.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint → types → tests → coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ifc
+          POSTGRES_PASSWORD: ifc-dev-only  # throwaway CI container, not a secret
+          POSTGRES_DB: ifc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ifc -d ifc"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      IFC_SQL_DATABASE_URL: postgresql+psycopg://ifc:ifc-dev-only@localhost:5432/ifc
+
+    steps:
+      # Third-party actions are pinned to full commit SHAs; Dependabot proposes updates.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install (exactly as locked)
+        run: uv sync --locked
+
+      - name: Lint
+        run: |
+          uv run ruff check --output-format=github .
+          uv run ruff format --check .
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Tests
+        run: uv run pytest --cov --cov-report=xml --cov-report=term-missing
+
+      - name: Coverage report
+        if: ${{ !cancelled() }}
+        run: uv run coverage report --format=markdown >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coverage-xml
+          path: coverage.xml
+          if-no-files-found: ignore
