@@ -100,7 +100,7 @@ pythonpath = ["scripts", "tests/fixtures", "tests/support"]
 strict = true
 addopts = ["-ra", "-m", "not sample"]
 markers = [
-    "sample: downloads the real Duplex files over the network (deselected by default; run with -m sample)",
+    "sample: reads the real Duplex files, downloading them if needed (deselected by default; run with -m sample)",
 ]
 filterwarnings = ["error"]
 

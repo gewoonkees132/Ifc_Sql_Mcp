@@ -7,10 +7,10 @@ UV ?= uv
 -include .env
 export
 
-.PHONY: help install up down reset-db migrate lint fmt typecheck test test-unit check samples fixture
+.PHONY: help install up down reset-db migrate lint fmt typecheck test test-unit test-samples check samples fixture quirks
 
 help: ## List the available targets
-	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-10s\033[0m %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-13s\033[0m %s\n", $$1, $$2}'
 
 install: ## Create .venv from uv.lock and install the git pre-commit hooks
 	$(UV) sync --locked
@@ -45,6 +45,9 @@ test: ## Unit + integration tests with coverage (needs `make up`; migrates its o
 test-unit: ## Unit tests only, no database needed
 	$(UV) run pytest tests/unit
 
+test-samples: ## Tests on the four real Duplex files (downloads them if needed)
+	$(UV) run pytest -m sample
+
 check: lint typecheck test ## Everything CI runs
 
 samples: ## Download the pinned, checksum-verified Duplex sample files into data/samples/
@@ -52,3 +55,6 @@ samples: ## Download the pinned, checksum-verified Duplex sample files into data
 
 fixture: ## Regenerate the synthetic test fixture tests/fixtures/revit_quirks.ifc
 	$(UV) run python tests/fixtures/make_revit_quirks.py
+
+quirks: ## Print the figures cited in docs/revit-ifc-quirks.md (needs `make samples`)
+	$(UV) run python scripts/quirks_report.py
