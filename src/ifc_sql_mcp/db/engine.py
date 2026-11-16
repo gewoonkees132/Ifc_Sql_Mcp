@@ -9,6 +9,7 @@ from typing import Any
 
 import psycopg
 from sqlalchemy import Connection, Engine, create_engine, make_url
+from sqlalchemy.exc import DBAPIError
 
 from ifc_sql_mcp.db.schema import READER_ROLE
 
@@ -42,6 +43,18 @@ def reader_database_url(database_url: str, reader_password: str) -> str:
 def redact(database_url: str) -> str:
     """Return ``database_url`` with the password masked, safe to log or show in errors."""
     return make_url(database_url).render_as_string(hide_password=True)
+
+
+def describe_error(exc: BaseException) -> str:
+    """Return an error as a run records it: its type and message, no traceback.
+
+    Used for ``ingestion_run.error`` and ``dq_run.error``. For a database error this is
+    the driver's message. SQLAlchemy's wrapper would add the statement and its
+    parameters, which for a bulk insert run to thousands of values.
+    """
+    if isinstance(exc, DBAPIError) and exc.orig is not None:
+        return f"{type(exc.orig).__name__}: {exc.orig}"
+    return f"{type(exc).__name__}: {exc}"
 
 
 def psycopg_connection(connection: Connection) -> psycopg.Connection[Any]:

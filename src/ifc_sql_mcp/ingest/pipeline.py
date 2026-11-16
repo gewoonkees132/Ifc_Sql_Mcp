@@ -35,9 +35,10 @@ from typing import Literal
 
 import psycopg
 from sqlalchemy import Connection, Engine, func, insert, select, update
-from sqlalchemy.exc import DBAPIError, IntegrityError
+from sqlalchemy.exc import IntegrityError
 
 from ifc_sql_mcp.db import schema
+from ifc_sql_mcp.db.engine import describe_error
 from ifc_sql_mcp.ingest.extract import read_model, sha256_file
 from ifc_sql_mcp.ingest.load import load
 from ifc_sql_mcp.ingest.records import ModelRecords
@@ -152,7 +153,7 @@ def ingest_file(engine: Engine, path: Path, discipline: str) -> IngestResult:
             with engine.begin() as connection:
                 _finish_run(connection, run_id, "skipped", winner[0])
             return _skipped(run_id, path, discipline, winner, concurrent=True)
-        message = _describe(exc)
+        message = describe_error(exc)
         logger.error("ingest failed", extra={"run_id": run_id, "error": message})
         with engine.begin() as connection:
             _finish_run(connection, run_id, "failed", error=message)
@@ -232,17 +233,6 @@ def _concurrent_winner(engine: Engine, exc: Exception, sha256: str) -> tuple[int
         return None
     with engine.begin() as connection:
         return _loaded_model(connection, sha256)
-
-
-def _describe(exc: Exception) -> str:
-    """Return the error for ``ingestion_run.error``: its type and message, no traceback.
-
-    For a database error this is the driver's message. SQLAlchemy's wrapper would add
-    the statement and its parameters, which for a bulk insert run to thousands of values.
-    """
-    if isinstance(exc, DBAPIError) and exc.orig is not None:
-        return f"{type(exc.orig).__name__}: {exc.orig}"
-    return f"{type(exc).__name__}: {exc}"
 
 
 # --------------------------------------------------------------------------- ingestion_run
