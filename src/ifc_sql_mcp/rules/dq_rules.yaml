@@ -1,0 +1,342 @@
+# The data quality rule catalogue.
+#
+# `ifc-sql dq` loads this file and checks it strictly (src/ifc_sql_mcp/dq/catalogue.py),
+# synchronises the rules into ifc.dq_rule, and evaluates every rule against each model it
+# checks. docs/data-quality.md explains the rules and their findings, and ADR 5 the design.
+#
+# Every rule has these four keys:
+#   rule_id      Stable snake_case id. Findings refer to it, so a rule whose meaning
+#                changes gets a new id instead of an edited query.
+#   description  What the rule checks and what a finding means. This is the text an LLM
+#                reads in ifc.dq_rule.
+#   severity     error | warning | info (below). Copied onto each finding when it is found.
+#   dimension    completeness | validity | consistency | uniqueness (below).
+# and exactly one of these two, which says how the rule is evaluated:
+#   issue_code   An IssueCode from src/ifc_sql_mcp/ingest/issues.py. Every ifc.ingest_issue
+#                row of the model with that code becomes a finding, with the issue's
+#                object and message. Each IssueCode has exactly one rule.
+#   sql          A SELECT that returns object_id (NULL for a finding about the whole model)
+#                and message, one row per finding, for the model whose id is :model_id.
+#                That is the only parameter allowed. SQLAlchemy reads ':' followed by a
+#                word as a parameter even inside a string literal, so the loader refuses
+#                any other.
+#
+# Severity says what a finding means for answers drawn from the data:
+#   error    Something in the file is not in the database: an object was skipped, or a
+#            value was dropped or left NULL, and nothing stored stands in for it.
+#   warning  What is stored may mislead: a value was chosen between two, assumed, could
+#            not be used as intended, or is a placeholder that looks like real data.
+#   info     Stored as written and plainly not a value ('N/A', an empty string). It
+#            misleads no one who reads it, but it is a gap worth counting.
+#
+# Dimension says what kind of defect it is:
+#   completeness  something expected is missing
+#   validity      a value breaks a format, type or range, or a rule of IFC
+#   consistency   two pieces of data disagree
+#   uniqueness    something that must occur once occurs more than once
+
+rules:
+  # ---------------------------------------------------------- stored values, by SQL
+
+  - rule_id: value_is_property_name
+    description: >-
+      A text property holds its own name, e.g. BarCode = 'BarCode'. Revit 2011 fills
+      unset parameters this way. The value looks like data, so a query that groups or
+      filters on the property treats the placeholder as a real value.
+    severity: warning
+    dimension: validity
+    sql: |
+      SELECT p.object_id,
+             format('%s.%s = %L, the parameter''s own name: a placeholder, not a value',
+                    p.pset_name, p.prop_name, p.value_text) AS message
+      FROM ifc.property AS p
+      JOIN ifc.object AS o ON o.object_id = p.object_id
+      WHERE o.model_id = :model_id
+        AND p.value_text = p.prop_name
+
+  - rule_id: value_is_not_applicable
+    description: >-
+      A text property holds 'N/A', which Revit 2013 writes for parameters that have no
+      value. Recognisable as "no value", but the parameter is still unfilled.
+    severity: info
+    dimension: completeness
+    sql: |
+      SELECT p.object_id,
+             format('%s.%s = %L: no value', p.pset_name, p.prop_name, p.value_text)
+                 AS message
+      FROM ifc.property AS p
+      JOIN ifc.object AS o ON o.object_id = p.object_id
+      WHERE o.model_id = :model_id
+        AND p.value_text = 'N/A'
+
+  - rule_id: value_is_empty
+    description: >-
+      A text property holds an empty or whitespace-only string. The property exists, but
+      it was never filled in.
+    severity: info
+    dimension: completeness
+    sql: |
+      SELECT p.object_id,
+             format('%s.%s = %L: no value', p.pset_name, p.prop_name, p.value_text)
+                 AS message
+      FROM ifc.property AS p
+      JOIN ifc.object AS o ON o.object_id = p.object_id
+      WHERE o.model_id = :model_id
+        AND p.value_text !~ '\S'
+
+  - rule_id: element_without_storey
+    description: >-
+      A physical element has no storey: it is not contained in one, and neither its
+      container nor the element it is part of leads to one. Takeoffs and counts by storey
+      leave it out.
+    severity: warning
+    dimension: completeness
+    sql: |
+      SELECT e.object_id,
+             'no storey: neither its container nor a host element leads to one' AS message
+      FROM ifc.element AS e
+      JOIN ifc.object AS o ON o.object_id = e.object_id
+      WHERE o.model_id = :model_id
+        AND e.storey_id IS NULL
+
+  - rule_id: space_without_area
+    description: >-
+      A space has no area_m2 quantity from any source, so space schedules and area
+      takeoffs show no area for it.
+    severity: warning
+    dimension: completeness
+    sql: |
+      SELECT o.object_id,
+             format('space %s has no area_m2 from any source', coalesce(o.name, '(unnamed)'))
+                 AS message
+      FROM ifc.object AS o
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSpace'
+        AND NOT EXISTS (
+            SELECT 1 FROM ifc.quantity AS q
+            WHERE q.object_id = o.object_id AND q.name = 'area_m2'
+        )
+
+  # ---------------------------------------------------------- issues: model and units
+
+  - rule_id: multiple_projects
+    description: >-
+      The file contains more than one IfcProject, which IFC forbids. The model's project
+      name and GlobalId come from the first one.
+    severity: warning
+    dimension: uniqueness
+    issue_code: multiple_projects
+
+  - rule_id: invalid_project_global_id
+    description: >-
+      The IfcProject GlobalId is not 22 characters of IFC's base-64 alphabet, so
+      model.project_global_id is NULL.
+    severity: error
+    dimension: validity
+    issue_code: invalid_project_global_id
+
+  - rule_id: unit_assumed_si
+    description: >-
+      The file declares no unit for length, area, volume or plane angle, so values of
+      that dimension were read as SI units, as IFC prescribes. If the exporter meant
+      another unit, every such value is off by a constant factor.
+    severity: warning
+    dimension: completeness
+    issue_code: unit_assumed_si
+
+  - rule_id: unit_not_convertible
+    description: >-
+      A value's unit has no known SI conversion, so the value was dropped and is not in
+      ifc.property.
+    severity: error
+    dimension: validity
+    issue_code: unit_not_convertible
+
+  - rule_id: measure_not_converted
+    description: >-
+      A measure other than length, area, volume or plane angle (a power, say) is stored
+      as written and without a unit: in the file's own unit, not in SI like every other
+      number with a unit.
+    severity: warning
+    dimension: validity
+    issue_code: measure_not_converted
+
+  # ---------------------------------------------------------- issues: objects
+
+  - rule_id: invalid_global_id
+    description: >-
+      An object's GlobalId is malformed, so the object was not loaded and is missing from
+      every count, takeoff and schedule. The finding has no object; its message gives the
+      GlobalId as written in the file.
+    severity: error
+    dimension: validity
+    issue_code: invalid_global_id
+
+  - rule_id: duplicate_global_id
+    description: >-
+      Two objects in the file share a GlobalId, so the second was not loaded. The finding
+      points at the object that kept the GlobalId.
+    severity: error
+    dimension: uniqueness
+    issue_code: duplicate_global_id
+
+  - rule_id: invalid_elevation
+    description: >-
+      A storey elevation is not a finite number or does not fit numeric(9,3), so
+      elevation_m is NULL.
+    severity: error
+    dimension: validity
+    issue_code: invalid_elevation
+
+  - rule_id: revit_name_unparsed
+    description: >-
+      An element name does not follow Revit's Family:Type:ElementId pattern, so
+      revit_family and revit_type (and, if no ElementId was found, revit_element_id) are
+      NULL. The name itself is kept in object.name.
+    severity: warning
+    dimension: validity
+    issue_code: revit_name_unparsed
+
+  - rule_id: revit_tag_mismatch
+    description: >-
+      The ElementId read from an element's name differs from its Tag, where Revit writes
+      the same id, so one of them points at the wrong Revit element.
+    severity: warning
+    dimension: consistency
+    issue_code: revit_tag_mismatch
+
+  # ---------------------------------------------------------- issues: properties, quantities
+
+  - rule_id: unnamed_property
+    description: >-
+      A property or its property set has no name, so its value was dropped.
+    severity: error
+    dimension: completeness
+    issue_code: unnamed_property
+
+  - rule_id: unsupported_property
+    description: >-
+      A property that is not a single value (a list, table, enumeration or complex
+      property, or a quantity without a number) was dropped; the pipeline reads only
+      single values.
+    severity: error
+    dimension: completeness
+    issue_code: unsupported_property
+
+  - rule_id: unsupported_property_set
+    description: >-
+      A property set definition other than IfcPropertySet or IfcElementQuantity holds
+      values, which were dropped.
+    severity: error
+    dimension: completeness
+    issue_code: unsupported_property_set
+
+  - rule_id: non_finite_value
+    description: >-
+      A number is NaN or infinite, as written or after unit conversion. No column accepts
+      it, so the value was dropped.
+    severity: error
+    dimension: validity
+    issue_code: non_finite_value
+
+  - rule_id: conflicting_property
+    description: >-
+      The file gives one object two different values for the same property set and
+      property, at the same level (Revit 2013 writes instance and type parameters as two
+      sets of one name). The value written first is stored; the message names both.
+    severity: warning
+    dimension: consistency
+    issue_code: conflicting_property
+
+  - rule_id: quantity_not_a_measure
+    description: >-
+      A parameter mapped to a canonical quantity is not a measure in the quantity's unit
+      (Revit writes pipe fittings' Length as a unitless IfcReal), so no quantity was made
+      and takeoffs leave the object out. The raw value stays in ifc.property.
+    severity: warning
+    dimension: validity
+    issue_code: quantity_not_a_measure
+
+  - rule_id: negative_quantity
+    description: >-
+      A parameter mapped to a canonical quantity is negative, so no quantity was made.
+      The raw value stays in ifc.property.
+    severity: warning
+    dimension: validity
+    issue_code: negative_quantity
+
+  - rule_id: conflicting_quantity
+    description: >-
+      Two different values arrive for one quantity of an object from the same source;
+      the first is stored, and the message names both.
+    severity: warning
+    dimension: consistency
+    issue_code: conflicting_quantity
+
+  # ---------------------------------------------------------- issues: classifications
+
+  - rule_id: omniclass_unparsed
+    description: >-
+      An OmniClass parameter holds no recognisable code (Revit 2013 writes only a title
+      for spaces), so no classification was made. The raw value stays in ifc.property.
+    severity: warning
+    dimension: validity
+    issue_code: omniclass_unparsed
+
+  - rule_id: incomplete_classification_reference
+    description: >-
+      An IfcClassificationReference has no code or no system, so it classifies nothing
+      and was dropped. Revit 2013 attaches such references, with an empty code and name,
+      to type objects; every element of the type gets a finding.
+    severity: warning
+    dimension: completeness
+    issue_code: incomplete_classification_reference
+
+  - rule_id: unsupported_classification
+    description: >-
+      A classification association that is not an IfcClassificationReference was
+      dropped.
+    severity: error
+    dimension: completeness
+    issue_code: unsupported_classification
+
+  - rule_id: conflicting_classification
+    description: >-
+      One classification system and code arrive with two different titles; the first is
+      stored.
+    severity: warning
+    dimension: consistency
+    issue_code: conflicting_classification
+
+  # ---------------------------------------------------------- issues: materials
+
+  - rule_id: multiple_material_associations
+    description: >-
+      An element has more than one material association; the first is used and the
+      others are ignored.
+    severity: warning
+    dimension: uniqueness
+    issue_code: multiple_material_associations
+
+  - rule_id: unsupported_material
+    description: >-
+      An element's material definition is of a kind the pipeline does not read, so the
+      element has no materials.
+    severity: error
+    dimension: completeness
+    issue_code: unsupported_material
+
+  - rule_id: unnamed_material
+    description: >-
+      A material layer or list entry has no named material, so that position, with its
+      thickness, was skipped.
+    severity: error
+    dimension: completeness
+    issue_code: unnamed_material
+
+  - rule_id: invalid_layer_thickness
+    description: >-
+      A material layer's thickness is negative or not finite, so thickness_m is NULL.
+    severity: error
+    dimension: validity
+    issue_code: invalid_layer_thickness
