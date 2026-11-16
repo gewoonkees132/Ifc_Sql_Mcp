@@ -86,8 +86,9 @@ warn_unreachable = true
 [tool.pytest]
 minversion = "9.0"
 testpaths = ["tests"]
-# scripts/ is not a package; this lets tests `import download_samples`.
-pythonpath = ["scripts"]
+# Neither folder is a package; this lets tests `import download_samples` and the shared
+# helpers in tests/support (`raw_builders`, `record_contract`).
+pythonpath = ["scripts", "tests/support"]
 strict = true
 addopts = ["-ra", "-m", "not sample"]
 markers = [
