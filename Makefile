@@ -8,7 +8,7 @@ UV ?= uv
 export
 
 .PHONY: help install up down reset-db migrate psql lint fmt typecheck test test-unit test-samples
-.PHONY: check samples ingest-samples dq dq-samples bench-load fixture quirks
+.PHONY: check samples ingest-samples dq dq-samples serve smoke bench-load fixture quirks
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -67,6 +67,13 @@ dq: ## Check every loaded model against the data quality rules, as new runs (nee
 	$(UV) run ifc-sql dq
 
 dq-samples: ingest-samples dq ## Load the four Duplex files (skipped if loaded), then check every model
+
+# The @ keeps make from echoing the command on stdout, which belongs to the protocol.
+serve: ## Run the MCP server on this terminal's stdin/stdout (an MCP client normally starts it)
+	@$(UV) run ifc-sql serve
+
+smoke: ## Start the MCP server as a client would and call a few tools (needs `make dq-samples`)
+	$(UV) run python scripts/mcp_smoke.py
 
 bench-load: ## Time the load stage on the MEP sample in a throwaway database (needs `make up`)
 	$(UV) run python scripts/bench_load.py
