@@ -16,8 +16,7 @@ from sqlalchemy import Engine, text
 from test_duplex_samples import EXPECTED as TRANSFORM_FIGURES
 
 from ifc_sql_mcp.dq.catalogue import load_catalogue
-from ifc_sql_mcp.dq.run import DqResult, check_model
-from ifc_sql_mcp.dq.sync import sync_rules
+from ifc_sql_mcp.dq.run import DqResult
 from ifc_sql_mcp.ingest.pipeline import IngestResult
 
 pytestmark = pytest.mark.sample
@@ -60,14 +59,6 @@ EXPECTED_SEVERITIES = {
     "ele": {"error": 0, "warning": 89, "info": 3_291},
     "plu": {"error": 0, "warning": 1_471, "info": 13_223},
 }
-
-
-@pytest.fixture(scope="module")
-def checked(duplex: tuple[Engine, dict[str, IngestResult]]) -> dict[str, DqResult]:
-    engine, ingested = duplex
-    with engine.begin() as connection:
-        sync_rules(connection, RULES)
-    return {key: check_model(engine, ingested[key].model_id, RULES) for key in report.FILES}
 
 
 def _nonzero(result: DqResult) -> dict[str, int]:
