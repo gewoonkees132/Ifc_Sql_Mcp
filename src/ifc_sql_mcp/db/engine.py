@@ -1,17 +1,21 @@
 """SQLAlchemy engine construction.
 
-Kept in one place so every connection the project opens gets the same options. The
-read-only engine used by the MCP server will live next to this one and add its own
-safety settings on top.
+Kept in one place so every connection the project opens gets the same options. The MCP
+server's read-only engine and the transaction each of its calls runs in live here too,
+with their own safety settings on top (ADR 6).
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import psycopg
-from sqlalchemy import Connection, Engine, create_engine, make_url
+from sqlalchemy import Connection, Engine, create_engine, make_url, text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.pool import NullPool
 
-from ifc_sql_mcp.db.schema import READER_ROLE
+from ifc_sql_mcp.config import Settings
+from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA
 
 APPLICATION_NAME = "ifc-sql-mcp"
 
@@ -38,6 +42,60 @@ def reader_database_url(database_url: str, reader_password: str) -> str:
     """
     url = make_url(database_url).set(username=READER_ROLE, password=reader_password)
     return url.render_as_string(hide_password=False)
+
+
+def make_reader_engine(settings: Settings) -> Engine:
+    """Create the MCP server's engine: the read-only role, read-only transactions, no pool.
+
+    * It connects as ``ifc_reader`` (:func:`reader_database_url`), so the server needs no
+      other password, and the owner's in ``IFC_SQL_DATABASE_URL`` is never used.
+    * Every transaction begins ``REPEATABLE READ READ ONLY``, said by the client in its
+      BEGIN, on top of the role's ``default_transaction_read_only``. A tool that runs several
+      queries (a count, then a page) sees one snapshot of the data.
+    * No pool: every call opens a new session and closes it, so nothing one call leaves
+      in its session (a setting, a session advisory lock, a prepared statement) can reach
+      the next. A new session costs about 12 ms here, against seconds per LLM tool call.
+    * ``connect_timeout`` makes an unreachable host fail in 5 seconds instead of hanging.
+    """
+    return create_engine(
+        reader_database_url(settings.database_url, settings.reader_password),
+        poolclass=NullPool,
+        isolation_level="REPEATABLE READ",
+        execution_options={"postgresql_readonly": True},
+        connect_args={"application_name": f"{APPLICATION_NAME}-server", "connect_timeout": 5},
+    )
+
+
+@contextmanager
+def reader_transaction(
+    engine: Engine, *, statement_timeout_ms: int, lock_timeout_ms: int
+) -> Iterator[Connection]:
+    """Run one MCP call: a new session, one read-only transaction with the call's limits.
+
+    ``SET LOCAL`` lasts until the transaction ends and covers every statement in it, so a
+    setting from before cannot carry over, whatever the role's defaults say. The search
+    path is pinned too, because ``run_sql`` relies on unqualified names meaning ``ifc``.
+
+    JIT compilation is switched off. These queries run in milliseconds, and compiling one
+    takes hundreds: ``ifc.model`` is too small for autovacuum ever to analyze it, so the
+    planner assumed 210 models instead of 4, costed ``v_model_summary`` above the JIT
+    threshold and compiled it, which made ``list_models`` take 0.6 s instead of 0.06 s on
+    the Duplex files.
+
+    The transaction always ends with a rollback: there is nothing to commit, and a
+    rollback also undoes a setting a query changed for the rest of the session.
+    """
+    with engine.connect() as connection:
+        transaction = connection.begin()
+        try:
+            # SET takes no bind parameters; the values are integers from the server's code.
+            connection.execute(text(f"SET LOCAL statement_timeout = {int(statement_timeout_ms)}"))
+            connection.execute(text(f"SET LOCAL lock_timeout = {int(lock_timeout_ms)}"))
+            connection.execute(text(f"SET LOCAL search_path = {SCHEMA}"))
+            connection.execute(text("SET LOCAL jit = off"))
+            yield connection
+        finally:
+            transaction.rollback()
 
 
 def redact(database_url: str) -> str:

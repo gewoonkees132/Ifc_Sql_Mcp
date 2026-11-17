@@ -8,14 +8,21 @@ migrate step, and no test can depend on (or damage) data a developer has loaded.
 
 from collections.abc import Callable, Iterator
 
+import make_revit_quirks
 import pytest
 from sqlalchemy import Connection, Engine, text
 
 from ifc_sql_mcp.config import Settings
-from ifc_sql_mcp.db.engine import make_engine, reader_database_url
+from ifc_sql_mcp.db.engine import make_engine, make_reader_engine, reader_database_url
 from ifc_sql_mcp.db.migrate import upgrade
+from ifc_sql_mcp.dq.catalogue import CATALOGUE, load_catalogue
+from ifc_sql_mcp.dq.run import check_model
+from ifc_sql_mcp.dq.sync import sync_rules
+from ifc_sql_mcp.ingest.pipeline import ingest_file
 
 CreateDatabase = Callable[[str], Settings]
+
+FIXTURE = make_revit_quirks.OUTPUT
 
 
 @pytest.fixture(scope="session")
@@ -81,4 +88,39 @@ def ingest_engine(ingest_settings: Settings) -> Iterator[Engine]:
         connection.execute(
             text("TRUNCATE ifc.model, ifc.ingestion_run, ifc.dq_rule RESTART IDENTITY CASCADE")
         )
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def mcp_settings(
+    create_database: CreateDatabase, tmp_path_factory: pytest.TempPathFactory
+) -> Settings:
+    """A database for the MCP server tests, which only read: the fixture, loaded twice.
+
+    Model 1 (ARC) is the fixture, checked by the data quality rules. Model 2 (MEP) is the
+    fixture one byte longer, a new file version, never checked. The server opens its own
+    sessions, which cannot see a test's uncommitted rows, so this is committed once.
+    """
+    settings = create_database("test_mcp")
+    upgrade(settings)
+    changed = tmp_path_factory.mktemp("mcp") / "revit_quirks.ifc"
+    changed.write_bytes(FIXTURE.read_bytes() + b"\n")
+    engine = make_engine(settings.database_url)
+    try:
+        ingest_file(engine, FIXTURE, "ARC")
+        ingest_file(engine, changed, "MEP")
+        rules = load_catalogue(CATALOGUE)
+        with engine.begin() as connection:
+            sync_rules(connection, rules)
+        check_model(engine, 1, rules)
+    finally:
+        engine.dispose()
+    return settings
+
+
+@pytest.fixture(scope="session")
+def mcp_engine(mcp_settings: Settings) -> Iterator[Engine]:
+    """The MCP server's own engine on that database: ifc_reader, read-only, no pool."""
+    engine = make_reader_engine(mcp_settings)
+    yield engine
     engine.dispose()
