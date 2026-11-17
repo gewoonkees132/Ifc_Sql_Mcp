@@ -143,3 +143,21 @@ def test_dq_refuses_a_model_id_that_is_not_a_number() -> None:
 
     assert result.exit_code == 2
     assert "Invalid value for 'MODEL_ID'" in _plain(result.output)
+
+
+def test_serve_reports_an_unreachable_database_without_either_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("IFC_SQL_DATABASE_URL", "postgresql+psycopg://ifc:s3cret@127.0.0.1:1/ifc")
+    monkeypatch.setenv("IFC_SQL_READER_PASSWORD", "r3ader")
+
+    result = runner.invoke(app, ["serve"])
+
+    assert result.exit_code == 1
+    # serve connects as ifc_reader, so that is the URL it reports.
+    assert result.stderr.startswith(
+        "cannot reach the database at postgresql+psycopg://ifc_reader:***@127.0.0.1:1/ifc: "
+    )
+    assert result.stdout == ""
+    assert "s3cret" not in result.output
+    assert "r3ader" not in result.output

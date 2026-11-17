@@ -10,12 +10,20 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.config import LOG_LEVELS, Settings, SettingsError, parse_log_level
-from ifc_sql_mcp.db.engine import make_engine, redact
-from ifc_sql_mcp.db.migrate import current_revision, head_revision, upgrade
+from ifc_sql_mcp.db.engine import make_engine, make_reader_engine, reader_database_url, redact
+from ifc_sql_mcp.db.migrate import (
+    READER_READS_REVISION_FROM,
+    RevisionUnreadableError,
+    current_revision,
+    head_revision,
+    reader_revision,
+    upgrade,
+)
 from ifc_sql_mcp.dq.catalogue import CATALOGUE, CatalogueError, load_catalogue
 from ifc_sql_mcp.dq.run import (
     DqResult,
@@ -27,6 +35,7 @@ from ifc_sql_mcp.dq.run import (
 from ifc_sql_mcp.dq.sync import sync_rules
 from ifc_sql_mcp.ingest.pipeline import IngestError, IngestResult, check_discipline, ingest_file
 from ifc_sql_mcp.logging_config import configure_logging
+from ifc_sql_mcp.server.app import build_server
 
 logger = logging.getLogger(__name__)
 
@@ -108,12 +117,15 @@ def migrate(
 
 def _require_latest_revision(settings: Settings, command: str) -> None:
     """Exit with 1 unless the database is at the latest migration, which ``command`` needs."""
-    revision = current_revision(settings)
+    _check_revision(current_revision(settings), redact(settings.database_url), command)
+
+
+def _check_revision(revision: str | None, database: str, command: str) -> None:
     if revision != head_revision():
         found = "not migrated" if revision is None else f"at revision {revision}"
         typer.echo(
-            f"the database at {redact(settings.database_url)} is {found}, but {command} needs "
-            f"revision {head_revision()}: run `ifc-sql migrate` first",
+            f"the database at {database} is {found}, but {command} needs revision "
+            f"{head_revision()}: run `ifc-sql migrate` first",
             err=True,
         )
         raise typer.Exit(1)
@@ -257,3 +269,46 @@ def dq(
         engine.dispose()
     if failed:
         raise typer.Exit(1)
+
+
+def _require_latest_revision_as_reader(engine: Engine, database: str) -> None:
+    """Like ``_require_latest_revision``, but as ``ifc_reader``: serve has no other role."""
+    try:
+        with engine.connect() as connection:
+            revision = reader_revision(connection)
+    except RevisionUnreadableError as exc:
+        typer.echo(
+            f"the database at {database} is at a revision before {READER_READS_REVISION_FROM}, "
+            f"whose version table ifc_reader may not read, but serve needs revision "
+            f"{head_revision()}: run `ifc-sql migrate` first",
+            err=True,
+        )
+        raise typer.Exit(1) from exc
+    _check_revision(revision, database, "serve")
+
+
+@app.command()
+def serve(ctx: typer.Context) -> None:
+    """Serve the loaded models to an MCP client over stdio, read-only.
+
+    An MCP client starts this command and exchanges JSON-RPC messages with it over stdin
+    and stdout; logs go to stderr. It connects only as the read-only role ifc_reader, with
+    IFC_SQL_READER_PASSWORD (the credentials in IFC_SQL_DATABASE_URL are not used), and
+    checks the database before it serves. Exit codes: 0 when the client closes the
+    connection; 1 when the database is unreachable or not at the latest migration.
+    """
+    settings: Settings = ctx.obj
+    database = redact(reader_database_url(settings.database_url, settings.reader_password))
+    engine = make_reader_engine(settings)
+    try:
+        # Fail before serving: a client shows a server that does not start as failed,
+        # while one that starts but fails every call looks healthy.
+        _require_latest_revision_as_reader(engine, database)
+        server = build_server(engine)
+        logger.info("serving", extra={"database": database, "transport": "stdio"})
+        server.run("stdio")
+    except OperationalError as exc:
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
