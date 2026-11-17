@@ -14,16 +14,18 @@ the views in [`src/ifc_sql_mcp/db/sql/views/`](../src/ifc_sql_mcp/db/sql/views/)
 the migrations in
 [`src/ifc_sql_mcp/db/migrations/versions/`](../src/ifc_sql_mcp/db/migrations/versions/).
 Every table, view and column carries a `COMMENT`. The MCP `ifc://schema` resource is
-generated from those comments, so the catalogue documents itself
-(`\d+ ifc.element` in psql shows them).
+generated from those comments ([mcp.md](mcp.md#resources)), so the catalogue documents
+itself (`\d+ ifc.element` in psql shows them).
 
 Two decisions shape most of the model. [ADR 1](adr/0001-postgresql.md) covers why
 PostgreSQL, and [ADR 2](adr/0002-properties-eav-vs-jsonb.md) covers how properties are
 stored and why everything hangs off one `object` table.
 [ADR 3](adr/0003-quantity-sources-and-precedence.md) covers where quantities come from,
 [ADR 4](adr/0004-idempotent-ingest.md) how files are loaded ([Loading](#loading) below),
-and [ADR 5](adr/0005-data-quality-rules.md) how models are checked against the data
-quality rules, which [data-quality.md](data-quality.md) describes with their findings.
+[ADR 5](adr/0005-data-quality-rules.md) how models are checked against the data
+quality rules, which [data-quality.md](data-quality.md) describes with their findings, and
+[ADR 6](adr/0006-mcp-server.md) how the MCP server serves it all to an LLM
+([mcp.md](mcp.md)).
 
 ## Entity-relationship diagram
 
@@ -373,7 +375,7 @@ come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):
 | Unreadable file | `failed` | 1 | `ingest of corrupt.ifc failed (run 9): ExtractError: corrupt.ifc: not a readable IFC file (Unable to parse IFC SPF header)` |
 | Truncated file | `failed` | 1 | `ingest of truncated.ifc failed (run 10): ExtractError: truncated.ifc: the file ends before END-ISO-10303-21; (truncated)` |
 | Database unreachable | none | 1 | `cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc: connection failed: …` (the password is masked) |
-| Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but ingest needs revision 0008: run `ifc-sql migrate` first`` |
+| Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but ingest needs revision 0009: run `ifc-sql migrate` first`` |
 | No such file; missing or invalid `--discipline` | none | 2 | Usage error, e.g. `Invalid value for '--discipline': discipline must be 2 to 8 capital letters, e.g. ARC; got 'arc'` |
 
 The outputs are from runs of the command in this container, except the concurrent one,
@@ -496,12 +498,20 @@ fitting `M_Transition - Generic:Transition - Generic:Transition - Generic:550098
 
 ## The read-only role
 
-`ifc_reader` is the role the MCP server's `run_sql` tool will use. Migration 0003
-creates it with these layers:
+`ifc_reader` is the role the MCP server connects as, for every tool and at startup
+([ADR 6](adr/0006-mcp-server.md)). Migration 0003 creates it, and 0009 adjusts it, with
+these layers:
 
 1. **Privileges, the actual boundary:** `USAGE` on schema `ifc` and `SELECT` on its
-   tables and views, nothing else. `ALTER DEFAULT PRIVILEGES` extends the grant to tables
-   and views that later migrations create. `REVOKE CREATE ON SCHEMA public FROM PUBLIC`
+   tables and views. `ALTER DEFAULT PRIVILEGES` extends the grant to tables and views
+   that later migrations create. Migration 0009 adds `SELECT` on
+   `public.alembic_version`, so that `ifc-sql serve` can check the revision without the
+   owner's password, and revokes `TEMPORARY` on the database from `PUBLIC`: PostgreSQL
+   grants it to every role, and `ifc_reader` could otherwise create and fill temporary
+   tables in a read-write transaction. Beyond that, the role has only what PostgreSQL
+   gives every role: it can read the system catalogues and execute most built-in
+   functions, which is why `run_sql` restricts both. It can read no other table, use no
+   sequence and call no file function. `REVOKE CREATE ON SCHEMA public FROM PUBLIC`
    repeats the PostgreSQL 15+ default for databases initialised by older versions.
 2. **Session defaults, guard rails on top:** per database (`ALTER ROLE … IN DATABASE`),
    `default_transaction_read_only = on`, `statement_timeout = 5s`,
@@ -513,7 +523,19 @@ creates it with these layers:
    exists with any of those, or is a member of another role, the migration refuses to
    continue rather than calling it read-only.
 
-Phase 6 adds the connection-level settings and `sqlglot` query validation on top.
+The MCP server adds its own layers on top
+([ADR 6](adr/0006-mcp-server.md#2-one-role-the-server-connects-only-as-ifc_reader)):
+
+4. **A session per call, one transaction each:** no connection pool, so nothing a call
+   leaves in its session reaches the next; every transaction begins
+   `REPEATABLE READ READ ONLY` from the client, sets `statement_timeout` (5 s),
+   `lock_timeout` (1 s), `search_path` and `jit` with `SET LOCAL`, and is rolled back.
+5. **For `run_sql`**, a sqlglot validator that refuses anything but one read-only query
+   on `ifc` with allowed functions, and a cursor (`DECLARE … CURSOR`) that PostgreSQL
+   accepts only for a single SELECT or VALUES.
+
+`tests/integration/test_privileges.py` checks the role, and
+`tests/integration/test_run_sql.py` each layer on its own.
 
 **Password.** The password comes from `IFC_SQL_READER_PASSWORD`. Its dev-only default
 is `ifc-reader-dev-only`, the same kind of public default as the development database
@@ -559,7 +581,7 @@ throwaway test databases share one server, and therefore one `ifc_reader`. So:
   to hash the password.
 
 **Writing a new migration.** Change `schema.py`, then run
-`uv run alembic revision --autogenerate --rev-id 0009 -m "…"` against a migrated
+`uv run alembic revision --autogenerate --rev-id 0010 -m "…"` against a migrated
 database. Review the result, then run `make check`.
 
 These tests keep the migrations honest:

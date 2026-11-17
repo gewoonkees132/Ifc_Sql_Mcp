@@ -41,7 +41,7 @@ be compared over time ([Reading the findings](#reading-the-findings)).
 | Model id not a number | none | 2 | Usage error: `Invalid value for 'MODEL_ID': Input should be a valid integer, …` |
 | Invalid catalogue | none | 1 | `invalid rule catalogue: dq_rules.yaml: rule 2 (value_is_not_applicable): severity must be one of error, warning, info; got 'notice'` |
 | Database unreachable | none | 1 | `cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc: connection failed: …` (the password is masked) |
-| Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but dq needs revision 0008: run `ifc-sql migrate` first`` |
+| Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but dq needs revision 0009: run `ifc-sql migrate` first`` |
 
 The outputs come from runs of the command in this container, except the failed rule and
 the invalid catalogue. Those two need an edited catalogue, so their wording is checked by
