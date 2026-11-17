@@ -10,15 +10,19 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Engine, inspect, text
+from sqlalchemy.exc import ProgrammingError
 
 from ifc_sql_mcp.config import Settings
+from ifc_sql_mcp.db.engine import make_engine, reader_database_url
 from ifc_sql_mcp.db.migrate import (
     AUTOGENERATE_OPTIONS,
     MIGRATIONS_DIR,
+    RevisionUnreadableError,
     alembic_config,
     current_revision,
     head_revision,
     migration_engine,
+    reader_revision,
 )
 from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA, metadata
 
@@ -71,6 +75,7 @@ def test_migration_history_is_one_linear_chain() -> None:
         "0006",
         "0007",
         "0008",
+        "0009",
     ]
 
 
@@ -182,3 +187,55 @@ def test_plain_alembic_cli_config_reads_settings_from_environment(
 def test_offline_sql_mode_is_refused(test_settings: Settings) -> None:
     with pytest.raises(SystemExit, match="offline"):
         command.upgrade(alembic_config(test_settings), "head", sql=True)
+
+
+def _reader_revision(settings: Settings) -> str | None:
+    engine = make_engine(reader_database_url(settings.database_url, settings.reader_password))
+    try:
+        with engine.connect() as connection:
+            return reader_revision(connection)
+    finally:
+        engine.dispose()
+
+
+def test_the_reader_sees_the_revision_from_0009_on(
+    test_settings: Settings, create_database: CreateDatabase
+) -> None:
+    """``ifc-sql serve`` checks the revision as ifc_reader; before 0009 it may not read it."""
+    older = create_database("test_reader_revision")
+    command.upgrade(alembic_config(older), "0008")
+
+    assert _reader_revision(test_settings) == head_revision()
+    with pytest.raises(
+        RevisionUnreadableError, match="permission denied for table alembic_version"
+    ):
+        _reader_revision(older)
+
+
+# The migrated test database creates the cluster-wide role, which can then connect here.
+@pytest.mark.usefixtures("test_settings")
+def test_the_reader_sees_no_revision_in_a_database_never_migrated(
+    create_database: CreateDatabase,
+) -> None:
+    empty = create_database("test_reader_empty")
+
+    assert _reader_revision(empty) is None
+
+
+def test_the_reader_reports_any_other_error_reading_the_revision_as_it_is(
+    test_settings: Settings, create_database: CreateDatabase
+) -> None:
+    """Only "permission denied" means "before 0009"; a broken version table is not that."""
+    broken = create_database("test_reader_broken")
+    engine = migration_engine(broken.database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE TABLE public.alembic_version (other text)"))
+            connection.execute(text(f"GRANT SELECT ON public.alembic_version TO {READER_ROLE}"))
+    finally:
+        engine.dispose()
+
+    with pytest.raises(
+        ProgrammingError, match=r"column alembic_version\.version_num does not exist"
+    ):
+        _reader_revision(broken)

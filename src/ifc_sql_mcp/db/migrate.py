@@ -19,6 +19,7 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import Connection, Engine, create_engine
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.pool import NullPool
 
 from ifc_sql_mcp.config import Settings
@@ -31,6 +32,10 @@ SQL_DIR = Path(__file__).parent / "sql"
 
 # Key under which the Settings travel from here to env.py and the migration scripts.
 SETTINGS_ATTRIBUTE = "settings"
+
+# migration_engine pins search_path to public, so Alembic creates its table there.
+VERSION_TABLE_SCHEMA = "public"
+INSUFFICIENT_PRIVILEGE = "42501"
 
 
 def include_name(name: str | None, type_: str, parent_names: object) -> bool:
@@ -100,6 +105,35 @@ def current_revision(settings: Settings) -> str | None:
             return MigrationContext.configure(connection).get_current_revision()
     finally:
         engine.dispose()
+
+
+READER_READS_REVISION_FROM = "0009"
+"""The migration that lets ``ifc_reader`` read the version table."""
+
+
+class RevisionUnreadableError(Exception):
+    """The read-only role may not read the version table: the database predates 0009."""
+
+
+def reader_revision(connection: Connection) -> str | None:
+    """Return the revision as the read-only role sees it, or None if never migrated.
+
+    ``ifc-sql serve`` connects only as ``ifc_reader`` (ADR 6), whose ``search_path`` is
+    ``ifc``, so the version table is looked up in ``public`` by name. Migration 0009 grants
+    SELECT on it; a database migrated only up to 0008 refuses the read.
+
+    Raises:
+        RevisionUnreadableError: The role may not read the version table.
+    """
+    context = MigrationContext.configure(
+        connection, opts={"version_table_schema": VERSION_TABLE_SCHEMA}
+    )
+    try:
+        return context.get_current_revision()
+    except ProgrammingError as exc:
+        if getattr(exc.orig, "sqlstate", None) != INSUFFICIENT_PRIVILEGE:
+            raise
+        raise RevisionUnreadableError(str(exc.orig)) from exc
 
 
 def run_sql_file(connection: Connection, relative_path: str) -> None:

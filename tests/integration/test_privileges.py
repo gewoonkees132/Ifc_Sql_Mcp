@@ -13,7 +13,7 @@ from sqlalchemy import Connection, Engine, literal_column, select, table, text
 from sqlalchemy.exc import DBAPIError, InternalError
 
 from ifc_sql_mcp.config import Settings
-from ifc_sql_mcp.db.migrate import alembic_config, current_revision
+from ifc_sql_mcp.db.migrate import alembic_config, current_revision, head_revision
 from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA
 
 INSUFFICIENT_PRIVILEGE = "42501"
@@ -81,7 +81,8 @@ def test_reader_sessions_start_with_safe_defaults(
         "CREATE TABLE ifc.scratch (a int)",
         "CREATE VIEW ifc.v_scratch AS SELECT 1 AS a",
         "CREATE TABLE public.scratch (a int)",
-        "SELECT * FROM public.alembic_version",
+        "UPDATE public.alembic_version SET version_num = '0001'",
+        "CREATE TEMP TABLE scratch (a int)",
         "SET ROLE ifc",
     ],
 )
@@ -165,3 +166,43 @@ def test_migration_refuses_a_reader_role_that_is_privileged(
         finally:
             owner.execute(text("REVOKE pg_read_all_settings FROM ifc_reader"))
             owner.commit()
+
+
+def test_reader_can_read_the_migration_revision_and_no_other_table_outside_ifc(
+    engine: Engine, reader_engine: Engine
+) -> None:
+    """Migration 0009: ``ifc-sql serve`` checks the revision without the owner's password."""
+    with reader_engine.connect() as reader:
+        revision = reader.execute(text("SELECT version_num FROM public.alembic_version")).scalar()
+    with engine.connect() as owner:
+        readable = (
+            owner.execute(
+                text(
+                    "SELECT n.nspname || '.' || c.relname FROM pg_class AS c "
+                    "JOIN pg_namespace AS n ON c.relnamespace = n.oid "
+                    "WHERE n.nspname NOT IN ('ifc', 'pg_catalog', 'information_schema') "
+                    "AND c.relkind IN ('r', 'v', 'm', 'p') "
+                    "AND has_table_privilege(:role, c.oid, 'SELECT')"
+                ),
+                {"role": READER_ROLE},
+            )
+            .scalars()
+            .all()
+        )
+
+    assert revision == head_revision()
+    assert readable == ["public.alembic_version"]
+
+
+def test_reader_may_not_create_temporary_tables(engine: Engine) -> None:
+    """PostgreSQL grants TEMPORARY to PUBLIC by default; migration 0009 revokes it."""
+    with engine.connect() as owner:
+        privileges = owner.execute(
+            text(
+                "SELECT has_database_privilege(:role, current_database(), 'TEMPORARY'), "
+                "has_database_privilege(current_user, current_database(), 'TEMPORARY')"
+            ),
+            {"role": READER_ROLE},
+        ).one()
+
+    assert tuple(privileges) == (False, True)
