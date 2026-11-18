@@ -132,3 +132,48 @@ async def test_data_quality_report_counts_what_the_run_found(
     assert {r["rule_id"]: r["findings"] for r in quality["rules"]} == EXPECTED_FINDINGS[key]
     assert all(len(r["samples"]) == min(3, r["findings"]) for r in quality["rules"])
     assert len(quality["rules_without_findings"]) == 31 - len(EXPECTED_FINDINGS[key])
+
+
+async def test_material_totals_are_not_element_totals(
+    server: tuple[MCPServer, dict[str, int]],
+) -> None:
+    """The architectural model's area by element and by material, as the README cites them."""
+    mcp, model_ids = server
+    async with connect(mcp) as client:
+        by_class = await call(
+            client, "quantity_takeoff", model_id=model_ids["arc"], group_by="ifc_class",
+            metric="area_m2",
+        )  # fmt: skip
+        by_material = await call(
+            client, "quantity_takeoff", model_id=model_ids["arc"], group_by="material",
+            metric="area_m2",
+        )  # fmt: skip
+
+    walls = next(g for g in by_class["groups"] if g["group"] == "IfcWall")
+    plasterboard = next(g for g in by_material["groups"] if g["group"] == "Plasterboard")
+    assert (by_class["basis"], by_material["basis"]) == ("element", "material")
+    assert round(by_class["total"], 1) == 2036.7
+    assert round(by_material["total"], 1) == 5329.2
+    assert (round(walls["value"], 1), round(plasterboard["value"], 1)) == (587.7, 931.9)
+
+
+async def test_run_sql_finds_the_external_walls(server: tuple[MCPServer, dict[str, int]]) -> None:
+    """The README's run_sql example, as it is written there (the ARC file loads first)."""
+    mcp, model_ids = server
+    assert model_ids["arc"] == 1
+    sql = """
+        SELECT e.revit_type, count(*) AS walls, round(sum(e.area_m2)::numeric, 1) AS area_m2
+        FROM v_element AS e JOIN property AS p ON p.object_id = e.object_id
+        WHERE e.model_id = 1 AND e.ifc_class_base = 'IfcWall'
+          AND p.pset_name = 'Pset_WallCommon' AND p.prop_name = 'IsExternal' AND p.value_bool
+        GROUP BY e.revit_type ORDER BY area_m2 DESC
+    """
+    async with connect(mcp) as client:
+        result = await call(client, "run_sql", sql=sql)
+
+    assert result["rows"] == [
+        ["Exterior - Brick on Block", 12, 272.0],
+        ["Foundation - Concrete (417mm)", 4, 64.4],
+        ["Party Wall - CMU Residential Unit Dimising Wall", 4, 61.9],
+        ["Foundation - Concrete (435mm)", 3, 12.5],
+    ]
