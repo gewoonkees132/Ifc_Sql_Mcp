@@ -193,6 +193,7 @@ tests/
   unit/                  no database needed
   integration/           real PostgreSQL, throwaway databases
   samples/               the four Duplex files (pytest -m sample)
+  modern/                the audit's Revit 2019-2022 exports (pytest -m modern)
   fixtures/              a synthetic Revit-style IFC file and the script that writes it
 scripts/                 sample download, quirks report, load benchmark, MCP smoke test
 docs/                    data model, Revit quirks, data quality, MCP server, ADRs
@@ -208,6 +209,7 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
 | [docs/adr/](docs/adr/README.md) | Six architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
+| [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog was implemented: per finding, the issue, the commits and the figures before and after |
 | [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials |
 
 `make help` lists every target.

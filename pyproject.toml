@@ -104,9 +104,10 @@ testpaths = ["tests"]
 # fixture generator (`make_revit_quirks`) and shared helpers (`record_contract`).
 pythonpath = ["scripts", "tests/fixtures", "tests/support"]
 strict = true
-addopts = ["-ra", "-m", "not sample"]
+addopts = ["-ra", "-m", "not sample and not modern"]
 markers = [
     "sample: reads the real Duplex files, downloading them if needed (deselected by default; run with -m sample)",
+    "modern: reads the audit's Revit 2019-2022 exports, downloading them if needed (deselected by default; run with -m modern)",
 ]
 filterwarnings = ["error"]
 

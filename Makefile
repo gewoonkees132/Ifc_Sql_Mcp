@@ -9,6 +9,7 @@ export
 
 .PHONY: help install up down reset-db migrate psql lint fmt typecheck test test-unit test-samples
 .PHONY: check samples ingest-samples dq dq-samples serve smoke bench-load fixture quirks
+.PHONY: audit-samples test-modern
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -52,10 +53,16 @@ test-unit: ## Unit tests only, no database needed
 test-samples: ## Tests on the four real Duplex files (downloads them if needed)
 	$(UV) run pytest -m sample
 
+test-modern: audit-samples ## The audit's acceptance tests on five Revit 2019-2022 exports
+	$(UV) run pytest -m modern
+
 check: lint typecheck test ## Everything CI runs
 
 samples: ## Download the pinned, checksum-verified Duplex sample files into data/samples/
 	$(UV) run python scripts/download_samples.py
+
+audit-samples: ## Download the audit's five pinned Revit exports (about 187 MB) into data/audit/
+	$(UV) run python scripts/download_audit_samples.py
 
 ingest-samples: samples migrate ## Load the four Duplex files as ARC, MEP, ELE and PLU (needs `make up`)
 	$(UV) run ifc-sql ingest data/samples/Duplex_A_20110907.ifc --discipline ARC

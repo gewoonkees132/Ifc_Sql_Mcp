@@ -34,6 +34,30 @@ Upstream commit `31eb1dd0a0406fb9ebf0ebd823b48e1ec95afc08`, folder
 The `arc` checksum was supplied with the project brief; the other four were computed when
 the files were first downloaded for this repository (2026-11-16).
 
+## Audit files: Revit 2019 to 2022 exports
+
+The audit of modern Revit exports ([docs/audit/](docs/audit/2026-11-modern-revit-exports.md))
+and the optional `modern` tests use five files from two public repositories:
+
+- [ThatOpen/engine_web-ifc](https://github.com/ThatOpen/engine_web-ifc), licensed under the
+  Mozilla Public License 2.0: files B and E.
+- [youshengCode/IfcSampleFiles](https://github.com/youshengCode/IfcSampleFiles), which
+  states no licence and describes itself as "a collection of IFC sample files for software
+  test use": files A, C and D.
+
+**This repository does not contain or redistribute these files.** They are downloaded on
+demand by [`scripts/download_audit_samples.py`](scripts/download_audit_samples.py) from a
+pinned upstream commit, verified against the SHA-256 checksums below, and used unmodified
+for testing only.
+
+| Key | File | Upstream commit | Bytes | SHA-256 |
+|---|---|---|---:|---|
+| `a` | `Ifc4_Revit_ARC.ifc` | IfcSampleFiles `7e69279` | 13,646,137 | `c4dd3612f126a0ca5a57f0e75d28f3e5da62751def85a452d849883c2892b518` |
+| `b` | `R8_F1_MAB_AR_M3_XX_XXX_MO_7000.ifc` | engine_web-ifc `d1962b4` | 72,882,778 | `08ab44c7a0e68efe6c1722c54235b405c0d649195254d92f964eaa47438aa62e` |
+| `c` | `Ifc4_Revit_MEP.ifc` | IfcSampleFiles `7e69279` | 29,165,277 | `829c08715d56256e04d04fa7be40ec68928e0397631c3b846efd72d003f96495` |
+| `d` | `Ifc4_Revit_ARC_FireRatingAdded.ifc` | IfcSampleFiles `7e69279` | 13,650,061 | `e015b8314d5bb64291a3ad9f7e3807beea5714469de28bb5d4c34aacd7bf4fbf` |
+| `e` | `ARK_NUS_skolebygg.ifc` | engine_web-ifc `d1962b4` | 57,304,675 | `362f0f5e5ad35557014100a6c4de75ec166f6dbd9197933170dc1423f4af2a76` |
+
 ## Synthetic test fixture
 
 The small IFC file under `tests/fixtures/` is generated from scratch by a checked-in
