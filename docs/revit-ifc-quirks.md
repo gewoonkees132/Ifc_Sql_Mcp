@@ -167,6 +167,14 @@ optional label, which is not stored (it stays in `object.name`). A name that doe
 in an id is reported (`revit_name_unparsed`) and its parts are NULL. On the four files
 every name parses and every parsed id agrees with its Tag.
 
+Revit 2019 to 2022 write a stair's parts differently: the part follows the stair's id
+after a space, `Precast Stair:Stair:1287438 Run 2`, `…:1287438 Landing 1`,
+`Assembled Stair:Stair:4959975 Stringer 10`. Each part's Tag is its own id. Such a part
+keeps the stair's family, type and ElementId, and its Tag is not compared. The part
+words are those the audit's files show (`Run`, `Landing`, `Support`, `Stringer`); any
+other is still reported. Before this, the audit's tower reported 278 of these names and
+had no Revit type on any of its 182 stair flights (audit finding A14).
+
 ## 4. Some elements have no container; furniture sits in rooms
 
 | | ARC | MEP | ELE | PLU |

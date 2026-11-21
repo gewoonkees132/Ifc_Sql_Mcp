@@ -123,6 +123,42 @@ def test_an_opening_tagged_with_its_own_id_is_normal() -> None:
     assert (parsed.element_id, issues) == (2907718, [])
 
 
+@pytest.mark.parametrize(
+    ("name", "tag"),
+    [
+        ("Precast Stair:Stair:1287438 Run 2", "1287898"),
+        ("Precast Stair:Stair:1287438 Landing 1", "1287441"),
+        ("Assembled Stair:Stair:665557 Support 3", None),
+    ],
+)
+def test_a_modern_stair_part_keeps_its_stairs_family_type_and_id(
+    name: str, tag: str | None
+) -> None:
+    """Revit 2019 to 2022 write the part after a space (audit finding A14)."""
+    family, _ = name.split(":", 1)
+    stair_id = int(name.split(":")[-1].split(" ")[0])
+    assert parse(name, tag) == (RevitName(family, "Stair", stair_id), [])
+
+
+def test_stringers_are_stair_parts_too() -> None:
+    assert parse("Assembled Stair:Stair:4959975 Stringer 10", "4960001") == (
+        RevitName("Assembled Stair", "Stair", 4959975),
+        [],
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Precast Stair:Stair:1287438 Flight 1",  # not a part word Revit was seen to write
+        "Stair:1287438 Run 1",  # no type before the stair's id
+        "Model Text:350mm Arial 2",
+    ],
+)
+def test_other_names_with_a_trailing_word_stay_reported(name: str) -> None:
+    assert parse(name)[1] == [IssueCode.REVIT_NAME_UNPARSED]
+
+
 @pytest.mark.parametrize("tag", ["", "A-12", "0"])
 def test_a_tag_that_is_not_an_element_id_is_ignored(tag: str) -> None:
     assert parse("Basic Wall:Generic:138437", tag) == (

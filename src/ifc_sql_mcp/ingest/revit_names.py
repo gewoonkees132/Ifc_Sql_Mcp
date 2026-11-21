@@ -13,6 +13,11 @@ at the sample files, there are three shapes:
 * Openings and stair parts append a part number to their host's name:
   ``...:145788:1`` or ``Stair:Residential - 200mm Max Riser 250mm Tread:151086:1``. Their
   ElementId is the host's, which is why ``revit_element_id`` is not unique.
+* Revit 2019 to 2022 name a stair's parts after the stair with the part after a space:
+  ``Precast Stair:Stair:1287438 Run 1``, ``...:1287438 Landing 2``, ``...:4959975
+  Stringer 10`` (:data:`STAIR_PARTS`). They keep the stair's family, type and ElementId;
+  their Tag is their own id, so it is not compared (audit finding A14: 278 such names on
+  the audit's tower, all 182 of its stair flights among them).
 
 A parser that takes the last segment as the ElementId gets the third shape wrong. This
 one reads the id from the end, uses the element's Tag (where Revit also writes the
@@ -28,6 +33,11 @@ from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 
 _DIGITS = re.compile(r"[0-9]+")
 _BIGINT_MAX = 2**63 - 1
+
+STAIR_PARTS = ("Run", "Landing", "Support", "Stringer")
+"""The part words Revit 2019 to 2022 write after a stair's ElementId, as the audit's files
+show them; another word is not guessed at and stays reported."""
+_STAIR_PART = re.compile(rf"([0-9]+) (?:{'|'.join(STAIR_PARTS)}) [0-9]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +82,10 @@ def parse_revit_name(
     if name is None or not name.strip():
         return _NOTHING, []
     segments = name.split(":")
+    part = _STAIR_PART.fullmatch(segments[-1])
+    stair_id = _as_id(part.group(1)) if part else None
+    if stair_id is not None and len(segments) >= 3:
+        return _parts(global_id, name, stair_id, segments[:-1], [])
 
     # Each candidate is (ElementId, the segments before it).
     candidates: list[tuple[int, list[str]]] = []
@@ -97,6 +111,13 @@ def parse_revit_name(
         message = f"name {name!r} gives ElementId {element_id}, but Tag is {tag!r}"
         issues.append(Issue(IssueCode.REVIT_TAG_MISMATCH, global_id, message))
 
+    return _parts(global_id, name, element_id, body, issues)
+
+
+def _parts(
+    global_id: str, name: str, element_id: int, body: list[str], issues: list[Issue]
+) -> tuple[RevitName, list[Issue]]:
+    """Family and type from the segments before the ElementId."""
     # body is [Family, Type] or [Family, Type, Label]; anything else is ambiguous.
     if len(body) not in (2, 3) or not body[0].strip() or not body[1].strip():
         message = f"name {name!r} has no clear Family:Type before ElementId {element_id}"

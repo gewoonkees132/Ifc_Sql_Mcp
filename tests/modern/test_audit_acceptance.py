@@ -278,7 +278,8 @@ def test_a9_the_loaders_gaps_are_reported_apart_from_the_models(modern: Modern) 
     # What the architect can fix in Revit...
     assert "model_without_quantities" in by_scope["model_content"]
     # ...and what this tool does not read yet, which no longer counts against the model.
-    assert set(by_scope["loader_coverage"]) <= {
+    # Since A13 and A14 there is none left on B.
+    assert set(by_scope.get("loader_coverage", [])) <= {
         "measure_not_converted",
         "revit_name_unparsed",
         "unsupported_property",
@@ -295,7 +296,9 @@ def test_a9_the_loaders_gaps_are_reported_apart_from_the_models(modern: Modern) 
         )
     assert report.findings_by_scope is not None
     assert report.findings_by_scope["model_content"].error == 0
-    assert {rule.scope for rule in report.rules} == {"loader_coverage"}
+    # The scope filter keeps model-content rules out: none is left after A13 and A14.
+    assert {rule.scope for rule in report.rules} <= {"loader_coverage"}
+    assert report.findings_by_scope["loader_coverage"].warning == 0
 
 
 # The door schedule of level XX_AR_L01 of file B, as docs/audit/harness/door_schedule.py
@@ -422,7 +425,6 @@ def test_a13_normal_revit_behaviour_is_not_reported(modern: Modern) -> None:
     assert u_values == [("W/(m2*K)", 2_208)]
 
 
-@_open("A14", 16)
 def test_a14_every_stair_flight_has_its_revit_type(modern: Modern) -> None:
     typed = modern.scalar(
         "SELECT count(revit_type) FROM ifc.v_element "
@@ -431,6 +433,17 @@ def test_a14_every_stair_flight_has_its_revit_type(modern: Modern) -> None:
     )
 
     assert typed == 182
+    unparsed = {
+        key: modern.findings(key, "revit_name_unparsed") for key in ("a", "b", "c", "d", "e")
+    }
+    # What is left: E's two Model Text proxies, whose names end in no ElementId.
+    assert unparsed == {"a": 0, "b": 0, "c": 0, "d": 0, "e": 2}
+    flights = modern.rows(
+        "SELECT revit_family, revit_type, count(*) FROM ifc.v_element WHERE model_id = :m "
+        "AND ifc_class_base = 'IfcStairFlight' GROUP BY 1, 2",
+        m=modern.model("b"),
+    )
+    assert flights == [("Precast Stair", "Stair", 182)]
 
 
 @_open("A16", 18)

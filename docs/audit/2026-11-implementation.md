@@ -80,6 +80,7 @@ the test module for findings that add a tool or a command.
 | A11 | Schedules cost too much context | [#13](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/13) | done | `test_a11_a_door_schedule_fits_in_a_few_kilobytes`: B's L01 door schedule, ~490,000 characters by paging → 4,181; 159 doors in 6 types, every width as IfcOpenShell reads it |
 | A12 | Projects and versions are guessed from the file | [#14](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/14) | done | `test_a12_a_placeholder_project_number_joins_no_project`, `test_a12_a_new_export_replaces_the_old_one_in_project_wide_views`: B aligned with other models 1 → 0; A next to its re-export D 2 models → 1 |
 | A13 | Findings that are noise | [#15](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/15) | done | `test_a13_normal_revit_behaviour_is_not_reported`: B's U-value and opening-tag findings 6,488 → 0; its warnings 6,778 → 290 |
+| A14 | Modern stair part names are not parsed | [#16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/16) | done | `test_a14_every_stair_flight_has_its_revit_type`: B's stair flights with a Revit type 0 → 182 of 182; `revit_name_unparsed` 278 / 3 / 61 → 0 / 0 / 2 on B / A / E |
 
 ## Per finding
 
@@ -455,4 +456,24 @@ the test module for findings that add a tool or a command.
   | B: `revit_tag_mismatch` on openings | 2,072 | **0** |
   | B: warnings (model content / loader coverage) | 6,778 (2,084 / 4,694) | **290** (12 / 278: the stair names of A14) |
   | E: `measure_not_converted` | 1,624 | **0**: power, pressure, flow, U-values and voltage get their unit |
+
+### A14: modern stair part names are not parsed
+
+- **Rule.** A last name segment `<ElementId> <part> <n>` is a stair part, where the part
+  word is `Run`, `Landing`, `Support` or `Stringer`. The part keeps its stair's family,
+  type and ElementId, as the Revit 2011 parts (`…:151086:1`) already do. Its Tag is not
+  compared: on all 343 such parts of A, B, D and E, the Tag is the part's own id.
+- **Decisions.**
+  - *`Stringer` added on evidence.* The audit named `Run`, `Landing` and `Support`. File
+    E (Revit 2019) also writes `Assembled Stair:Stair:4959975 Stringer 10`, 23 times.
+  - *No other word is guessed.* `…:1287438 Flight 1` stays reported, because no file
+    shows it. So do E's two `Model Text:350mm Arial 2` proxies, which end in no
+    ElementId.
+- **Before → after**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | B: stair flights with a Revit type | 0 of 182 | **182 of 182** (`Precast Stair` : `Stair`) |
+  | `revit_name_unparsed` on B / A / E | 278 / 3 / 61 | **0 / 0 / 2** |
+  | B: warnings left (all scopes) | 290 after A13 | **12**, all model content |
 
