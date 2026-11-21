@@ -5,8 +5,11 @@ This is the record of how the backlog in
 finding, the GitHub issue, the commits, the decision taken where the audit left a choice,
 and the figure measured on the audit's own files before and after the fix.
 
+- **Status:** all 18 findings done; one sub-item, A18's embedded database, deferred
+  ([After](#after-every-finding-done)).
 - **Tracking issue:** [#2](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/2), with one
-  sub-issue per finding (A1 → #3 … A18 → #20).
+  sub-issue per finding (A1 → #3 … A18 → #20), each closed with its before and after
+  figures and its CI run.
 - **Branch:** `ccr-010fe6a4-5gswo3`, starting from the audit commit `0366a46` (which audited
   `15841f4`).
 - **Proof on the real files:** `make test-modern` loads the five audit files (pinned,
@@ -60,31 +63,80 @@ the one the audit reports.
 
 The test suite at the start: 867 passed, 2 failed (both A17), exactly as the audit says.
 
+## After: every finding done
+
+Measured the same way, on `d7c4072`, the last fix
+([evidence/figures_after.md](evidence/figures_after.md)). Each figure now equals the
+audit's ground truth:
+
+| Finding | Figure | Before | After |
+|---|---|---:|---:|
+| A1 | A: wall area (`v_element.area_m2`), m² | null | **946.0** |
+| A1 | C: spaces with an area | 0 of 163 | **163 of 163** |
+| A2 | A: sum of stored `NetSideArea`, m² | 1,157,891,673.6 | **946.0** |
+| A3 | B: elements of wall type `1AR_MUR_CV003` | 2,330 | **1,165** |
+| A4 | B: doors / windows with `width_m` | 0 / 0 | **1,458 / 1,199** |
+| A4 | B: `unsupported_property_set` findings | 1,458 | **0** |
+| A5 | B: walls with an area, with `--geometry` | 0 of 6,095 | **6,095 of 6,095** (103,057.7 m²) |
+| A6 | A: windows with a material; C: `unsupported_material` | 0 of 17; 295 | **17 of 17; 0** |
+| A7 | C: `duplicate_space` findings | 0 | **47** |
+| A8 | B: area takeoff by Revit type, total | 0 | **null**, with its coverage and a warning |
+| A9 | B: errors / warnings / info | 1,458 / 6,766 / 0 | **0** / 743 / 8,079, all model content |
+| A9 | B: `model_without_quantities`; C: `space_without_area` | 0; 163 | **1; 0** |
+| A10 | The sessions' 20 failed calls: errors naming what to use | 0 | **20** |
+| A11 | B: door schedule of `XX_AR_L01`, characters | ~490,000 by paging | **3,177** in one call |
+| A12 | B: other models it is aligned with | 1 | **0** |
+| A13 | B: U-values unconverted; tag mismatches on openings | 4,416; 2,072 | **0; 0** |
+| A14 | B: stair flights with a Revit type | 0 of 182 | **182 of 182** |
+| A15 | D vs A: FireRating added on walls / curtain walls | hand-written SQL | **42 / 9** in one call |
+| A16 | B: elements whose `revit_type` holds a control character | 764 | **0** |
+| A17 | Test suite on Ubuntu's PostgreSQL 16 | 867 passed, 2 failed | **1,057 passed**, at any terminal width |
+| A18 | Commands per re-export | `ingest`, then `dq` | **none**, with `ifc-sql watch` |
+
+B's 743 warnings after the fixes are the model's own: 731 `control_character_in_name`
+(A16), and 12 that name its missing quantities and rooms, its placeholder project
+information and its 9 placeholder materials. None is a gap in the loader.
+
+What the backlog added:
+- **11 MCP tools**, 8 before: `describe_schema` (A10), `schedule` (A11) and
+  `compare_models` (A15).
+- **Two `ifc-sql` options** (`ingest --project/--replaces`, A12; `--geometry`, A5) and
+  one command (`watch`, A18).
+- **Migrations 0010 to 0018**, **ADRs 7 to 10**, and 45 data quality rules (31 before).
+- **Tests:** 1,057 unit and integration tests at 100 % branch coverage (869 before),
+  and 126 sample and acceptance tests on the Duplex and the audit's five files. The
+  acceptance suite has no `xfail` left.
+
+**Deferred:** A18's embedded database, so that one user needs no Docker (item 4 of
+the finding, deferred in its issue as well).
+
 ## Ledger
 
-One row per finding, in the order they were done. "Proof" names the acceptance test, or
-the test module for findings that add a tool or a command.
+One row per finding, in the order they were done, with the commit that did it and the CI
+run that passed on it. "Proof" names the acceptance test, or the test module for findings
+that add a tool or a command. The acceptance suite itself landed first, in
+[`942ded9`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/942ded9) ([run 17](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44898348427)).
 
-| # | Finding | Issue | Status | Proof |
-|---|---|---|---|---|
-| A17 | Two tests depend on the environment | [#19](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/19) | done | full suite green on Ubuntu's PostgreSQL 16 and at any terminal width |
-| A3 | Grouping by Revit type counts openings as walls and doors | [#5](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/5) | done | `test_a3_a_wall_type_counts_its_walls_not_their_openings`: 2,330 → 1,165 |
-| A8 | Unknown totals are reported as 0 | [#10](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/10) | done | `test_a8_an_area_nobody_measured_is_not_zero`: total 0 → null, with a warning |
-| A2 | Revit 2021's duplicated, unscaled quantities reach the LLM | [#4](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/4) | done | `test_a2_the_stored_wall_areas_add_up_to_the_real_total`: 1,157,891,673.6 → 946.0 m² |
-| A1 | The quantity sets modern Revit writes are ignored | [#3](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/3) | done | `test_a1_modern_quantity_sets_become_quantities`: A wall area null → 946.0 m², C spaces 0 → 163 of 163 |
-| A4 | Door and window sizes are not loaded | [#6](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/6) | done | `test_a4_doors_and_windows_have_their_sizes`: 0 → 1,458 of 1,458 doors, `PI005` 1.697 m wide |
-| A6 | IFC4 material constituent sets are not read | [#8](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/8) | done | `test_a6_ifc4_doors_and_windows_have_their_materials`: A windows 0 → 17 of 17 |
-| A7 | Rooms exported twice are counted twice | [#9](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/9) | done | `test_a7_rooms_exported_twice_are_found`: 0 → 47; 6,124.8 m² without duplicates |
-| A9 | Data quality measures the loader, not the model | [#11](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/11) | done | `test_a9_data_quality_reports_what_the_model_lacks`, `test_a9_the_loaders_gaps_are_reported_apart_from_the_models`: B: errors that are loader gaps 1,458 → 0; no quantities, no rooms, placeholder project and materials, 8,079 missing fire ratings: none reported → all reported |
-| A10 | The LLM cannot find the schema | [#12](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/12) | done | `tests/integration/test_schema_discovery.py`: of the sessions' 20 failed calls, errors that name what to use 0 → 20 |
-| A11 | Schedules cost too much context | [#13](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/13) | done | `test_a11_a_door_schedule_fits_in_a_few_kilobytes`: B's L01 door schedule, ~490,000 characters by paging → 4,181; 159 doors in 6 types, every width as IfcOpenShell reads it |
-| A12 | Projects and versions are guessed from the file | [#14](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/14) | done | `test_a12_a_placeholder_project_number_joins_no_project`, `test_a12_a_new_export_replaces_the_old_one_in_project_wide_views`: B aligned with other models 1 → 0; A next to its re-export D 2 models → 1 |
-| A13 | Findings that are noise | [#15](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/15) | done | `test_a13_normal_revit_behaviour_is_not_reported`: B's U-value and opening-tag findings 6,488 → 0; its warnings 6,778 → 290 |
-| A14 | Modern stair part names are not parsed | [#16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/16) | done | `test_a14_every_stair_flight_has_its_revit_type`: B's stair flights with a Revit type 0 → 182 of 182; `revit_name_unparsed` 278 / 3 / 61 → 0 / 0 / 2 on B / A / E |
-| A15 | No way to compare two exports | [#17](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/17) | done | `test_a15_what_changed_between_two_exports`: A → D gives FireRating added on 42 walls and 9 curtain walls, 4 openings removed and 4 added, in one call |
-| A5 | No geometry quantities for files that carry none | [#7](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/7) | done | `test_a5_files_without_quantities_get_them_from_the_geometry`: B's walls with an area 0 → 6,095 of 6,095 (103,057.7 m²); A 964.6 m², within 2 % of 946.0 |
-| A18 | The path from Revit to a question is long | [#20](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/20) | done (item 4 deferred) | `docs/revit-export-settings.md`, `docs/windows.md`, `tests/integration/test_watch.py`: a saved export is loaded, checked, and replaces its previous version with no command per file |
-| A16 | Control characters in names | [#18](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/18) | done | `test_a16_revit_types_hold_no_control_characters`: B's elements with a control character in `revit_type` 731 → 0, each reported |
+| # | Finding | Issue | Commit | CI | Status | Proof |
+|---|---|---|---|---|---|---|
+| A17 | Two tests depend on the environment | [#19](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/19) | [`0ffa380`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/0ffa380) | [run 16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44897441922) | done | full suite green on Ubuntu's PostgreSQL 16 and at any terminal width |
+| A3 | Grouping by Revit type counts openings as walls and doors | [#5](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/5) | [`a5678f5`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/a5678f5) | [run 18](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44899323130) | done | `test_a3_a_wall_type_counts_its_walls_not_their_openings`: 2,330 → 1,165 |
+| A8 | Unknown totals are reported as 0 | [#10](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/10) | [`8238152`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/8238152) | [run 19](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44899790358) | done | `test_a8_an_area_nobody_measured_is_not_zero`: total 0 → null, with a warning |
+| A2 | Revit 2021's duplicated, unscaled quantities reach the LLM | [#4](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/4) | [`87a17f2`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/87a17f2) | [run 20](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44901496878) | done | `test_a2_the_stored_wall_areas_add_up_to_the_real_total`: 1,157,891,673.6 → 946.0 m² |
+| A1 | The quantity sets modern Revit writes are ignored | [#3](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/3) | [`1765c3f`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/1765c3f) | [run 21](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44902246558) | done | `test_a1_modern_quantity_sets_become_quantities`: A wall area null → 946.0 m², C spaces 0 → 163 of 163 |
+| A4 | Door and window sizes are not loaded | [#6](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/6) | [`c9750b7`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/c9750b7) | [run 22](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44903075805) | done | `test_a4_doors_and_windows_have_their_sizes`: 0 → 1,458 of 1,458 doors, `PI005` 1.697 m wide |
+| A6 | IFC4 material constituent sets are not read | [#8](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/8) | [`f3dbb65`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/f3dbb65) | [run 23](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44903437327) | done | `test_a6_ifc4_doors_and_windows_have_their_materials`: A windows 0 → 17 of 17 |
+| A7 | Rooms exported twice are counted twice | [#9](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/9) | [`a61c1aa`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/a61c1aa) | [run 24](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44904111916) | done | `test_a7_rooms_exported_twice_are_found`: 0 → 47; 6,124.8 m² without duplicates |
+| A9 | Data quality measures the loader, not the model | [#11](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/11) | [`c060d29`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/c060d29) | [run 25](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44906331648) | done | `test_a9_data_quality_reports_what_the_model_lacks`, `test_a9_the_loaders_gaps_are_reported_apart_from_the_models`: B: errors that are loader gaps 1,458 → 0; no quantities, no rooms, placeholder project and materials, 8,079 missing fire ratings: none reported → all reported |
+| A10 | The LLM cannot find the schema | [#12](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/12) | [`31df858`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/31df858) | [run 26](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44907694706) | done | `tests/integration/test_schema_discovery.py`: of the sessions' 20 failed calls, errors that name what to use 0 → 20 |
+| A11 | Schedules cost too much context | [#13](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/13) | [`ad85210`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/ad85210) | [run 27](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44908735304) | done | `test_a11_a_door_schedule_fits_in_a_few_kilobytes`: B's L01 door schedule, ~490,000 characters by paging → 4,181; 159 doors in 6 types, every width as IfcOpenShell reads it |
+| A12 | Projects and versions are guessed from the file | [#14](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/14) | [`08e602f`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/08e602f) | [run 28](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44910081973) | done | `test_a12_a_placeholder_project_number_joins_no_project`, `test_a12_a_new_export_replaces_the_old_one_in_project_wide_views`: B aligned with other models 1 → 0; A next to its re-export D 2 models → 1 |
+| A13 | Findings that are noise | [#15](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/15) | [`e1ed907`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/e1ed907) | [run 29](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44911150563) | done | `test_a13_normal_revit_behaviour_is_not_reported`: B's U-value and opening-tag findings 6,488 → 0; its warnings 6,778 → 290 |
+| A14 | Modern stair part names are not parsed | [#16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/16) | [`1c7ce26`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/1c7ce26) | [run 30](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44911715757) | done | `test_a14_every_stair_flight_has_its_revit_type`: B's stair flights with a Revit type 0 → 182 of 182; `revit_name_unparsed` 278 / 3 / 61 → 0 / 0 / 2 on B / A / E |
+| A16 | Control characters in names | [#18](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/18) | [`5cd7304`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/5cd7304) | [run 31](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44912501570) | done | `test_a16_revit_types_hold_no_control_characters`: B's elements with a control character in `revit_type` 731 → 0, each reported |
+| A15 | No way to compare two exports | [#17](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/17) | [`868d83a`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/868d83a) | [run 32](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44913090383) | done | `test_a15_what_changed_between_two_exports`: A → D gives FireRating added on 42 walls and 9 curtain walls, 4 openings removed and 4 added, in one call |
+| A5 | No geometry quantities for files that carry none | [#7](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/7) | [`49904da`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/49904da) | [run 33](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44914670315) | done | `test_a5_files_without_quantities_get_them_from_the_geometry`: B's walls with an area 0 → 6,095 of 6,095 (103,057.7 m²); A 964.6 m², within 2 % of 946.0 |
+| A18 | The path from Revit to a question is long | [#20](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/20) | [`d7c4072`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/d7c4072) | [run 34](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/44915311944) | done (item 4 deferred) | `docs/revit-export-settings.md`, `docs/windows.md`, `tests/integration/test_watch.py`: a saved export is loaded, checked, and replaces its previous version with no command per file |
 
 ## Per finding
 

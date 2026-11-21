@@ -97,6 +97,28 @@ def scopes(c: Connection, m: dict[str, int]) -> Any:
     )
 
 
+def door_schedule_size(c: Connection, m: dict[str, int]) -> Any:
+    """Characters of the schedule tool's door schedule of B's level XX_AR_L01 (A11)."""
+    result = tools.schedule(
+        c, m["b"], "IfcDoor", ["revit_type"], ["width_m", "height_m"], storey_name="XX_AR_L01"
+    )
+    return (
+        f"{len(result.model_dump_json()):,} ({result.elements} doors, {len(result.groups)} types)"
+    )
+
+
+def fire_ratings_added(c: Connection, m: dict[str, int]) -> Any:
+    """compare_models from A to D: FireRating values added on walls and curtain walls (A15)."""
+    from ifc_sql_mcp.server import compare  # absent before A15, which then prints "n/a"
+
+    changes = {
+        change.pset_name: change.added
+        for change in compare.compare_models(c, m["d"], m["a"]).property_changes
+        if change.prop_name == "FireRating"
+    }
+    return f"{changes['Pset_WallCommon']} / {changes['Pset_CurtainWallCommon']}"
+
+
 WITH_WIDTH = """
 SELECT count(DISTINCT q.object_id) FROM ifc.quantity AS q JOIN ifc.object AS o USING (object_id)
 WHERE o.model_id = :m AND o.ifc_class_base = :class AND q.name = 'width_m'
@@ -154,6 +176,26 @@ FIGURES: list[tuple[str, str, str, Measure]] = [
         ),
     ),
     ("A6", "C: unsupported_material findings", "0", findings("unsupported_material", "c")),
+    (
+        "A5",
+        "B: walls with area_m2 (loaded with --geometry)",
+        "6,095 of 6,095",
+        sql(
+            "SELECT count(area_m2) FROM ifc.v_element "
+            "WHERE model_id = :m AND ifc_class_base = 'IfcWall'",
+            "b",
+        ),
+    ),
+    (
+        "A5",
+        "B: their area, m² (loaded with --geometry)",
+        "103,057.7",
+        sql(
+            "SELECT round(sum(area_m2)::numeric, 1) FROM ifc.v_element "
+            "WHERE model_id = :m AND ifc_class_base = 'IfcWall'",
+            "b",
+        ),
+    ),
     ("A7", "C: duplicate_space findings", "47", findings("duplicate_space", "c")),
     ("A8", "B: area takeoff by Revit type, total", "null", takeoff_total),
     ("A9", "B: findings error / warning / info", "(model gaps, not loader gaps)", severities),
@@ -161,6 +203,7 @@ FIGURES: list[tuple[str, str, str, Measure]] = [
     ("A9", "B: model_without_quantities findings", "1", findings("model_without_quantities", "b")),
     ("A9", "B: placeholder_project_info findings", "1", findings("placeholder_project_info", "b")),
     ("A9", "C: space_without_area findings", "0", findings("space_without_area", "c")),
+    ("A11", "B: door schedule of XX_AR_L01, characters", "< 10,000", door_schedule_size),
     (
         "A12",
         "B: other models it is aligned with (v_storey_alignment)",
@@ -197,6 +240,7 @@ FIGURES: list[tuple[str, str, str, Measure]] = [
             "b",
         ),
     ),
+    ("A15", "D vs A: FireRating added on walls / curtain walls", "42 / 9", fire_ratings_added),
     (
         "A16",
         "B: elements whose revit_type holds a control character",
