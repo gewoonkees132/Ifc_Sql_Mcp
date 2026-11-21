@@ -298,6 +298,7 @@ materials in layer order, and the object's findings in the latest check (at most
 | `model_id` | integer ≥ 1 | required |
 | `group_by` | `storey`, `ifc_class`, `revit_type`, `material` | required |
 | `metric` | `count`, `length_m`, `area_m2`, `volume_m3` | required |
+| `include_openings` | boolean | default false |
 
 One metric totalled per group. Each group has `group` (the name; null for no storey,
 no Revit type or no material), `group_id` (storey or material id), `elements`,
@@ -314,7 +315,17 @@ lowest first). What a combination means depends on the grouping:
 The first three are element totals, and `elements_with_value` says how many elements of
 a group have the metric at all. A wall's area is one face. `material` gives material
 totals, which are not element totals; the result says so in `basis` (`element` or
-`material`) and `note`. On the architectural model:
+`material`) and `note`.
+
+Openings, voids and projections (`IfcFeatureElement`, `v_element.is_feature`) are left out
+of every grouping unless `include_openings` is true, and `openings_left_out` says how many
+were. Revit names an opening after the wall or door it cuts, so counting it would count
+that wall twice: 2,330 "walls" of a type with 1,165 on the audit's Revit 2022 tower
+([audit finding A3](audit/2026-11-modern-revit-exports.md#a3-grouping-by-revit-type-counts-openings-as-walls-and-doors)).
+Revit 2011 also copies a roof's `Dimensions` onto each of its openings, so on the
+architectural model below the roof's 132.9 m² used to be counted five times.
+
+On the architectural model:
 
 ```jsonc
 // quantity_takeoff {"model_id": 1, "group_by": "ifc_class", "metric": "area_m2"}
@@ -322,16 +333,17 @@ totals, which are not element totals; the result says so in `basis` (`element` o
   "model_id": 1, "group_by": "ifc_class", "metric": "area_m2", "unit": "m2",
   "basis": "element",
   "note": "Each element is counted once, with its own quantity from v_element. …",
+  "include_openings": false, "openings_left_out": 50,
   "groups": [
     {"group": "IfcWall", "group_id": null, "elements": 57, "elements_with_value": 56,
-     "value": 587.6854224000201},
+     "value": 587.6854224000203},
     {"group": "IfcSlab", "group_id": null, "elements": 21, "elements_with_value": 20,
      "value": 540.919223340545},
-    {"group": "IfcOpeningElement", "group_id": null, "elements": 50, "elements_with_value": 4,
-     "value": 531.7041439199988},
-    …  // 14 groups
+    {"group": "IfcCovering", "group_id": null, "elements": 13, "elements_with_value": 13,
+     "value": 243.4588511799992},
+    …  // 13 groups
   ],
-  "total": 2036.6936768205628,
+  "total": 1504.9895329005642,
   "truncated": false
 }
 
@@ -344,11 +356,11 @@ totals, which are not element totals; the result says so in `basis` (`element` o
      "value": 931.9215685800265},
     {"group": "Metal - Stud Layer", "group_id": 10, "elements": 63, "elements_with_value": null,
      "value": 816.1357185800211},
-    {"group": null, "group_id": null, "elements": 169, "elements_with_value": null,
-     "value": 531.7041439199988},
+    {"group": "Insulation / Thermal Barriers - Rigid insulation", "group_id": 4,
+     "elements": 13, "elements_with_value": null, "value": 404.9254519800101},
     …  // 19 groups
   ],
-  "total": 5329.195402241181
+  "total": 4797.491258321183
 }
 ```
 

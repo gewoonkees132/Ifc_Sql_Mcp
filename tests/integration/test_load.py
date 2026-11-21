@@ -73,8 +73,9 @@ READ_BACK = {
     ),
     "elements": (
         ElementRecord,
-        "SELECT o.global_id, container.global_id, storey.global_id, e.tag, e.revit_family, "
-        "e.revit_type, e.revit_element_id, e.type_name, e.predefined_type "
+        "SELECT o.global_id, container.global_id, storey.global_id, e.tag, e.is_feature, "
+        "e.revit_family, e.revit_type, e.host_revit_family, e.host_revit_type, "
+        "e.revit_element_id, e.type_name, e.predefined_type "
         "FROM ifc.element AS e JOIN ifc.object AS o USING (object_id) "
         "LEFT JOIN ifc.object AS container ON e.container_id = container.object_id "
         "LEFT JOIN ifc.object AS storey ON e.storey_id = storey.object_id "

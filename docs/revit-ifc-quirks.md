@@ -133,7 +133,12 @@ column becomes NULL with an `invalid_elevation` issue.
   `M_Fixed:4835mm x 2420mm:4835mm x 2420mm:145788:1`,
   `Stair:Residential - 200mm Max Riser 250mm Tread:151086:1`. Their ElementId is the
   host's, which is why `revit_element_id` is indexed but not unique. Taking the last
-  segment as the id would give these elements id 1.
+  segment as the id would give these elements id 1. An opening's family and type are its
+  host's too, so they are stored as `host_revit_family` and `host_revit_type`, not as its
+  own: 48 of the architectural model's 50 openings, and all 3,314 of the audit's Revit
+  2022 tower, would otherwise double the count of their wall, door or window type. Revit
+  2011 also copies its host roof's `Dimensions` onto an opening: 4 openings in the
+  architectural model carry the roof's 132.9 m², which takeoffs now leave out with them.
 
 Revit also writes the ElementId into `Tag`:
 

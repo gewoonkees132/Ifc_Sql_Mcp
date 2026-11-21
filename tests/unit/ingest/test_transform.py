@@ -12,6 +12,7 @@ from ifc_sql_mcp.ingest.transform import (
     TransformError,
     authoring_app,
     base_class,
+    is_feature,
     material_layers,
     parse_mvd,
     predefined_type,
@@ -75,6 +76,49 @@ def test_authoring_app(name: str | None, version: str | None, app: str | None) -
 )
 def test_base_class_skips_case_subtypes_only(ancestry: tuple[str, ...], base: str) -> None:
     assert base_class(ancestry[0], ancestry) == base
+
+
+@pytest.mark.parametrize(
+    ("ancestry", "feature"),
+    [
+        (("IfcOpeningStandardCase", "IfcOpeningElement", "IfcFeatureElementSubtraction",
+          "IfcFeatureElement", "IfcElement"), True),
+        (("IfcVoidingFeature", "IfcFeatureElementSubtraction", "IfcFeatureElement"), True),
+        (("IfcProjectionElement", "IfcFeatureElementAddition", "IfcFeatureElement"), True),
+        (("IfcWallStandardCase", "IfcWall", "IfcBuildingElement", "IfcElement"), False),
+        # The decision follows the schema's inheritance, never the class's name.
+        (("IfcOpeningElementLookalike", "IfcBuildingElementProxy", "IfcElement"), False),
+    ],
+)  # fmt: skip
+def test_feature_elements_are_found_by_inheritance(
+    ancestry: tuple[str, ...], feature: bool
+) -> None:
+    assert is_feature(ancestry) is feature
+
+
+def test_a_feature_elements_name_parts_are_its_hosts() -> None:
+    level = spatial("level", "IfcBuildingStorey")
+    wall = element("wall", name="Basic Wall:Generic 200mm:1044048", tag="1044048")
+    opening = element(
+        "opening",
+        "IfcOpeningElement",
+        ancestry=("IfcOpeningElement", "IfcFeatureElementSubtraction", "IfcFeatureElement"),
+        name="Basic Wall:Generic 200mm:1044048:1",
+        host_global_id=wall.global_id,
+    )
+
+    records = {e.global_id: e for e in transform(model((level,), (wall, opening))).elements}
+
+    host, feature = records[wall.global_id], records[opening.global_id]
+    assert (host.is_feature, host.revit_family, host.revit_type) == (
+        False,
+        "Basic Wall",
+        "Generic 200mm",
+    )
+    assert (host.host_revit_family, host.host_revit_type) == (None, None)
+    assert (feature.is_feature, feature.revit_family, feature.revit_type) == (True, None, None)
+    assert (feature.host_revit_family, feature.host_revit_type) == ("Basic Wall", "Generic 200mm")
+    assert feature.revit_element_id == host.revit_element_id == 1044048
 
 
 def test_base_class_without_ancestry_is_the_class_itself() -> None:

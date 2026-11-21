@@ -60,14 +60,22 @@ class SpatialElementRecord:
 
 @dataclass(frozen=True, slots=True)
 class ElementRecord:
-    """A row for ``ifc.element``; the two ``*_global_id`` fields become ``*_id``."""
+    """A row for ``ifc.element``; the two ``*_global_id`` fields become ``*_id``.
+
+    A feature element (an opening, say) has its name's family and type in the ``host_*``
+    fields, because Revit names it after the element it cuts; ``revit_family`` and
+    ``revit_type`` are then ``None``.
+    """
 
     global_id: str
     container_global_id: str | None
     storey_global_id: str | None
     tag: str | None
+    is_feature: bool
     revit_family: str | None
     revit_type: str | None
+    host_revit_family: str | None
+    host_revit_type: str | None
     revit_element_id: int | None
     type_name: str | None
     predefined_type: str | None

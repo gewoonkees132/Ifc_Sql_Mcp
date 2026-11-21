@@ -101,8 +101,11 @@ erDiagram
         bigint container_id FK "storey or space"
         bigint storey_id FK "resolved storey"
         text tag
+        boolean is_feature "opening, void, projection"
         text revit_family
         text revit_type
+        text host_revit_family "features only"
+        text host_revit_type "features only"
         bigint revit_element_id
         text type_name
         text predefined_type
@@ -200,7 +203,7 @@ Duplex files and how the extract and transform stages handle it.
 | Quirk in Revit exports | Where the schema handles it |
 |---|---|
 | No `Qto_*` base quantities; quantities sit in `PSet_Revit_Dimensions` | `quantity.source` (`revit_pset`), alongside `ifc_qto` and `geometry` rows for the same object. The raw values also stay in `property`. |
-| Names follow `Family:Type:ElementId`; loadable families add an instance label (`Family:Type:Label:ElementId`), and openings and stair parts add a `:n` suffix to their host's name | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. |
+| Names follow `Family:Type:ElementId`; loadable families add an instance label (`Family:Type:Label:ElementId`), and openings and stair parts add a `:n` suffix to their host's name | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. A feature element (`is_feature`: an opening, void or projection) is named after the element it cuts, so its parts go to `host_revit_family` and `host_revit_type` instead, and its own `revit_family` and `revit_type` are NULL (two CHECKs keep it so): grouping by Revit type then counts walls, not walls and their openings. |
 | Walls have no `IfcTypeObject`; type data arrives as `PSet_Revit_Type_*` on the instance | `property.is_type_property`, set for those sets and for values inherited from a type object. |
 | Placeholder values (`Manufacturer = 'Manufacturer'`), empty strings | Stored verbatim in `property.value_text` so data-quality rules can find them; nothing rejects them. |
 | Layered walls (`IfcMaterialLayerSetUsage`) | `element_material_layer` keeps layer order and thickness; `v_takeoff` splits area and volume per layer. |
@@ -270,13 +273,15 @@ accommodates:
 ## Views
 
 Each view is a versioned file (`v_element.v1.sql`) that also carries its `COMMENT`s.
-`v_element` is at version 2: migration 0004 corrected its `revit_type` comment (and the
-column's), which wrongly said the type may contain colons.
+`v_element` is at version 3. Migration 0004 corrected its `revit_type` comment (and the
+column's), which wrongly said the type may contain colons; migration 0010 added
+`is_feature`, `host_revit_family` and `host_revit_type` (audit finding A3) and moved the
+name parts of openings in models already loaded.
 
 | View | One row per | What it adds |
 |---|---|---|
 | `v_quantity` | object and quantity | Picks one value when several sources supply it, in the order `ifc_qto`, then `revit_pset`, then `geometry`: an IFC quantity set written by the exporter, then Revit's own parameter, then a value computed here. The other views read quantities through it. |
-| `v_element` | element | Identity, Revit name parts, storey and elevation, the containing room, the five canonical quantities as columns, and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). |
+| `v_element` | element | Identity, Revit name parts (a feature element's are its host's, in `host_revit_*`), `is_feature`, storey and elevation, the containing room, the five canonical quantities as columns, and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). Openings are rows too: filter `NOT is_feature` to count building elements. |
 | `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height and the OmniClass Table 13 code and title. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |

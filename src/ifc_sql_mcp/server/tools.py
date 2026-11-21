@@ -411,10 +411,16 @@ class ElementDetail(ToolResult):
     object_kind: str = Field(description="element, or spatial_element (site to space).")
     ifc_class: str
     ifc_class_base: str
+    is_feature: bool = Field(
+        description="True for an opening, void or projection: it shapes another element "
+        "(host_revit_family and host_revit_type name it) and is no building part itself."
+    )
     name: IfcText | None
     long_name: IfcText | None = Field(description="Spatial elements: e.g. a room's name.")
     revit_family: IfcText | None
     revit_type: IfcText | None
+    host_revit_family: IfcText | None = Field(description="Feature elements: the host's family.")
+    host_revit_type: IfcText | None = Field(description="Feature elements: the host's type.")
     revit_element_id: int | None
     type_name: IfcText | None
     predefined_type: IfcText | None
@@ -441,7 +447,8 @@ class ElementDetail(ToolResult):
 
 OBJECT_DETAIL = """
 SELECT o.object_id, o.model_id, m.discipline, o.global_id, o.object_kind, o.ifc_class,
-       o.ifc_class_base, o.name, s.long_name, e.revit_family, e.revit_type,
+       o.ifc_class_base, coalesce(e.is_feature, false) AS is_feature, o.name, s.long_name,
+       e.revit_family, e.revit_type, e.host_revit_family, e.host_revit_type,
        e.revit_element_id, e.type_name, e.predefined_type, e.tag, s.elevation_m,
        storey.object_id AS storey_id, storey.name AS storey_name,
        storey_detail.elevation_m AS storey_elevation_m,
@@ -607,6 +614,13 @@ class Takeoff(ToolResult):
         "v_takeoff's material split, where totals are not element totals (see note)."
     )
     note: str
+    include_openings: bool = Field(
+        description="False (the default): openings and other feature elements, which Revit "
+        "names after the wall or door they cut, are left out of every group."
+    )
+    openings_left_out: int = Field(
+        description="Feature elements of the model left out; 0 with include_openings."
+    )
     groups: list[TakeoffGroup]
     total: int | float = Field(description="Sum of value over the groups returned.")
     truncated: bool = Field(description=f"True when there are more than {MAX_GROUPS} groups.")
@@ -669,10 +683,29 @@ MATERIAL_NOTE = (
 )
 
 
+# Openings, voids and projections shape another element and are named after it, so a
+# takeoff that kept them would count each wall's openings as more walls of its type.
+NOT_FEATURE = "NOT e.is_feature"
+MATERIAL_NOT_FEATURE = (
+    "NOT EXISTS (SELECT 1 FROM ifc.element AS fe JOIN ifc.object AS fo USING (object_id) "
+    "WHERE fe.is_feature AND fo.model_id = t.model_id AND fo.ifc_class_base = t.ifc_class_base)"
+)
+
+
 def quantity_takeoff(
-    connection: Connection, model_id: int, group_by: GroupBy, metric: Metric
+    connection: Connection,
+    model_id: int,
+    group_by: GroupBy,
+    metric: Metric,
+    *,
+    include_openings: bool = False,
 ) -> Takeoff:
-    """Totals of one metric per group; see ELEMENT_NOTE and MATERIAL_NOTE for the meaning."""
+    """Totals of one metric per group; see ELEMENT_NOTE and MATERIAL_NOTE for the meaning.
+
+    Feature elements (openings) are left out unless ``include_openings``; v_takeoff has no
+    is_feature column, but its grain includes the class, and a class is either all
+    features or none.
+    """
     _require_model(connection, model_id)
     # Every piece of this SQL comes from the constants above. The lookups are the
     # whitelist: an unknown metric or group_by raises KeyError here, before any SQL is put
@@ -681,10 +714,11 @@ def quantity_takeoff(
     if group_by == "material":
         # v_takeoff's grain is model x storey x class x material: add up per material.
         value = "sum(t.element_count)" if metric == "count" else f"sum(t.{metric})"
+        features = "" if include_openings else f" AND {MATERIAL_NOT_FEATURE}"
         sql = (
             "SELECT t.material_name AS label, t.material_id AS group_id, "  # noqa: S608
             "sum(t.element_count) AS elements, NULL::bigint AS elements_with_value, "
-            f"{value} AS value FROM ifc.v_takeoff AS t WHERE t.model_id = :model_id "
+            f"{value} AS value FROM ifc.v_takeoff AS t WHERE t.model_id = :model_id{features} "
             "GROUP BY t.material_id, t.material_name "
             "ORDER BY value DESC NULLS LAST, t.material_name LIMIT :limit"
         )
@@ -696,10 +730,11 @@ def quantity_takeoff(
             with_value, value = "count(*)", "count(*)"
         else:
             with_value, value = f"count(e.{metric})", f"sum(e.{metric})"
+        features = "" if include_openings else f" AND {NOT_FEATURE}"
         sql = (
             f"SELECT {grouping.label} AS label, {grouping.group_id} AS group_id, "  # noqa: S608
             f"count(*) AS elements, {with_value} AS elements_with_value, {value} AS value "
-            "FROM ifc.v_element AS e WHERE e.model_id = :model_id "
+            f"FROM ifc.v_element AS e WHERE e.model_id = :model_id{features} "
             f"GROUP BY {grouping.group_by} ORDER BY {grouping.order_by} LIMIT :limit"
         )
         basis, note = "element", ELEMENT_NOTE
@@ -715,6 +750,15 @@ def quantity_takeoff(
         for row in rows
     ]
     kept = groups[:MAX_GROUPS]
+    left_out = 0
+    if not include_openings:
+        left_out = connection.execute(
+            text(
+                "SELECT count(*) FROM ifc.element AS e JOIN ifc.object AS o USING (object_id) "
+                "WHERE o.model_id = :model_id AND e.is_feature"
+            ),
+            {"model_id": model_id},
+        ).scalar_one()
     return Takeoff(
         model_id=model_id,
         group_by=group_by,
@@ -722,6 +766,8 @@ def quantity_takeoff(
         unit=unit,
         basis=basis,
         note=note,
+        include_openings=include_openings,
+        openings_left_out=left_out,
         groups=kept,
         total=sum(group.value or 0 for group in kept),
         truncated=len(groups) > MAX_GROUPS,

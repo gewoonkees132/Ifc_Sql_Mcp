@@ -113,6 +113,17 @@ def _run_status_checks(statuses: tuple[str, ...]) -> list[CheckConstraint]:
     ]
 
 
+REVIT_FAMILY_COMMENT = (
+    "Family part of a Revit Family:Type:ElementId name. NULL for feature elements "
+    "(openings), whose name is their host's: see host_revit_family."
+)
+REVIT_TYPE_COMMENT = (
+    "Type part of a Revit name: its second segment, so never containing ':'. In "
+    "Family:Type:Label:ElementId the third segment is an instance label, not part of the "
+    "type. NULL for feature elements (openings), whose name is their host's."
+)
+
+
 def _within_model(target: str) -> ForeignKey:
     """Foreign key between two rows of the same model, checked at commit instead of at once.
 
@@ -378,13 +389,35 @@ element = Table(
         "the element sits in a space. Resolved at ingest so queries need no recursion.",
     ),
     Column("tag", Text, comment="IFC Tag attribute; Revit writes the ElementId here."),
-    Column("revit_family", Text, comment="Family part of a Revit Family:Type:ElementId name."),
+    Column(
+        "is_feature",
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        comment="True for an IfcFeatureElement (opening, void, projection): it shapes another "
+        "element and is no building part of its own. Takeoffs leave such elements out unless "
+        "asked; their Revit name parts are in host_revit_family and host_revit_type.",
+    ),
+    Column(
+        "revit_family",
+        Text,
+        comment=REVIT_FAMILY_COMMENT,
+    ),
     Column(
         "revit_type",
         Text,
-        comment="Type part of a Revit name: its second segment, so never containing ':'. In "
-        "Family:Type:Label:ElementId the third segment is an instance label, not part of "
-        "the type.",
+        comment=REVIT_TYPE_COMMENT,
+    ),
+    Column(
+        "host_revit_family",
+        Text,
+        comment="Feature elements only: the family part of their Revit name, which is that of "
+        "the element they cut or add to (an opening in a wall is named after the wall).",
+    ),
+    Column(
+        "host_revit_type",
+        Text,
+        comment="Feature elements only: the type part of their Revit name, the host's type.",
     ),
     Column(
         "revit_element_id",
@@ -401,6 +434,15 @@ element = Table(
     ),
     CheckConstraint("revit_element_id > 0", name="revit_element_id_positive"),
     CheckConstraint("predefined_type ~ '^[A-Z][A-Z0-9_]*$'", name="predefined_type_format"),
+    # A feature element's name is its host's: it gets host_* parts and never its own.
+    CheckConstraint(
+        "is_feature OR (host_revit_family IS NULL AND host_revit_type IS NULL)",
+        name="host_revit_name_only_for_features",
+    ),
+    CheckConstraint(
+        "NOT is_feature OR (revit_family IS NULL AND revit_type IS NULL)",
+        name="features_have_no_revit_type",
+    ),
     comment="Physical element details (walls, doors, furniture, ducts...), including the "
     "parts of the Revit name.",
 )

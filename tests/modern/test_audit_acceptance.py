@@ -142,7 +142,6 @@ def test_a2_the_stored_wall_areas_add_up_to_the_real_total(modern: Modern) -> No
     assert naive == pytest.approx(946.04, abs=0.05)
 
 
-@_open("A3", 5)
 def test_a3_a_wall_type_counts_its_walls_not_their_openings(modern: Modern) -> None:
     with modern.engine.connect() as connection:
         takeoff = tools.quantity_takeoff(connection, modern.model("b"), "revit_type", "count")

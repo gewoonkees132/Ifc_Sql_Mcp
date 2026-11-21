@@ -149,6 +149,10 @@ wall is 20 m2), and its volume that area times the layers' thickness. Use materi
 amounts of material and the other groupings for amounts of elements; their totals differ \
 by design, and the result's basis and note say which applies.
 
+Openings (and other feature elements) are left out unless include_openings is true: \
+Revit names an opening after the wall or door it cuts, so counting it would count the \
+wall twice. openings_left_out says how many were left out.
+
 At most {tools.MAX_GROUPS} groups, largest value first (storeys lowest first). A null \
 group means no storey, no Revit type or no material. {UNTRUSTED}"""
 
@@ -429,10 +433,15 @@ def build_server(engine: Engine, limits: Limits | None = None) -> MCPServer:
         model_id: ModelId,
         group_by: Annotated[tools.GroupBy, Field(description="What to total per.")],
         metric: Annotated[tools.Metric, Field(description="What to total.")],
+        include_openings: Annotated[
+            bool, Field(description="Also count openings, voids and projections.")
+        ] = False,
     ) -> Annotated[CallToolResult, tools.Takeoff]:
         return calls.tool(
             "quantity_takeoff",
-            lambda connection: tools.quantity_takeoff(connection, model_id, group_by, metric),
+            lambda connection: tools.quantity_takeoff(
+                connection, model_id, group_by, metric, include_openings=include_openings
+            ),
         )
 
     @server.tool(title="Space schedule", description=SPACE_SCHEDULE, annotations=READ_ONLY)

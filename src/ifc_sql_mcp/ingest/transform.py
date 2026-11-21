@@ -49,6 +49,8 @@ _PREDEFINED_TYPE = re.compile(r"[A-Z][A-Z0-9_]*")
 _VIEW_DEFINITION = re.compile(r"ViewDefinition\s*\[(?P<views>[^\]]*)\]")
 _CASE_SUFFIXES = ("StandardCase", "ElementedCase")
 STOREY_CLASS = "IfcBuildingStorey"
+FEATURE_CLASS = "IfcFeatureElement"
+"""Supertype of openings, voids and projections: elements that shape another element."""
 
 
 class TransformError(ValueError):
@@ -206,6 +208,17 @@ def resolve_storey(
     return None
 
 
+def is_feature(ancestry: Sequence[str]) -> bool:
+    """True for an IfcFeatureElement: an opening, void, projection or surface feature.
+
+    Such an element is not a building part of its own but a change to another one, which
+    Revit expresses by naming it after that element (``Basic Wall:Generic 200mm:1044048:1``
+    for an opening in that wall). Counting it under the wall's type would count the wall
+    twice, so its parsed name goes to ``host_revit_family`` and ``host_revit_type``.
+    """
+    return FEATURE_CLASS in ancestry
+
+
 def material_layers(
     global_id: str, entries: Iterable[RawMaterialEntry], length_unit: RawUnit
 ) -> tuple[list[ElementMaterialLayerRecord], list[Issue]]:
@@ -319,6 +332,7 @@ def _element_records(
     issues: list[Issue] = []
     for element in elements:
         revit, name_issues = parse_revit_name(element.global_id, element.name, element.tag)
+        feature = is_feature(element.ancestry)
         element_layers, layer_issues = material_layers(
             element.global_id, element.materials, length_unit
         )
@@ -332,8 +346,11 @@ def _element_records(
                     element.global_id, containers, hosts, spatial_parents, spatial_classes
                 ),
                 tag=element.tag,
-                revit_family=revit.family,
-                revit_type=revit.type,
+                is_feature=feature,
+                revit_family=None if feature else revit.family,
+                revit_type=None if feature else revit.type,
+                host_revit_family=revit.family if feature else None,
+                host_revit_type=revit.type if feature else None,
                 revit_element_id=revit.element_id,
                 type_name=element.type_name,
                 predefined_type=predefined_type(

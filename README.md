@@ -94,7 +94,7 @@ PostgreSQL listens on loopback. Anywhere else, set your own (`.env.example`,
   their own name (`BarCode = 'BarCode'`): 29,967 of MEP's 31,974 findings. Revit 2013
   writes `'N/A'` instead.
 - **Material totals are not element totals.** By element, the architectural model's
-  area is 2,036.7 m²; by material it is 5,329.2 m², because a layered material covers the
+  area is 1,505.0 m²; by material it is 4,797.5 m², because a layered material covers the
   element's face once per layer. Plasterboard alone comes to 931.9 m², more than the
   587.7 m² of all the walls. The takeoff tool says which kind of total it reports.
 

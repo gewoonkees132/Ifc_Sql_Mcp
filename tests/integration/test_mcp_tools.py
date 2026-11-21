@@ -214,8 +214,9 @@ async def test_find_elements_returns_a_page_and_the_total(server: MCPServer) -> 
         pytest.param(
             {"name_contains": "_"}, [1, 3, 4, 8, 10, 11], id="underscore is a character too"
         ),
+        # The door's opening (8) is named after the door but is no door of the family.
         pytest.param(
-            {"storey_name": "Level 1", "revit_family": "M_Single-Flush"}, [4, 8], id="two filters"
+            {"storey_name": "Level 1", "revit_family": "M_Single-Flush"}, [4], id="two filters"
         ),
         pytest.param({"ifc_class": "IfcWindow"}, [], id="no match"),
     ],
@@ -275,10 +276,13 @@ async def test_get_element_returns_everything_about_an_element(server: MCPServer
         "object_kind": "element",
         "ifc_class": "IfcWallStandardCase",
         "ifc_class_base": "IfcWall",
+        "is_feature": False,
         "name": "Basic Wall:Interior - Stud Partition:200001",
         "long_name": None,
         "revit_family": "Basic Wall",
         "revit_type": "Interior - Stud Partition",
+        "host_revit_family": None,
+        "host_revit_type": None,
         "revit_element_id": 200001,
         "type_name": None,
         "predefined_type": None,
@@ -440,8 +444,10 @@ async def test_takeoff_by_storey_totals_each_element_once(server: MCPServer) -> 
         "metric": "area_m2",
         "unit": "m2",
         "basis": "element",
+        "include_openings": False,
+        "openings_left_out": 2,
         "groups": [
-            {"group": "Level 1", "group_id": 6, "elements": 10, "elements_with_value": 1,
+            {"group": "Level 1", "group_id": 6, "elements": 8, "elements_with_value": 1,
              "value": 10.4},
             {"group": "Level 2", "group_id": 7, "elements": 3, "elements_with_value": 0,
              "value": None},
@@ -460,7 +466,6 @@ async def test_takeoff_by_class_counts_elements(server: MCPServer) -> None:
 
     assert [(g["group"], g["value"]) for g in result["groups"]] == [
         ("IfcFlowTerminal", 2),
-        ("IfcOpeningElement", 2),
         ("IfcBeam", 1),
         ("IfcBuildingElementProxy", 1),
         ("IfcDoor", 1),
@@ -471,7 +476,9 @@ async def test_takeoff_by_class_counts_elements(server: MCPServer) -> None:
         ("IfcStairFlight", 1),
         ("IfcWall", 1),
     ]
-    assert (result["total"], result["unit"]) == (13, "elements")
+    # The two openings are left out: they are changes to the wall, not elements.
+    assert (result["total"], result["unit"]) == (11, "elements")
+    assert (result["include_openings"], result["openings_left_out"]) == (False, 2)
 
 
 async def test_takeoff_by_revit_type_groups_family_and_type(server: MCPServer) -> None:
@@ -483,14 +490,39 @@ async def test_takeoff_by_revit_type_groups_family_and_type(server: MCPServer) -
     assert [(g["group"], g["value"]) for g in result["groups"]] == [
         ("Stair:Residential - 180mm Riser", 3),
         ("M_Panelboard:225 A", 2),
-        ("M_Single-Flush:0915 x 2134mm", 2),
-        # The unnamed opening and the generic model have no Revit type.
-        (None, 2),
         ("Basic Wall:Interior - Stud Partition", 1),
         ("Floor:Generic 150mm", 1),
         ("M_Chair-Breuer:Chair-Breuer", 1),
+        # The door alone: its opening, named after it, is left out (audit finding A3).
+        ("M_Single-Flush:0915 x 2134mm", 1),
         ("M_Timber:200x400mm", 1),
+        # The generic model has no Revit type.
+        (None, 1),
     ]
+
+
+async def test_takeoff_counts_openings_under_their_host_only_when_asked(
+    server: MCPServer,
+) -> None:
+    async with connect(server) as client:
+        result = await call(
+            client,
+            "quantity_takeoff",
+            model_id=1,
+            group_by="revit_type",
+            metric="count",
+            include_openings=True,
+        )
+
+    groups = {g["group"]: g["value"] for g in result["groups"]}
+    # Openings have no revit_type of their own: they count in the null group, never
+    # under the door they are named after.
+    assert (groups["M_Single-Flush:0915 x 2134mm"], groups[None]) == (1, 3)
+    assert (result["total"], result["include_openings"], result["openings_left_out"]) == (
+        13,
+        True,
+        0,
+    )
 
 
 async def test_takeoff_by_material_splits_layers_so_it_is_not_an_element_total(
@@ -523,7 +555,7 @@ async def test_takeoff_by_material_counts_elements_per_material(server: MCPServe
         )
 
     assert [(g["group"], g["group_id"], g["value"]) for g in result["groups"]] == [
-        (None, None, 8),
+        (None, None, 6),
         ("Paint", 3, 2),
         ("Steel", 5, 2),
         ("Concrete", 1, 1),
@@ -531,8 +563,8 @@ async def test_takeoff_by_material_counts_elements_per_material(server: MCPServe
         ("Plasterboard", 4, 1),
         ("Timber", 6, 1),
     ]
-    # 13 elements, but the wall counts under two materials and a panelboard under two.
-    assert result["total"] == 16
+    # 11 elements, but the wall counts under two materials and a panelboard under two.
+    assert result["total"] == 14
 
 
 @pytest.mark.parametrize("group_by", ["storey", "ifc_class", "revit_type"])
@@ -544,7 +576,7 @@ async def test_element_takeoffs_add_up_to_the_elements_own_quantities(
     expression = "count(*)" if metric == "count" else f"coalesce(sum({metric}), 0)"
     with mcp_engine.connect() as connection:
         expected = connection.execute(
-            text(f"SELECT {expression} FROM ifc.v_element WHERE model_id = 1")  # noqa: S608
+            text(f"SELECT {expression} FROM ifc.v_element WHERE model_id = 1 AND NOT is_feature")  # noqa: S608
         ).scalar_one()
 
     async with connect(server) as client:
@@ -554,7 +586,7 @@ async def test_element_takeoffs_add_up_to_the_elements_own_quantities(
 
     assert result["basis"] == "element"
     assert result["unit"] == tools.METRIC_UNITS[metric]  # type: ignore[index]
-    assert sum(g["elements"] for g in result["groups"]) == 13
+    assert sum(g["elements"] for g in result["groups"]) == 11
     assert result["total"] == pytest.approx(expected)
 
 
@@ -570,7 +602,7 @@ async def test_takeoff_stops_at_its_limit_and_says_so(
 
     assert len(result["groups"]) == 2
     assert result["truncated"] is True
-    assert result["total"] == 4
+    assert result["total"] == 3
 
 
 @pytest.mark.parametrize(

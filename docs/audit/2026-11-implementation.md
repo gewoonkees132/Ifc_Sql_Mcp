@@ -68,6 +68,7 @@ the test module for findings that add a tool or a command.
 | # | Finding | Issue | Status | Proof |
 |---|---|---|---|---|
 | A17 | Two tests depend on the environment | [#19](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/19) | done | full suite green on Ubuntu's PostgreSQL 16 and at any terminal width |
+| A3 | Grouping by Revit type counts openings as walls and doors | [#5](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/5) | done | `test_a3_a_wall_type_counts_its_walls_not_their_openings`: 2,330 → 1,165 |
 
 ## Per finding
 
@@ -83,3 +84,30 @@ the test module for findings that add a tool or a command.
   wrapped lines, so a phrase cut across two box lines still matches.
 - **Before → after:** at `COLUMNS=40`, 5 CLI tests failed; after the fix, all 27 pass at
   40, 80 and 250 columns. Full suite: 867/869 → 870/870.
+
+### A3: grouping by Revit type counts openings as walls and doors
+
+- **Decision.** The audit asked for `host_revit_family`/`host_revit_type`, and for leaving
+  openings out of the groupings by default. Both are done, plus a stored
+  `element.is_feature` flag. The flag is decided at ingest from the class's inheritance in
+  the file's own schema (`IfcFeatureElement` in its ancestry), never from the class name.
+  It covers openings, voids, projections and surface features in IFC2X3 and IFC4. Two
+  CHECK constraints keep the two kinds of name apart: a feature element never has its own
+  `revit_type`, and a non-feature never has a host's.
+- **Migration 0010** adds the columns and backfills models already loaded, from their
+  stored class, so an existing database gets the same answer as a fresh load. Its
+  downgrade restores the old columns. A data test runs it both ways on a loaded model.
+  `v_element` v3 exposes the three columns.
+- **Tools.** `quantity_takeoff` leaves feature elements out of every grouping unless
+  `include_openings` is true, and reports `openings_left_out`. `get_element` shows
+  `is_feature` and the host's name parts. `find_elements` with a `revit_type` filter now
+  finds only elements of that type. `list_storeys` still counts every `IfcElement`, as IFC
+  and the audit's ground truth do.
+- **Found on the way.** The Duplex architectural model had the same defect in another
+  form. Revit 2011 copies a roof's `Dimensions` onto each of its openings, so 4 openings
+  carried the roof's 132.9 m², and the takeoffs counted the roof five times (531.7 m² too
+  much). With openings left out, the area by class drops from 2,036.7 to 1,505.0 m² and
+  by material from 5,329.2 to 4,797.5 m². Walls (587.7 m²) and plasterboard (931.9 m²)
+  do not change. The README, `docs/mcp.md` and the Duplex pins now carry these figures.
+- **Before → after on file B:** wall type `1AR_MUR_CV003` counts 2,330 → **1,165**
+  elements; 3,314 openings are left out of the takeoff and named in `openings_left_out`.
