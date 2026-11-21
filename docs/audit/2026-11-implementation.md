@@ -83,6 +83,7 @@ the test module for findings that add a tool or a command.
 | A14 | Modern stair part names are not parsed | [#16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/16) | done | `test_a14_every_stair_flight_has_its_revit_type`: B's stair flights with a Revit type 0 → 182 of 182; `revit_name_unparsed` 278 / 3 / 61 → 0 / 0 / 2 on B / A / E |
 | A15 | No way to compare two exports | [#17](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/17) | done | `test_a15_what_changed_between_two_exports`: A → D gives FireRating added on 42 walls and 9 curtain walls, 4 openings removed and 4 added, in one call |
 | A5 | No geometry quantities for files that carry none | [#7](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/7) | done | `test_a5_files_without_quantities_get_them_from_the_geometry`: B's walls with an area 0 → 6,095 of 6,095 (103,057.7 m²); A 964.6 m², within 2 % of 946.0 |
+| A18 | The path from Revit to a question is long | [#20](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/20) | done (item 4 deferred) | `docs/revit-export-settings.md`, `docs/windows.md`, `tests/integration/test_watch.py`: a saved export is loaded, checked, and replaces its previous version with no command per file |
 | A16 | Control characters in names | [#18](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/18) | done | `test_a16_revit_types_hold_no_control_characters`: B's elements with a control character in `revit_type` 731 → 0, each reported |
 
 ## Per finding
@@ -560,4 +561,37 @@ the test module for findings that add a tool or a command.
   | B: type `1AR_MUR_CV003`, area by type | null | **25,114.3 m²** over 1,165 walls (audit: 25,114.3) |
   | A: wall area from the shapes | — | **964.6 m²**, 2.0 % above the file's 946.0, which still wins |
   | B: time to measure 8,285 shapes, 4 cores | — | 54 s, recorded in `ingestion_run` |
+
+### A18: the path from Revit to a question is long
+
+The audit listed four items, in order of value. Three are done; the fourth is deferred,
+as the issue proposed.
+
+1. **[Revit export settings](../revit-export-settings.md).** For each option, the page
+   says what the tool reads from it and what happens without it, with the audit's
+   figures: base quantities (A1), Revit property sets (file E), the IFC common property
+   sets (fire ratings, A9), and a door's size, which needs no option (A4). The habits
+   follow: real Project Information (A12), rooms or spaces but not both (A7), one file
+   name per model, visible type names (A16). The page ends with `--geometry` for a file
+   exported without quantities (A5).
+2. **`ifc-sql watch FOLDER --discipline ARC`** (`src/ifc_sql_mcp/watch.py`). It loads
+   each `.ifc` file saved into the folder once two looks see the same size and time,
+   then checks it. A new export under a name already loaded replaces that model
+   (A12), so `compare_models` shows what changed (A15). A file already loaded is passed
+   over without a run. A failure is reported and the watch goes on. `--once` serves
+   scripts. *Decision:* a command, not an MCP tool, because the server stays read-only
+   (ADR 6), as the issue required.
+3. **[Windows quick start](../windows.md)** in PowerShell, without `make`: winget, `uv
+   sync`, `docker compose`, `ifc-sql migrate`, `ingest`, `watch`, and the Claude Desktop
+   config with Windows paths. The commands are those the `make` targets run. CI runs on
+   Linux only, and the page says so.
+4. **Deferred:** an embedded database, so that one user needs no Docker. It touches the
+   read-only role (ADR 6) and the PostgreSQL-specific SQL of every view. This is
+   recorded here, on #20 and in the Windows page.
+
+| Figure | Before | After |
+|---|---:|---:|
+| Commands per weekly re-export | `ingest` with the right options, then `dq` | **none**: save into the watched folder |
+| Docs on which Revit export options matter | none | **one page**, with the audit's figures per option |
+| Windows set-up without `make` | not documented | **one page** |
 

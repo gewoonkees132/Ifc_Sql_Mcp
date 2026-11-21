@@ -407,7 +407,15 @@ make ingest-samples                          # make samples + make migrate, then
 uv run ifc-sql ingest path/to/model.ifc --discipline ARC
 uv run ifc-sql ingest tower.ifc --discipline ARC --geometry            # measure the shapes too
 uv run ifc-sql ingest week_12.ifc --discipline ARC --replaces 4 --project 2024-017
+uv run ifc-sql watch C:/Exports --discipline ARC --project 2024-017    # keep a folder in step
 ```
+
+`ifc-sql watch` loads every `.ifc` file saved into a folder once its size and time have
+not changed between two looks (every 5 s), then checks it, as `ifc-sql dq` does. A file
+whose name and discipline match a current model, but whose bytes differ, is loaded as
+that model's new version (`--replaces`). A file whose bytes are loaded already is passed
+over, and a failure is reported without stopping the watch (`src/ifc_sql_mcp/watch.py`,
+audit finding A18). `--once` loads what is there and stops.
 
 `--geometry` is for a file exported without quantities ([ADR 10](adr/0010-geometry-quantities.md)).
 IfcOpenShell triangulates the shapes of walls, slabs, spaces and other solids in

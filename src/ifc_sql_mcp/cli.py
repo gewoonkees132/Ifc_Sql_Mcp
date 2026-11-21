@@ -6,6 +6,7 @@ so individual commands stay focused on their own job.
 
 import dataclasses
 import logging
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -42,6 +43,7 @@ from ifc_sql_mcp.ingest.pipeline import (
 )
 from ifc_sql_mcp.logging_config import configure_logging
 from ifc_sql_mcp.server.app import build_server
+from ifc_sql_mcp.watch import Watcher, WatchEvent
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +319,89 @@ def dq(
         engine.dispose()
     if failed:
         raise typer.Exit(1)
+
+
+@app.command()
+def watch(
+    ctx: typer.Context,
+    folder: Annotated[
+        Path,
+        typer.Argument(
+            exists=True, file_okay=False, dir_okay=True, help="The folder Revit exports into."
+        ),
+    ],
+    discipline: Annotated[
+        str,
+        typer.Option(
+            "--discipline",
+            callback=_discipline,
+            help="Discipline of every model in the folder, e.g. ARC.",
+        ),
+    ],
+    project: Annotated[
+        str | None,
+        typer.Option("--project", help="The project every model in the folder belongs to."),
+    ] = None,
+    geometry: Annotated[
+        bool, typer.Option("--geometry", help="Also measure the shapes, as ingest --geometry.")
+    ] = False,
+    interval: Annotated[
+        float, typer.Option("--interval", min=0.5, help="Seconds between two looks.")
+    ] = 5.0,
+    once: Annotated[
+        bool,
+        typer.Option("--once", help="Load and check what is in the folder now, then stop."),
+    ] = False,
+) -> None:
+    """Load each IFC file saved into FOLDER, then check it; a new export replaces the old.
+
+    A file is loaded once its size and time have not changed between two looks, and a
+    file whose name was loaded before is loaded as that model's new version
+    (--replaces). Stop with Ctrl+C. Exit codes: 0 when stopped (or after --once with no
+    failure); 1 when a file failed to load or check under --once, or the database is
+    unreachable or not migrated; 2 for a usage error.
+    """
+    settings: Settings = ctx.obj
+    database = redact(settings.database_url)
+    engine = make_engine(settings.database_url)
+    failed = False
+    try:
+        _require_latest_revision(settings, "watch")
+        rules = load_catalogue(CATALOGUE)
+        with engine.begin() as connection:
+            sync_rules(connection, rules)
+        watcher = Watcher(engine, folder, discipline, rules, project_key=project, geometry=geometry)
+        if not once:
+            typer.echo(f"watching {folder} every {interval:g} s; stop with Ctrl+C", err=True)
+        while True:
+            for event in watcher.poll(settle=not once):
+                failed = _report(event) or failed
+            if once:
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        typer.echo("stopped watching", err=True)
+    except OperationalError as exc:
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
+    if failed and once:
+        raise typer.Exit(1)
+
+
+def _report(event: WatchEvent) -> bool:
+    """Print what the watch did with one file; True when something failed."""
+    if event.ingest is not None:
+        typer.echo(_summary(event.path.name, event.ingest))
+        for warning in event.ingest.warnings:
+            typer.echo(f"warning: {warning}", err=True)
+    if event.check is not None:
+        typer.echo(_dq_summary(event.check))
+    if event.error is not None:
+        typer.echo(f"{event.path.name} failed: {event.error}", err=True)
+        return True
+    return False
 
 
 def _require_latest_revision_as_reader(engine: Engine, database: str) -> None:

@@ -27,7 +27,10 @@ interface for the rest.
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/) and Docker.
+Requires [uv](https://docs.astral.sh/uv/) and Docker. On Windows, without `make`, follow
+[docs/windows.md](docs/windows.md). Before exporting from Revit, read
+[docs/revit-export-settings.md](docs/revit-export-settings.md): which options the tool
+reads, and what it does without them.
 
 ```bash
 make install       # .venv from uv.lock, plus the pre-commit hooks
@@ -212,6 +215,8 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
+| [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
+| [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make`, including `ifc-sql watch` on an export folder |
 | [docs/adr/](docs/adr/README.md) | Ten architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog was implemented: per finding, the issue, the commits and the figures before and after |
