@@ -114,7 +114,6 @@ def test_fire_ratings_added_in_revit_are_loaded(modern: Modern) -> None:
 # =========================================================================== the findings
 
 
-@_open("A1", 3)
 def test_a1_modern_quantity_sets_become_quantities(modern: Modern) -> None:
     wall_area = modern.scalar(
         "SELECT sum(area_m2) FROM ifc.v_element WHERE model_id = :m AND ifc_class_base = 'IfcWall'",
@@ -127,6 +126,20 @@ def test_a1_modern_quantity_sets_become_quantities(modern: Modern) -> None:
 
     assert wall_area == pytest.approx(946.04, abs=0.05)
     assert spaces == [163, 163]
+    # Summed over every space, rooms exported twice included (A7 separates those).
+    total = modern.scalar(
+        "SELECT round(CAST(sum(area_m2) AS numeric), 1) FROM ifc.v_space_schedule "
+        "WHERE model_id = :m",
+        m=modern.model("c"),
+    )
+    assert float(total) == 8_090.7  # type: ignore[arg-type]
+    # File E's rooms: equal to its own BaseQuantities.NetFloorArea, as the audit verified.
+    rooms_e = modern.scalar(
+        "SELECT round(CAST(sum(area_m2) AS numeric), 1) FROM ifc.v_space_schedule "
+        "WHERE model_id = :m",
+        m=modern.model("e"),
+    )
+    assert float(rooms_e) == 30_344.7  # type: ignore[arg-type]
 
 
 def test_a2_the_stored_wall_areas_add_up_to_the_real_total(modern: Modern) -> None:

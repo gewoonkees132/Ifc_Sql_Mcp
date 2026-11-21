@@ -71,6 +71,7 @@ the test module for findings that add a tool or a command.
 | A3 | Grouping by Revit type counts openings as walls and doors | [#5](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/5) | done | `test_a3_a_wall_type_counts_its_walls_not_their_openings`: 2,330 → 1,165 |
 | A8 | Unknown totals are reported as 0 | [#10](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/10) | done | `test_a8_an_area_nobody_measured_is_not_zero`: total 0 → null, with a warning |
 | A2 | Revit 2021's duplicated, unscaled quantities reach the LLM | [#4](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/4) | done | `test_a2_the_stored_wall_areas_add_up_to_the_real_total`: 1,157,891,673.6 → 946.0 m² |
+| A1 | The quantity sets modern Revit writes are ignored | [#3](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/3) | done | `test_a1_modern_quantity_sets_become_quantities`: A wall area null → 946.0 m², C spaces 0 → 163 of 163 |
 
 ## Per finding
 
@@ -171,3 +172,34 @@ the test module for findings that add a tool or a command.
   | C: the same | 3,790,262,224.1 m² | 3,546.7 m² |
   | A, C: duplicated wall values kept in file order (the unscaled one) | 94, 266 | 0, 0 |
   | Values flagged implausible, A / C / E | — | 67 / 338 / 407 (no wall in any file) |
+
+### A1: the quantity sets modern Revit writes are ignored
+
+- **Mapping** ([ADR 8](adr/0008-ifc-base-quantities.md), table in
+  [revit-ifc-quirks.md §14](../revit-ifc-quirks.md#14-revit-2019-to-2022-write-ifc-base-quantities-some-of-them-wrong)):
+  - rules for walls, slabs, spaces, doors, windows, columns, beams, members, stair flights
+    and railings;
+  - IFC2X3 `BaseQuantities` is read as the `Qto_` set of the object's class;
+  - net first, gross as a silent fallback;
+  - a new canonical quantity, `width_m`. Migration 0012 adds it to the CHECK and the
+    comments, `v_quantity` v2 is replaced in place (it has three readers), `v_element` v4
+    has the column, and `find_elements` returns `width_m` and `height_m`.
+- **Deviation from the audit's table, on evidence.** The audit proposed slab
+  `NetArea → area_m2`. Revit 2021 writes it as the whole solid's surface, on every slab
+  of A and C (219.0 m² for a 105.9 m² floor), so a slab's area comes from `GrossArea`
+  only. Coverings, roofs, plates and openings are not mapped: no file shows their values
+  correct.
+- **Rule** `slab_volume_inconsistent`: volume outside 0.75–1.1 × area × thickness.
+  Sound slabs in all three files sit between 0.91 and 1.00. Outside that range there are
+  only defects: a 150 mm foundation slab with a `Width` of 25.4 m, pile caps of
+  600 × 600 × 900 mm with a `Width` of 0.6 m and a third of their volume, and stair
+  landings 1.6 m "thick". The lower bound is 0.75, not the audit's 0.9, because a slab
+  with a shaft loses volume against its gross area.
+- **Before → after**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | A: wall area (`v_element`), m² | null | **946.0** |
+  | C: spaces with an area | 0 of 163 | **163 of 163** (8,090.7 m², duplicates included: A7) |
+  | E: room areas, m² | 30,344.7 (Revit parameters) | 30,344.7 (now from `NetFloorArea`, the same) |
+  | A / C / E: `ifc_qto` quantities | 0 / 0 / 0 | 776 / 4,617 / 8,980 |

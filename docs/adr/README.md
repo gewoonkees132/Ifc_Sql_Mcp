@@ -13,3 +13,4 @@ new record supersedes the old one.
 | [5](0005-data-quality-rules.md) | Data quality rules in a checked YAML catalogue, synchronised into `dq_rule` and evaluated in SQL, one recorded run per model |
 | [6](0006-mcp-server.md) | An MCP server of eight read-only tools on the read-only role, a new session per call, and `run_sql` behind four layers: validator, cursor, read-only transaction, privileges |
 | [7](0007-quantity-set-plausibility.md) | Physical bounds on quantity sets: a duplicated value is settled by the bounds, a value that breaks one is kept but flagged and becomes no quantity |
+| [8](0008-ifc-base-quantities.md) | Reading IFC base quantities: rules per standard set, IFC2X3 `BaseQuantities` read as the class's set, net first with gross as a fallback, a slab's area from `GrossArea` only, and `width_m` |

@@ -207,7 +207,7 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
-| [docs/adr/](docs/adr/README.md) | Seven architecture decision records |
+| [docs/adr/](docs/adr/README.md) | Eight architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog was implemented: per finding, the issue, the commits and the figures before and after |
 | [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials |
@@ -216,11 +216,13 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 
 ## Limitations
 
-- Built and tested against Revit 2011 and 2013 exports in IFC2X3 (the four Duplex files
-  and a synthetic fixture that reproduces their habits). Files from other exporters or in
-  IFC4 are untested.
-- Quantities come from the file; none is computed from geometry. The `geometry` source is
-  reserved in the schema for that ([ADR 3](docs/adr/0003-quantity-sources-and-precedence.md)).
+- Built and tested against Revit exports: 2011 and 2013 in IFC2X3 (the four Duplex
+  files), and 2019, 2021 and 2022 in IFC2X3 and IFC4 (the audit's five files,
+  `make test-modern`). Files from other exporters are untested.
+- Quantities come from the file: IFC base quantities first, then Revit's parameters
+  ([ADR 3](docs/adr/0003-quantity-sources-and-precedence.md),
+  [ADR 8](docs/adr/0008-ifc-base-quantities.md)). A value that breaks a physical bound
+  of its set is flagged and not used ([ADR 7](docs/adr/0007-quantity-set-plausibility.md)).
 - A changed file is a new model version; versions are not diffed or merged, and old data
   quality runs are kept until deleted.
 - The MCP server is for one local user: stdio only, no authentication

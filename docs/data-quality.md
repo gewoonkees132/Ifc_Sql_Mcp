@@ -125,7 +125,7 @@ later change to the rule does not rewrite earlier runs.
 
 ### The rules
 
-The eight SQL rules check stored values:
+The nine SQL rules check stored values:
 
 | Rule | Severity | Dimension | Finds |
 |---|---|---|---|
@@ -135,10 +135,11 @@ The eight SQL rules check stored values:
 | `element_without_storey` | warning | completeness | An element whose `storey_id` is NULL: takeoffs by storey leave it out. |
 | `space_without_area` | warning | completeness | A space with no `area_m2` from any source: schedules show no area. |
 | `wall_area_inconsistent` | warning | consistency | A wall whose `area_m2` is more than 5 % above `length_m` × `height_m`. |
+| `slab_volume_inconsistent` | warning | consistency | A slab whose `volume_m3` is not between 0.75 and 1.1 × `area_m2` × `width_m` (its thickness). Below 0.91 or above 1.0, the audit's files have only defects: a 150 mm foundation slab of `Width` 25.4 m, pile caps of 600 × 600 × 900 mm with a 0.6 m `Width` and a third of their volume. |
 | `space_volume_inconsistent` | warning | consistency | A space whose `volume_m3` is more than 10 % above `area_m2` × `height_m`. Only above: a room's volume follows its ceiling, so 16 of the Duplex's 21 rooms are 7–26 % below their area × unbounded height, correctly. |
 | `space_perimeter_implausible` | warning | validity | A space whose `perimeter_m` is shorter than a circle's of the same area, 2√(π · `area_m2`). |
 
-The last three compare the canonical quantities with each other (audit finding A2).
+The last four compare the canonical quantities with each other (audit findings A1, A2).
 Values that break a physical bound by far more, such as the unit errors of Revit 2019
 and 2021, never become quantities. The ingest keeps them out and reports them as
 `implausible_quantity` ([ADR 7](adr/0007-quantity-set-plausibility.md)).

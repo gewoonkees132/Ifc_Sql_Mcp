@@ -1,6 +1,6 @@
 # ADR 3: Quantity sources and precedence
 
-- Status: accepted
+- Status: accepted; decisions 1 and 2 amended by [ADR 8](0008-ifc-base-quantities.md)
 - Date: 2026-11-16
 
 ## Context

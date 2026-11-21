@@ -72,7 +72,7 @@ IFC_CLASS_PATTERN = r"^Ifc[A-Z][A-Za-z0-9]*$"
 # Discipline codes are supplied at ingest (IFC files do not state one): ARC, MEP, ELE...
 DISCIPLINE_PATTERN = r"^[A-Z]{2,8}$"
 
-QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m")
+QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m", "width_m")
 QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "geometry")
 SEVERITIES = ("error", "warning", "info")
 DIMENSIONS = ("completeness", "validity", "consistency", "uniqueness")
@@ -130,6 +130,13 @@ IMPLAUSIBLE_COMMENT = (
     "floor area x height): it is stored as written but is not a measurement, and no "
     "canonical quantity is made from it. Filter it out (NOT is_implausible) before summing "
     "quantity-set values; the implausible_quantity finding says which bound it broke."
+)
+
+
+QUANTITY_NAME_COMMENT = (
+    "Canonical quantity; the suffix is its unit: length_m, area_m2, volume_m3, perimeter_m, "
+    "height_m, width_m. width_m is IFC's Width: a door's or window's width, a wall's or "
+    "slab's thickness."
 )
 
 
@@ -531,8 +538,7 @@ quantity = Table(
         "name",
         Text,
         nullable=False,
-        comment="Canonical quantity; the suffix is its unit: length_m, area_m2, volume_m3, "
-        "perimeter_m, height_m.",
+        comment=QUANTITY_NAME_COMMENT,
     ),
     Column(
         "source",

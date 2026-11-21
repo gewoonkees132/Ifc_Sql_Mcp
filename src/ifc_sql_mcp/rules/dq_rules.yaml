@@ -138,6 +138,28 @@ rules:
         AND o.ifc_class_base = 'IfcWall'
         AND a.value > 1.05 * l.value * h.value
 
+  - rule_id: slab_volume_inconsistent
+    description: >-
+      A slab's volume_m3 is not between 0.75 and 1.1 times its area_m2 times width_m (its
+      thickness). Openings make a slab's volume less than its gross area times its
+      thickness, but not by a quarter; further off, the thickness or the volume is wrong
+      (Revit 2021 gives a 150 mm foundation slab a Width of 25.4 m), and takeoffs of slab
+      volume or concrete inherit it.
+    severity: warning
+    dimension: consistency
+    sql: |
+      SELECT o.object_id,
+             format('volume_m3 = %s m3 is not between 0.75 and 1.1 x area_m2 x width_m = %s m3',
+                    round(CAST(v.value AS numeric), 3),
+                    round(CAST(a.value * w.value AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS v ON v.object_id = o.object_id AND v.name = 'volume_m3'
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      JOIN ifc.v_quantity AS w ON w.object_id = o.object_id AND w.name = 'width_m'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSlab'
+        AND (v.value < 0.75 * a.value * w.value OR v.value > 1.1 * a.value * w.value)
+
   - rule_id: space_volume_inconsistent
     description: >-
       A space's volume_m3 is more than 10 % above its area_m2 times height_m. A room's

@@ -115,7 +115,8 @@ Revit name Family:Type:ElementId; name_contains matches part of the IFC name.
 
 Returns total (matches on all pages), next_offset (null on the last page) and, per \
 element: object_id, GlobalId, class, name, Revit family and type, storey, the room it is \
-in, and length_m, area_m2 and volume_m3 where known (a wall's area is one face). Page \
+in, and length_m, area_m2, volume_m3, height_m and width_m where known (a wall's area is \
+one face; width_m is a door's or window's width, a wall's thickness). Page \
 size: limit, 1 to {tools.MAX_PAGE_SIZE}. Use get_element for one element's properties, \
 materials and findings, quantity_takeoff for totals, and run_sql to filter on \
 properties. {UNTRUSTED}"""

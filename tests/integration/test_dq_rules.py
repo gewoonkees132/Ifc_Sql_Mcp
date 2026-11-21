@@ -40,6 +40,7 @@ FIXTURE_FINDINGS: dict[str, list[str]] = {
     "space_without_area": [fx.STORE],
     # The fixture's quantities are consistent; test_dq_quantity_rules.py breaks them.
     "wall_area_inconsistent": [],
+    "slab_volume_inconsistent": [],
     "space_volume_inconsistent": [],
     "space_perimeter_implausible": [],
     # The transform's eight issues (tests/unit/ingest/test_fixture_pipeline.py).
@@ -321,6 +322,12 @@ def _rule(rule_id: str) -> tuple[Rule, ...]:
             "area_m2 = 11.000 m2 is more than 1.05 x length_m x height_m = 10.500 m2",
         ),
         (
+            "slab_volume_inconsistent",
+            "IfcSlab",
+            {"volume_m3": 18.5, "area_m2": 123.4, "width_m": 25.4},
+            "volume_m3 = 18.500 m3 is not between 0.75 and 1.1 x area_m2 x width_m = 3134.360 m3",
+        ),
+        (
             "space_volume_inconsistent",
             "IfcSpace",
             {"volume_m3": 30.0, "area_m2": 10.0, "height_m": 2.6},
@@ -354,6 +361,9 @@ def test_a_quantity_that_contradicts_the_others_is_found(
         # Just inside the allowance, and a wall without a height: nothing to compare.
         ("wall_area_inconsistent", "IfcWall", {"area_m2": 10.5, "length_m": 2.0, "height_m": 5.0}),
         ("wall_area_inconsistent", "IfcWall", {"area_m2": 99.0, "length_m": 2.0}),
+        # A slab with openings has less volume than its gross area x thickness.
+        ("slab_volume_inconsistent", "IfcSlab",
+         {"volume_m3": 16.0, "area_m2": 105.9, "width_m": 0.18}),
         # A room under a ceiling lower than its unbounded height is smaller, never larger.
         ("space_volume_inconsistent", "IfcSpace",
          {"volume_m3": 19.0, "area_m2": 10.0, "height_m": 2.6}),

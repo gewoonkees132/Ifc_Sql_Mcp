@@ -276,7 +276,7 @@ def _object_records(
         name=obj.name,
     )
     values, issues = resolve_properties(obj.global_id, obj.values, units)
-    quantities, quantity_issues = derive_quantities(obj.global_id, values)
+    quantities, quantity_issues = derive_quantities(obj.global_id, values, record.ifc_class_base)
     classifications, class_issues = collect_classifications(obj.global_id, values, obj.references)
     properties = [value.to_record(obj.global_id) for value in values]
     return record, properties, quantities, classifications, issues + quantity_issues + class_issues

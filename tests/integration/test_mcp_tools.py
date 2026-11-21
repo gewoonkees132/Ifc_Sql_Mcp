@@ -173,6 +173,8 @@ WALL_ROW = {
     "length_m": 3.9999999999999996,
     "area_m2": 10.4,
     "volume_m3": 1.3,
+    "height_m": None,
+    "width_m": None,
 }
 
 

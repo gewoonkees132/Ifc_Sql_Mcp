@@ -124,7 +124,7 @@ erDiagram
     }
     quantity {
         bigint object_id PK, FK
-        text name PK "length_m, area_m2, volume_m3, perimeter_m, height_m"
+        text name PK "length_m, area_m2, volume_m3, perimeter_m, height_m, width_m"
         text source PK "ifc_qto, revit_pset, geometry"
         float8 value
         text source_ref
@@ -203,7 +203,7 @@ Duplex files and how the extract and transform stages handle it.
 
 | Quirk in Revit exports | Where the schema handles it |
 |---|---|
-| No `Qto_*` base quantities; quantities sit in `PSet_Revit_Dimensions` | `quantity.source` (`revit_pset`), alongside `ifc_qto` and `geometry` rows for the same object. The raw values also stay in `property`. |
+| Revit 2011 and 2013: no `Qto_*` base quantities; quantities sit in `PSet_Revit_Dimensions`. Revit 2019 to 2022: `Qto_*BaseQuantities` (IFC4) or one `BaseQuantities` set (IFC2X3) | `quantity.source` (`revit_pset` or `ifc_qto`), alongside `geometry` rows for the same object; an IFC2X3 `BaseQuantities` set is read as the class's `Qto_` set ([ADR 8](adr/0008-ifc-base-quantities.md)). The raw values also stay in `property`. |
 | Names follow `Family:Type:ElementId`; loadable families add an instance label (`Family:Type:Label:ElementId`), and openings and stair parts add a `:n` suffix to their host's name | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. A feature element (`is_feature`: an opening, void or projection) is named after the element it cuts, so its parts go to `host_revit_family` and `host_revit_type` instead, and its own `revit_family` and `revit_type` are NULL (two CHECKs keep it so): grouping by Revit type then counts walls, not walls and their openings. |
 | Revit 2019 and 2021 write quantity-set values that cannot be measurements: a wall's `NetSideArea` twice, unscaled first (10⁶ too large); a slab's `NetArea` as the whole solid's surface; space volumes 1,000 times too large; perimeters in feet labelled millimetres | `property.is_implausible`: the value is stored as written, but a physical bound of its set flags it, it becomes no `quantity`, and an `implausible_quantity` finding names the bound. A value written twice keeps the one that respects the bounds ([ADR 7](adr/0007-quantity-set-plausibility.md)). |
 | Walls have no `IfcTypeObject`; type data arrives as `PSet_Revit_Type_*` on the instance | `property.is_type_property`, set for those sets and for values inherited from a type object. |
@@ -283,7 +283,7 @@ name parts of openings in models already loaded.
 | View | One row per | What it adds |
 |---|---|---|
 | `v_quantity` | object and quantity | Picks one value when several sources supply it, in the order `ifc_qto`, then `revit_pset`, then `geometry`: an IFC quantity set written by the exporter, then Revit's own parameter, then a value computed here. The other views read quantities through it. |
-| `v_element` | element | Identity, Revit name parts (a feature element's are its host's, in `host_revit_*`), `is_feature`, storey and elevation, the containing room, the five canonical quantities as columns, and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). Openings are rows too: filter `NOT is_feature` to count building elements. |
+| `v_element` | element | Identity, Revit name parts (a feature element's are its host's, in `host_revit_*`), `is_feature`, storey and elevation, the containing room, the six canonical quantities as columns (`width_m` since v4), and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). Openings are rows too: filter `NOT is_feature` to count building elements. |
 | `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height and the OmniClass Table 13 code and title. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |

@@ -387,6 +387,41 @@ only references create UniFormat rows.
   reference to it becomes NULL, so a foreign key can never point at nothing. The four
   files have neither.
 
+## 14. Revit 2019 to 2022 write IFC base quantities, some of them wrong
+
+The sections above describe the four Duplex files (Revit 2011 and 2013). The audit of
+modern exports ([docs/audit/](audit/2026-11-modern-revit-exports.md)) loaded five files
+from Revit 2019, 2021 and 2022. They carry IFC base quantities, which the Duplex files do
+not: `Qto_WallBaseQuantities` and its siblings in IFC4 (files A, C, D), one set named
+`BaseQuantities` in IFC2X3 (file E). File B, exported with base quantities off, has none.
+
+`quantities.QUANTITY_RULES` maps them ([ADR 8](adr/0008-ifc-base-quantities.md)); a
+gross value stands in for a missing or implausible net one, and never conflicts:
+
+| Set (IFC2X3: `BaseQuantities` on the class) | `length_m` | `height_m` | `width_m` | `area_m2` | `perimeter_m` | `volume_m3` |
+|---|---|---|---|---|---|---|
+| `Qto_WallBaseQuantities` | Length | Height | Width (thickness) | NetSideArea, else GrossSideArea | | NetVolume, else GrossVolume |
+| `Qto_SlabBaseQuantities` | | | Width (thickness) | GrossArea (never NetArea) | Perimeter | NetVolume, else GrossVolume |
+| `Qto_SpaceBaseQuantities` | | Height | | NetFloorArea, else GrossFloorArea | NetPerimeter, else GrossPerimeter | NetVolume, else GrossVolume |
+| `Qto_DoorBaseQuantities`, `Qto_WindowBaseQuantities` | | Height | Width | Area | | |
+| `Qto_ColumnBaseQuantities`, `Qto_BeamBaseQuantities`, `Qto_MemberBaseQuantities`, `Qto_StairFlightBaseQuantities` | Length | | | | | NetVolume, else GrossVolume |
+| `Qto_RailingBaseQuantities` | Length | | | | | |
+
+Some of the values are not measurements. `ingest/plausibility.py` checks every set
+against IFC's own ties ([ADR 7](adr/0007-quantity-set-plausibility.md)):
+
+| Defect | Revit | Files | Handling |
+|---|---|---|---|
+| A wall's `NetSideArea` and `NetVolume` written twice, the first unscaled (10⁶, 10⁹) | 2021 | A: 47 walls, C: 133 | the plausible value wins; `conflicting_property` names both |
+| A slab's `NetArea` is the whole solid's surface (about 2× the plan) | 2021 | A: 33 slabs, C: 6 (and every slab without a `GrossArea`) | flagged where `GrossArea` is present; never mapped |
+| A slab's `GrossVolume` is `GrossArea` (m²) × `Width` (mm) | 2019, 2021 | A: 33, C: 2, E: 100 (and 4 stair landings of C, about 19 times their `NetVolume`) | flagged; `NetVolume` is used |
+| A sloped roof slab's `GrossArea` is a tenth of the roof | 2021 | A: 1 | flagged; the slab has no area |
+| A space's `GrossVolume` is floor area (m²) × height (mm) | 2019, 2021 | C: 163 spaces, E: 307 | flagged; the space has no volume |
+| A space's `GrossPerimeter` is in feet, labelled millimetres | 2021 | C: 163 | flagged; the space has no perimeter |
+
+A flagged value stays in `ifc.property` as written, with `is_implausible`. It becomes no
+quantity, and `implausible_quantity` reports it with the bound it broke.
+
 ## Decisions at a glance
 
 | Decision | Where |

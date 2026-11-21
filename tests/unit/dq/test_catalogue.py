@@ -56,6 +56,7 @@ def test_the_sql_rules_are_the_documented_ones() -> None:
         "element_without_storey",
         "space_without_area",
         "wall_area_inconsistent",
+        "slab_volume_inconsistent",
         "space_volume_inconsistent",
         "space_perimeter_implausible",
     ]

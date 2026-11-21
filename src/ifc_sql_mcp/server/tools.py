@@ -271,6 +271,8 @@ class ElementRow(BaseModel):
     length_m: float | None
     area_m2: float | None
     volume_m3: float | None
+    height_m: float | None
+    width_m: float | None = Field(description="A door's or window's width; a wall's thickness.")
 
 
 class ElementPage(ToolResult):
@@ -321,7 +323,8 @@ def find_elements(
     rows = connection.execute(
         text(
             "SELECT e.object_id, e.global_id, e.ifc_class, e.name, e.revit_family, "  # noqa: S608
-            "e.revit_type, e.storey_name, e.space_number, e.length_m, e.area_m2, e.volume_m3 "
+            "e.revit_type, e.storey_name, e.space_number, e.length_m, e.area_m2, e.volume_m3, "
+            "e.height_m, e.width_m "
             f"FROM ifc.v_element AS e WHERE {where} "
             "ORDER BY e.object_id LIMIT :limit OFFSET :offset"
         ),
@@ -344,10 +347,15 @@ def find_elements(
 class QuantityValue(BaseModel):
     """A canonical quantity, as v_quantity chooses it."""
 
-    name: str = Field(description="length_m, area_m2, volume_m3, perimeter_m or height_m.")
+    name: str = Field(
+        description="length_m, area_m2, volume_m3, perimeter_m, height_m or width_m (a door's "
+        "or window's width, a wall's or slab's thickness)."
+    )
     value: float = Field(description="In the unit the name ends with.")
     source: str = Field(description="ifc_qto, revit_pset or geometry: where it came from.")
-    source_ref: IfcText | None = Field(description="e.g. PSet_Revit_Dimensions.Area.")
+    source_ref: IfcText | None = Field(
+        description="e.g. Qto_WallBaseQuantities.NetSideArea or PSet_Revit_Dimensions.Area."
+    )
 
 
 class PropertyValue(BaseModel):
