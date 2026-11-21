@@ -69,6 +69,7 @@ the test module for findings that add a tool or a command.
 |---|---|---|---|---|
 | A17 | Two tests depend on the environment | [#19](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/19) | done | full suite green on Ubuntu's PostgreSQL 16 and at any terminal width |
 | A3 | Grouping by Revit type counts openings as walls and doors | [#5](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/5) | done | `test_a3_a_wall_type_counts_its_walls_not_their_openings`: 2,330 → 1,165 |
+| A8 | Unknown totals are reported as 0 | [#10](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/10) | done | `test_a8_an_area_nobody_measured_is_not_zero`: total 0 → null, with a warning |
 
 ## Per finding
 
@@ -111,3 +112,19 @@ the test module for findings that add a tool or a command.
   do not change. The README, `docs/mcp.md` and the Duplex pins now carry these figures.
 - **Before → after on file B:** wall type `1AR_MUR_CV003` counts 2,330 → **1,165**
   elements; 3,314 openings are left out of the takeoff and named in `openings_left_out`.
+
+### A8: unknown totals are reported as 0
+
+- **Takeoff.** `quantity_takeoff` returns `coverage` (elements in the takeoff, how many
+  have the metric, and the same in words). `total` is null when none has the metric. The
+  `note` then starts with a warning that names the likely cause: a model with no
+  quantity of any kind was exported without them ("tick *Export base quantities*"), and
+  a model with other quantities points at `get_element`. A partly measured total says
+  "Only 90 of 218 elements have area_m2: the total covers those". The material basis
+  uses the same coverage, from `v_element`.
+- **Space schedule.** `total_area_m2` is null when no space has an area, and a new `note`
+  warns of it, or says how many spaces the total leaves out.
+- **Descriptions.** The tool descriptions now tell the LLM that a null total means "not
+  measured" and must never be reported as zero.
+- **Before → after on file B:** wall area by type, `total` 0 → **null**; coverage
+  "0 of 11,298 elements have area_m2"; the note names the Revit export option.

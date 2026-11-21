@@ -191,12 +191,14 @@ def test_a7_rooms_exported_twice_are_found(modern: Modern) -> None:
     assert modern.findings("c", "duplicate_space") == 47
 
 
-@_open("A8", 10)
 def test_a8_an_area_nobody_measured_is_not_zero(modern: Modern) -> None:
     with modern.engine.connect() as connection:
         takeoff = tools.quantity_takeoff(connection, modern.model("b"), "revit_type", "area_m2")
 
     assert takeoff.total is None
+    assert takeoff.coverage.elements_with_value == 0
+    assert takeoff.note.startswith("WARNING: no element in this takeoff has area_m2")
+    assert "Export base quantities" in takeoff.note
 
 
 @_open("A9", 11)

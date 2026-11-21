@@ -602,6 +602,14 @@ class TakeoffGroup(BaseModel):
     value: int | float | None = Field(description="Total of the metric (for count: elements).")
 
 
+class Coverage(BaseModel):
+    """How many of the elements in the takeoff have the metric at all."""
+
+    elements: int = Field(description="Elements in the takeoff (openings excluded by default).")
+    elements_with_value: int = Field(description="Of those, how many have the metric.")
+    summary: str = Field(description="The same in words, e.g. '0 of 6,095 elements have area_m2'.")
+
+
 class Takeoff(ToolResult):
     """A quantity takeoff of one model."""
 
@@ -622,7 +630,11 @@ class Takeoff(ToolResult):
         description="Feature elements of the model left out; 0 with include_openings."
     )
     groups: list[TakeoffGroup]
-    total: int | float = Field(description="Sum of value over the groups returned.")
+    total: int | float | None = Field(
+        description="Sum of value over the groups returned; null, not 0, when no element "
+        "has the metric (coverage says so), because nobody measured it."
+    )
+    coverage: Coverage
     truncated: bool = Field(description=f"True when there are more than {MAX_GROUPS} groups.")
 
     def logged_rows(self) -> int:
@@ -692,6 +704,61 @@ MATERIAL_NOT_FEATURE = (
 )
 
 
+NO_QUANTITIES_NOTE = (
+    "WARNING: no element in this takeoff has {metric}, so there is no total (null, not 0). "
+    "The model holds no quantity of any kind: the IFC file was exported without them. In "
+    'Revit\'s IFC export setup, tick "Export base quantities" (or "Export Revit property '
+    'sets") and export again.'
+)
+NO_METRIC_NOTE = (
+    "WARNING: no element in this takeoff has {metric}, so there is no total (null, not 0). "
+    "The model has other quantities; get_element on one element shows which."
+)
+PARTIAL_NOTE = "Only {summary}: the total covers those, and the others add nothing to it."
+
+
+def _coverage(
+    connection: Connection, model_id: int, metric: Metric, include_openings: bool
+) -> Coverage:
+    """Count the elements in the takeoff, and those of them that have the metric."""
+    with_value = "count(*)" if metric == "count" else f"count(e.{metric})"
+    features = "" if include_openings else f" AND {NOT_FEATURE}"
+    row = connection.execute(
+        text(
+            f"SELECT count(*) AS elements, {with_value} AS with_value "  # noqa: S608
+            f"FROM ifc.v_element AS e WHERE e.model_id = :model_id{features}"
+        ),
+        {"model_id": model_id},
+    ).one()
+    elements, with_value_count = int(row.elements), int(row.with_value)
+    what = "elements" if elements != 1 else "element"
+    verb = "have" if elements != 1 else "has"
+    subject = "elements" if metric == "count" else metric
+    return Coverage(
+        elements=elements,
+        elements_with_value=with_value_count,
+        summary=f"{with_value_count:,} of {elements:,} {what} {verb} {subject}",
+    )
+
+
+def _coverage_note(
+    connection: Connection, model_id: int, metric: Metric, coverage: Coverage
+) -> str:
+    """A warning when nothing or only part of the takeoff is measured; empty otherwise."""
+    if metric == "count" or coverage.elements_with_value == coverage.elements:
+        return ""
+    if coverage.elements_with_value:
+        return PARTIAL_NOTE.format(summary=coverage.summary)
+    quantities = connection.execute(
+        text(
+            "SELECT EXISTS (SELECT 1 FROM ifc.quantity AS q JOIN ifc.object AS o "
+            "USING (object_id) WHERE o.model_id = :model_id)"
+        ),
+        {"model_id": model_id},
+    ).scalar_one()
+    return (NO_METRIC_NOTE if quantities else NO_QUANTITIES_NOTE).format(metric=metric)
+
+
 def quantity_takeoff(
     connection: Connection,
     model_id: int,
@@ -750,6 +817,11 @@ def quantity_takeoff(
         for row in rows
     ]
     kept = groups[:MAX_GROUPS]
+    coverage = _coverage(connection, model_id, metric, include_openings)
+    warning = _coverage_note(connection, model_id, metric, coverage)
+    total = None
+    if metric == "count" or coverage.elements_with_value:
+        total = sum(group.value or 0 for group in kept)
     left_out = 0
     if not include_openings:
         left_out = connection.execute(
@@ -765,11 +837,12 @@ def quantity_takeoff(
         metric=metric,
         unit=unit,
         basis=basis,
-        note=note,
+        note=f"{warning} {note}" if warning else note,
         include_openings=include_openings,
         openings_left_out=left_out,
         groups=kept,
-        total=sum(group.value or 0 for group in kept),
+        total=total,
+        coverage=coverage,
         truncated=len(groups) > MAX_GROUPS,
     )
 
@@ -799,8 +872,11 @@ class SpaceSchedule(ToolResult):
     model_id: int
     spaces: list[Space]
     space_count: int
-    total_area_m2: float = Field(description="Sum of area_m2 over the spaces returned.")
+    total_area_m2: float | None = Field(
+        description="Sum of area_m2 over the spaces returned; null, not 0, when none has one."
+    )
     spaces_without_area: int
+    note: str | None = Field(description="A warning when some or all spaces have no area.")
     truncated: bool = Field(description=f"True when there are more than {MAX_SPACES} spaces.")
 
     def logged_rows(self) -> int:
@@ -827,12 +903,23 @@ def space_schedule(connection: Connection, model_id: int) -> SpaceSchedule:
     ).mappings()
     spaces = [Space.model_validate(dict(row)) for row in rows]
     kept = spaces[:MAX_SPACES]
+    with_area = [space.area_m2 for space in kept if space.area_m2 is not None]
+    without = len(kept) - len(with_area)
+    note = None
+    if kept and not with_area:
+        note = (
+            f"WARNING: none of the {len(kept):,} spaces has an area, so there is no total "
+            '(null, not 0). Export the IFC from Revit with "Export base quantities" ticked.'
+        )
+    elif without:
+        note = f"{without:,} of {len(kept):,} spaces have no area; the total covers the others."
     return SpaceSchedule(
         model_id=model_id,
         spaces=kept,
         space_count=len(kept),
-        total_area_m2=sum(space.area_m2 or 0 for space in kept),
-        spaces_without_area=sum(space.area_m2 is None for space in kept),
+        total_area_m2=sum(with_area) if with_area else None,
+        spaces_without_area=without,
+        note=note,
         truncated=len(spaces) > MAX_SPACES,
     )
 

@@ -140,7 +140,10 @@ material. metric: count (elements), length_m (m), area_m2 (m2) or volume_m3 (m3)
 
 storey, ifc_class and revit_type give element totals: each element counted once, with \
 its own quantity. elements_with_value says how many elements of a group have the metric; \
-the others add nothing to value. A wall's area is one face.
+the others add nothing to value. A wall's area is one face. coverage says how many \
+elements of the whole takeoff have the metric. When none has it, total is null, not 0: \
+nobody measured it, and note says why (often an IFC export without quantities). Never \
+report a null total as zero.
 
 material gives material totals from the view v_takeoff, which are not element totals: an \
 element made of several materials counts once under each; a layered material's area is \
@@ -160,7 +163,8 @@ SPACE_SCHEDULE = f"""\
 Return the room schedule of one model: every space (IfcSpace) with number (e.g. A101), \
 name (e.g. Kitchen), storey, area_m2, perimeter_m, volume_m3, height_m and its OmniClass \
 Table 13 code and title, lowest storey first; with the number of spaces, their total \
-area and how many have no area. At most {tools.MAX_SPACES} spaces. Use get_element with a \
+area and how many have no area. total_area_m2 is null, not 0, when no space has an area; \
+note then says so. At most {tools.MAX_SPACES} spaces. Use get_element with a \
 space's object_id for its properties. {UNTRUSTED}"""
 
 DATA_QUALITY_REPORT = f"""\

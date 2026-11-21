@@ -167,6 +167,9 @@ async def test_material_totals_are_not_element_totals(
     assert (by_class["basis"], by_material["basis"]) == ("element", "material")
     # Without the 50 openings, 4 of which carry a copy of the roof's 132.9 m2 (A3).
     assert (by_class["openings_left_out"], by_material["openings_left_out"]) == (50, 50)
+    # 90 of the 218 elements have an area, and the takeoff says so (A8).
+    assert by_class["coverage"]["summary"] == "90 of 218 elements have area_m2"
+    assert by_class["note"].startswith("Only 90 of 218 elements have area_m2")
     assert round(by_class["total"], 1) == 1505.0
     assert round(by_material["total"], 1) == 4797.5
     assert (round(walls["value"], 1), round(plasterboard["value"], 1)) == (587.7, 931.9)

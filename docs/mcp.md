@@ -313,7 +313,13 @@ lowest first). What a combination means depends on the grouping:
 | `material` | `v_takeoff` | elements using each material; an element with two materials counts under both | the material's share: a layered material's area is the element's area times its number of layers, and its volume that area times the layers' thickness |
 
 The first three are element totals, and `elements_with_value` says how many elements of
-a group have the metric at all. A wall's area is one face. `material` gives material
+a group have the metric at all. `coverage` says the same for the whole takeoff
+(`"0 of 6,095 elements have area_m2"`). An unmeasured total is unknown, not zero: when no
+element has the metric, `total` is null and `note` starts with a warning that names the
+likely cause. A model without any quantity was exported without them, and the warning
+says which Revit export option to tick
+([audit finding A8](audit/2026-11-modern-revit-exports.md#a8-unknown-totals-are-reported-as-0)).
+When only some elements have it, `note` says the total covers those. A wall's area is one face. `material` gives material
 totals, which are not element totals; the result says so in `basis` (`element` or
 `material`) and `note`.
 
@@ -332,7 +338,7 @@ On the architectural model:
 {
   "model_id": 1, "group_by": "ifc_class", "metric": "area_m2", "unit": "m2",
   "basis": "element",
-  "note": "Each element is counted once, with its own quantity from v_element. …",
+  "note": "Only 90 of 218 elements have area_m2: the total covers those, … Each element is counted once, …",
   "include_openings": false, "openings_left_out": 50,
   "groups": [
     {"group": "IfcWall", "group_id": null, "elements": 57, "elements_with_value": 56,
@@ -344,6 +350,8 @@ On the architectural model:
     …  // 13 groups
   ],
   "total": 1504.9895329005642,
+  "coverage": {"elements": 218, "elements_with_value": 90,
+               "summary": "90 of 218 elements have area_m2"},
   "truncated": false
 }
 
@@ -377,8 +385,9 @@ the elements that lack a value, so `elements_with_value` is null by material. On
 | `model_id` | integer ≥ 1 | required |
 
 Every space with number, name, storey, area, perimeter, volume, height and its OmniClass
-Table 13 code and title, lowest storey first, with `space_count`, `total_area_m2` and
-`spaces_without_area`. At most 500 spaces.
+Table 13 code and title, lowest storey first, with `space_count`, `total_area_m2`,
+`spaces_without_area` and `note`. `total_area_m2` is null, not 0, when no space has an
+area, and `note` then warns of it. At most 500 spaces.
 
 ```jsonc
 // space_schedule {"model_id": 1}
@@ -391,7 +400,7 @@ Table 13 code and title, lowest storey first, with `space_count`, `total_area_m2
      "omniclass_code": "13-51 24 11", "omniclass_title": "General Residential Space"},
     …  // 21 spaces
   ],
-  "space_count": 21, "total_area_m2": 422.0465663999985, "spaces_without_area": 0,
+  "space_count": 21, "total_area_m2": 422.0465663999985, "spaces_without_area": 0, "note": null,
   "truncated": false
 }
 ```

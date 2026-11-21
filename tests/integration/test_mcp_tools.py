@@ -432,6 +432,9 @@ async def test_get_element_says_what_is_wrong_with_its_arguments(
 # --------------------------------------------------------------------------- quantity_takeoff
 
 
+COVERS = "the total covers those, and the others add nothing to it."
+
+
 async def test_takeoff_by_storey_totals_each_element_once(server: MCPServer) -> None:
     async with connect(server) as client:
         result = await call(
@@ -453,9 +456,11 @@ async def test_takeoff_by_storey_totals_each_element_once(server: MCPServer) -> 
              "value": None},
         ],
         "total": 10.4,
+        "coverage": {"elements": 11, "elements_with_value": 1,
+                     "summary": "1 of 11 elements have area_m2"},
         "truncated": False,
     }  # fmt: skip
-    assert result["note"] == tools.ELEMENT_NOTE
+    assert result["note"] == f"Only 1 of 11 elements have area_m2: {COVERS} {tools.ELEMENT_NOTE}"
 
 
 async def test_takeoff_by_class_counts_elements(server: MCPServer) -> None:
@@ -537,7 +542,10 @@ async def test_takeoff_by_material_splits_layers_so_it_is_not_an_element_total(
             client, "quantity_takeoff", model_id=1, group_by="ifc_class", metric="area_m2"
         )
 
-    assert (by_material["basis"], by_material["note"]) == ("material", tools.MATERIAL_NOTE)
+    assert by_material["basis"] == "material"
+    assert (
+        by_material["note"] == f"Only 1 of 11 elements have area_m2: {COVERS} {tools.MATERIAL_NOTE}"
+    )
     assert by_material["groups"][:2] == [
         {"group": "Plasterboard", "group_id": 4, "elements": 1, "elements_with_value": None,
          "value": 20.8},
@@ -674,6 +682,7 @@ async def test_space_schedule_lists_the_rooms(server: MCPServer) -> None:
         "space_count": 2,
         "total_area_m2": 12.499999999999998,
         "spaces_without_area": 1,
+        "note": "1 of 2 spaces have no area; the total covers the others.",
         "truncated": False,
     }
 
