@@ -16,7 +16,7 @@ def test_the_smoke_session_calls_every_kind_of_thing_and_exits_0(
 
     lines = capsys.readouterr().out.splitlines()
     assert lines[0] == (
-        "connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 9 tools, "
+        "connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 10 tools, "
         "1 resource, 1 resource template, 1 prompt"
     )
     assert lines[1:4] == [

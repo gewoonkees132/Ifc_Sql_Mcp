@@ -56,7 +56,7 @@ repeat is recorded as a skipped run (the check runs again, as a new recorded run
 `make smoke` then talks to the server over stdio:
 
 ```
-connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 9 tools, 1 resource, 1 resource template, 1 prompt
+connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 10 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
   model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
   model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
@@ -134,15 +134,15 @@ that were rejected.
   quality can be compared over time; a removed rule is retired, not deleted, while
   findings cite it.
 - **MCP server** ([ADR 6](docs/adr/0006-mcp-server.md),
-  [ADR 9](docs/adr/0009-schema-discovery-tool.md), [docs/mcp.md](docs/mcp.md)): seven
-  fixed tools (models, storeys, element search and detail, takeoffs, room schedule, data
-  quality report) handle the common questions with tested SQL, and `run_sql` the rest,
-  with `describe_schema` as its map and errors that name the tables and columns that
-  exist. The server connects only as a read-only role, opens a new session per call, and
-  bounds every result. `run_sql` passes four layers, each tested on its own against
-  PostgreSQL: a sqlglot validator with a function allowlist, a cursor that PostgreSQL
-  accepts only for one SELECT, a read-only transaction with timeouts, and the role's
-  privileges.
+  [ADR 9](docs/adr/0009-schema-discovery-tool.md), [docs/mcp.md](docs/mcp.md)): eight
+  fixed tools (models, storeys, element search and detail, takeoffs, schedules, room
+  schedule, data quality report) handle the common questions with tested SQL, and
+  `run_sql` the rest, with `describe_schema` as its map and errors that name the tables
+  and columns that exist. The server connects only as a read-only role, opens a new
+  session per call, and bounds every result. `run_sql` passes four layers, each tested
+  on its own against PostgreSQL: a sqlglot validator with a function allowlist, a cursor
+  that PostgreSQL accepts only for one SELECT, a read-only transaction with timeouts, and
+  the role's privileges.
 
 ### Asking through MCP
 

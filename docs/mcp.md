@@ -1,7 +1,7 @@
 # The MCP server
 
 `ifc-sql serve` serves the loaded models to an LLM over the
-[Model Context Protocol](https://modelcontextprotocol.io): nine read-only tools, two
+[Model Context Protocol](https://modelcontextprotocol.io): ten read-only tools, two
 resources and a prompt. An MCP client (Claude Desktop, Claude Code, …) starts it and
 talks to it over stdin and stdout. It connects to PostgreSQL only as the read-only role
 `ifc_reader`. The design, and the alternatives that were rejected, are in
@@ -20,6 +20,7 @@ uv run ifc-sql serve
 - [Tools](#tools): [list_models](#list_models), [list_storeys](#list_storeys),
   [find_elements](#find_elements), [get_element](#get_element),
   [quantity_takeoff](#quantity_takeoff), [space_schedule](#space_schedule),
+  [schedule](#schedule),
   [data_quality_report](#data_quality_report), [describe_schema](#describe_schema),
   [run_sql](#run_sql)
 - [Resources](#resources) and [the prompt](#the-model_briefing-prompt)
@@ -56,7 +57,7 @@ Register the `uv` command below with a client, not `make`.
 client, as an MCP client would, and checks every model. On the four Duplex files:
 
 ```
-connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 9 tools, 1 resource, 1 resource template, 1 prompt
+connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 10 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
   model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
   model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
@@ -384,15 +385,22 @@ the elements that lack a value, so `elements_with_value` is null by material. On
 | Parameter | Type | |
 |---|---|---|
 | `model_id` | integer ≥ 1 | required |
+| `limit` | 1–150, default 150 | page size |
+| `offset` | integer ≥ 0, default 0 | `next_offset` of the previous page |
 
-Every space with number, name, storey, area, perimeter, volume, height and its OmniClass
-Table 13 code and title, lowest storey first, with `space_count`, `total_area_m2`,
-`duplicate_spaces`, `total_area_without_duplicates_m2`, `spaces_without_area` and `note`.
+One page of the spaces, each with number, name, storey, area, perimeter, volume, height
+and its OmniClass Table 13 code and title, lowest storey first. `space_count`,
+`total_area_m2`, `duplicate_spaces`, `total_area_without_duplicates_m2`,
+`spaces_without_area` and `note` cover **every** space of the model, whichever page is
+asked for, so the first page gives the totals of a schedule of any size. A space is
+about 225 characters, so a page of 150 is about 34,000; the 500 spaces returned at once
+before were about 112,000, past the budget below (audit finding A11). `next_offset` is
+null on the last page.
 `total_area_m2` is null, not 0, when no space has an area, and `note` then warns of it.
 A Revit model that exports both its Rooms and its MEP Spaces writes each room twice:
 `duplicate_of` marks the repeat (same number, name, storey and floor area), and the total
 without duplicates counts each room once. On the audit's file C, that is 6,124.8 m²
-against 8,090.7 m² (finding A7). At most 500 spaces.
+against 8,090.7 m² (finding A7).
 
 ```jsonc
 // space_schedule {"model_id": 1}
@@ -405,11 +413,69 @@ against 8,090.7 m² (finding A7). At most 500 spaces.
      "omniclass_code": "13-51 24 11", "omniclass_title": "General Residential Space"},
     …  // 21 spaces
   ],
-  "space_count": 21, "total_area_m2": 422.0465663999985, "duplicate_spaces": 0,
-  "total_area_without_duplicates_m2": 422.0465663999985, "spaces_without_area": 0, "note": null,
-  "truncated": false
+  "space_count": 21, "offset": 0, "limit": 150, "next_offset": null,
+  "total_area_m2": 422.0465663999985, "duplicate_spaces": 0,
+  "total_area_without_duplicates_m2": 422.0465663999985, "spaces_without_area": 0, "note": null
 }
 ```
+
+### schedule
+
+| Parameter | Type | |
+|---|---|---|
+| `model_id` | integer ≥ 1 | required |
+| `ifc_class` | text | required: exact (`IfcWallStandardCase`) or normalised (`IfcDoor`), any case |
+| `group_by` | 1–3 of `storey`, `revit_type`, `ifc_class` | required, in order |
+| `fields` | 1–8 texts | required: quantities (`width_m`) or properties (`Pset_DoorCommon.FireRating`) |
+| `storey_name` | text | only this storey |
+
+The elements of one class, grouped the way Revit schedules them, with chosen fields. A
+field is a canonical quantity (`length_m`, `area_m2`, `volume_m3`, `perimeter_m`,
+`height_m`, `width_m`) or a property as `PsetName.PropName`, matched without regard to
+case. A door's attributes count as properties (`IfcDoor.OverallWidth`,
+`IfcDoorStyle.OperationType`). Each group gives its element count and, per field:
+
+- how many elements have a value, and how many distinct values there are;
+- the 10 most common values with their counts. Numbers are told apart to 6 significant
+  digits, because Revit writes the same 0.87 m width as 0.870000000000002 on one door and
+  0.870000000000012 on the next;
+- the unit, and the exact minimum, maximum and sum of the numbers.
+
+Groups come by storey elevation when grouped by storey, then the largest first. A field
+no element has comes back empty, and `note` names the closest properties the elements
+do have. A schedule stops at 200 groups or 30,000 characters of them, always with the
+first group; `truncated`, `group_count` and `note` say so. `elements` always counts every
+group.
+
+It is one call where a schedule from `find_elements` and `get_element` meant paging every
+element. On the audit's tower (file B), the door schedule of level `XX_AR_L01` (159 doors
+in 6 types, with width, height and fire rating) is 4,181 characters, and that of all
+1,458 doors 3,759. Paging those doors with their properties was about 490,000.
+
+```jsonc
+// schedule {"model_id": 1, "ifc_class": "IfcDoor", "group_by": ["revit_type"],
+//           "fields": ["width_m", "Pset_DoorCommon.FireRating"]}
+{
+  "model_id": 1, "ifc_class": "IfcDoor", "storey_name": null, "group_by": ["revit_type"],
+  "fields": ["width_m", "Pset_DoorCommon.FireRating"], "elements": 14,
+  "groups": [
+    {"group": ["M_Single-Flush:0864 x 2032mm"], "elements": 6,
+     "fields": {
+       "width_m": {"elements_with_value": 6, "distinct_values": 1,
+                   "values": [{"value": 0.864, "elements": 6}], "unit": "m",
+                   "min": 0.8639999999999985, "max": 0.8639999999999999, "sum": 5.183999999999997},
+       "Pset_DoorCommon.FireRating": {"elements_with_value": 6, "distinct_values": 1,
+                   "values": [{"value": "Fire Rating", "elements": 6}], "unit": null,
+                   "min": null, "max": null, "sum": null}}},
+    …  // 4 types, 1,815 characters in all
+  ],
+  "group_count": 4, "truncated": false, "note": null
+}
+```
+
+The Duplex's doors carry Revit 2011's placeholder `'Fire Rating'`, their property's own
+name: the schedule shows it as written, and `value_is_property_name` reports it
+([data-quality.md](data-quality.md)).
 
 ### data_quality_report
 
@@ -658,7 +724,7 @@ No message carries a connection string, a password or a traceback.
 | `run_sql` rows | 100 by default, at most 500 | Prefer aggregates. |
 | `run_sql` result | 30,000 characters of rows | Under Claude Code's 50,000-character cut-off. |
 | `run_sql` query | 20,000 characters | |
-| Pages and lists | 100 elements per page; 200 models, storeys or groups; 500 spaces; 500 properties and 100 findings per element; 20 samples per rule | Each list says when it was cut (`truncated`). |
+| Pages and lists | 100 elements or 150 spaces per page; 200 models, storeys or groups; a schedule's groups up to 30,000 characters; 500 properties and 100 findings per element; 20 samples per rule | Each list says when it was cut (`truncated`). |
 | Sessions | One per call, as `ifc_reader` (`CONNECTION LIMIT 20`) | Nothing carries from one call to the next. |
 
 Each call took tens of milliseconds on the Duplex files (`list_storeys` on MEP 0.022 s,
@@ -694,6 +760,7 @@ from Alembic (`Context impl PostgresqlImpl.`), as ingest and dq do.
 | `tests/unit/server/test_unreachable_database.py` | Tools and resources on a database that does not answer; a refused query needs none. |
 | `tests/integration/test_mcp_protocol.py` | What a client sees, in both protocol eras: tools with input and output schemas and annotations, resources, the prompt, the schema resource against the catalogue. |
 | `tests/integration/test_mcp_tools.py` | Each tool's exact output on the synthetic fixture, pagination and limits, unknown ids, invalid `group_by` and `metric`, a checked and a never-checked model. |
+| `tests/integration/test_schedule.py` | `schedule` by type and by storey, numbers that differ only in float noise, a field no element has, a schedule cut by groups and by size, refused arguments; `space_schedule`'s pages and their totals. |
 | `tests/integration/test_schema_discovery.py` | `describe_schema` in brief and in full; the names added to an unknown relation's or column's error; the 20 failed calls of the audit's sessions, replayed, each now answered with the name to use. |
 | `tests/integration/test_run_sql.py` | Every `run_sql` layer on its own: validator, executor, transaction (timeouts, `set_config`, a session per call), privileges; results, cuts and logging; the pinned list of functions sqlglot types. |
 | `tests/integration/test_mcp_failures.py` | A bug in a tool or resource: a generic message, the traceback in the log. |

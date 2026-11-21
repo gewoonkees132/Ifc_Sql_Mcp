@@ -298,6 +298,55 @@ def test_a9_the_loaders_gaps_are_reported_apart_from_the_models(modern: Modern) 
     assert {rule.scope for rule in report.rules} == {"loader_coverage"}
 
 
+# The door schedule of level XX_AR_L01 of file B, as docs/audit/harness/door_schedule.py
+# reads it with IfcOpenShell: doors per type, and the one width each type has (mm).
+L01_DOORS = {
+    "0AR_POR_PI000 - INT 1A:0AR_POR_PI002- 80x210": (77, 870.0),
+    "0AR_POR_PI000 - INT 1A ingresso:0AR_POR_PI001 - 90 x 210 ingresso": (25, 1127.5),
+    "0AR_POR_PI000 - INT 2A - US:0AR_POR_PI003 - 120 x 210 - US": (21, 1350.0),
+    "0AR_POR_PI000 - INT scorrevole:0AR_POR_PI005- 80x210": (15, 1697.0),
+    "0AR_POR_PE002 - doppia anta:0AR_POR_PE002 - doppia anta": (14, None),  # 12 widths
+    "0AR_POR_PI000 - INT 1A:0AR_POR_PI004- 90x210": (7, 970.0),
+}
+
+
+def test_a11_a_door_schedule_fits_in_a_few_kilobytes(modern: Modern) -> None:
+    with modern.engine.connect() as connection:
+        result = tools.schedule(
+            connection,
+            modern.model("b"),
+            "IfcDoor",
+            ["revit_type"],
+            ["width_m", "height_m", "Pset_DoorCommon.FireRating"],
+            storey_name="XX_AR_L01",
+        )
+        rooms = tools.space_schedule(connection, modern.model("c"))
+
+    assert (result.elements, len(result.groups)) == (159, 6)
+    assert len(result.model_dump_json()) < 10_000
+    widths = {}
+    for row in result.groups:
+        [group] = row.group
+        values = row.fields["width_m"].values
+        widths[group] = (
+            row.elements,
+            round(values[0].value * 1000, 1) if len(values) == 1 else None,
+        )
+    assert widths == L01_DOORS
+    double = next(row for row in result.groups if row.group[0].startswith("0AR_POR_PE002"))
+    assert (double.fields["width_m"].distinct_values, double.fields["width_m"].min) == (
+        12,
+        pytest.approx(2.9011, abs=1e-4),
+    )
+    # No door has a fire rating, and the schedule says so rather than inventing one.
+    assert result.note is not None
+    assert result.note.startswith("No element in this schedule has Pset_DoorCommon.FireRating.")
+    # The room schedule of file C: its first page of 150, with the totals of all 163.
+    assert (len(rooms.spaces), rooms.space_count, rooms.next_offset) == (150, 163, 150)
+    assert round(rooms.total_area_m2 or 0, 1) == 8_090.7
+    assert len(rooms.model_dump_json()) < 50_000
+
+
 @_open("A12", 14)
 def test_a12_a_placeholder_project_number_joins_no_project(modern: Modern) -> None:
     tower = modern.scalar(

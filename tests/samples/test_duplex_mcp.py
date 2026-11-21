@@ -120,7 +120,7 @@ async def test_space_schedule_lists_every_space(
 
     assert schedule["space_count"] == EXPECTED_MODELS[key]["spaces"]
     assert schedule["spaces_without_area"] == 0
-    assert schedule["truncated"] is False
+    assert schedule["next_offset"] is None
 
 
 async def test_the_architectural_spaces_add_up(server: tuple[MCPServer, dict[str, int]]) -> None:

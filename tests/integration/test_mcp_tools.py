@@ -687,25 +687,59 @@ async def test_space_schedule_lists_the_rooms(server: MCPServer) -> None:
             },
         ],
         "space_count": 2,
+        "offset": 0,
+        "limit": 150,
+        "next_offset": None,
         "total_area_m2": 12.499999999999998,
         "duplicate_spaces": 0,
         "total_area_without_duplicates_m2": 12.499999999999998,
         "spaces_without_area": 1,
         "note": "1 of 2 spaces have no area; the total covers the others.",
-        "truncated": False,
     }
 
 
-async def test_space_schedule_stops_at_its_limit_and_says_so(
-    server: MCPServer, monkeypatch: pytest.MonkeyPatch
+async def test_space_schedule_pages_and_keeps_the_totals_of_all_pages(
+    server: MCPServer,
 ) -> None:
-    monkeypatch.setattr(tools, "MAX_SPACES", 1)
-
     async with connect(server) as client:
-        result = await call(client, "space_schedule", model_id=1)
+        first = await call(client, "space_schedule", model_id=1, limit=1)
+        second = await call(client, "space_schedule", model_id=1, limit=1, offset=1)
+        too_many = await call_error(client, "space_schedule", model_id=1, limit=151)
 
-    assert [s["number"] for s in result["spaces"]] == ["F101"]
-    assert (result["space_count"], result["truncated"]) == (1, True)
+    assert [s["number"] for s in first["spaces"]] == ["F101"]
+    assert [s["number"] for s in second["spaces"]] == ["F201"]
+    assert (first["next_offset"], second["next_offset"]) == (1, None)
+    assert first["space_count"] == second["space_count"] == 2
+    assert first["total_area_m2"] == second["total_area_m2"] == 12.499999999999998
+    assert "less than or equal to 150" in too_many
+
+
+async def test_schedule_groups_the_fixtures_walls_with_their_properties(
+    server: MCPServer,
+) -> None:
+    async with connect(server) as client:
+        result = await call(
+            client,
+            "schedule",
+            model_id=1,
+            ifc_class="IfcWall",
+            group_by=["revit_type"],
+            fields=["length_m", "Pset_WallCommon.IsExternal"],
+        )
+        refused = await call_error(
+            client,
+            "schedule",
+            model_id=1,
+            ifc_class="IfcWall",
+            group_by=["material"],
+            fields=["length_m"],
+        )
+
+    assert result["elements"] == sum(g["elements"] for g in result["groups"])
+    assert all(
+        set(g["fields"]) == {"length_m", "Pset_WallCommon.IsExternal"} for g in result["groups"]
+    )
+    assert "Input should be 'storey', 'revit_type' or 'ifc_class'" in refused
 
 
 # --------------------------------------------------------------------------- data_quality_report

@@ -30,6 +30,7 @@ TOOLS = [
     "get_element",
     "quantity_takeoff",
     "space_schedule",
+    "schedule",
     "data_quality_report",
     "describe_schema",
     "run_sql",

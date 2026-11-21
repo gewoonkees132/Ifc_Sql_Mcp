@@ -77,6 +77,7 @@ the test module for findings that add a tool or a command.
 | A7 | Rooms exported twice are counted twice | [#9](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/9) | done | `test_a7_rooms_exported_twice_are_found`: 0 → 47; 6,124.8 m² without duplicates |
 | A9 | Data quality measures the loader, not the model | [#11](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/11) | done | `test_a9_data_quality_reports_what_the_model_lacks`, `test_a9_the_loaders_gaps_are_reported_apart_from_the_models`: B: errors that are loader gaps 1,458 → 0; no quantities, no rooms, placeholder project and materials, 8,079 missing fire ratings: none reported → all reported |
 | A10 | The LLM cannot find the schema | [#12](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/12) | done | `tests/integration/test_schema_discovery.py`: of the sessions' 20 failed calls, errors that name what to use 0 → 20 |
+| A11 | Schedules cost too much context | [#13](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/13) | done | `test_a11_a_door_schedule_fits_in_a_few_kilobytes`: B's L01 door schedule, ~490,000 characters by paging → 4,181; 159 doors in 6 types, every width as IfcOpenShell reads it |
 
 ## Per finding
 
@@ -349,4 +350,38 @@ the test module for findings that add a tool or a command.
   |---|---:|---:|
   | Errors that name the relation or column to use | 0 (PostgreSQL gave no hint for either column) | **20** |
   | Errors that point to the resource the model could not read | 4 | **0** |
+
+### A11: schedules cost too much context
+
+- **`schedule`** is a tenth tool. It takes one class, 1 to 3 `group_by` keys (`storey`,
+  `revit_type`, `ifc_class`), up to 8 fields and an optional storey. A field is a
+  canonical quantity or `PsetName.PropName`. Per group and field it gives the count with
+  a value, the 10 most common values with their counts, and the exact min, max and sum.
+- **Decisions.**
+  - *Numbers are told apart to 6 significant digits.* On file B, the 77 doors of type
+    `PI002` came back as 36 "distinct" widths, all 0.87 m: Revit writes
+    0.870000000000002, 0.870000000000012, and so on. Min, max and sum stay exact.
+  - *A size budget.* A wall schedule of B by storey and type has 276 groups, about
+    75,000 characters. A schedule therefore stops at 200 groups or 30,000 characters,
+    run_sql's budget, and always shows its first group. `note` says how to narrow it.
+  - *A field no element has is not an error.* "Fire rating: not in the model" is the
+    answer to a schedule of B's doors, so the field comes back empty. `note` names the
+    closest properties the elements do have (`Pset_DoorCommon.IsExternal`, …).
+  - Spaces are spatial elements, not elements, so `schedule` does not list them and its
+    note sends the reader to `space_schedule`.
+- **`space_schedule` pages** at 150 spaces (`limit`, `offset`, `next_offset`), and its
+  totals and counts now cover every space of the model on every page. The old cap of 500
+  spaces returned at once is gone, and so is `truncated`.
+- **Ground truth.** [`harness/door_schedule.py`](harness/door_schedule.py) reads the
+  door schedule of a storey with IfcOpenShell. On B's `XX_AR_L01` it gives 159 doors in
+  6 types (77, 25, 21, 15, 14, 7), the audit's figures, and each type's widths. The
+  acceptance test compares the tool with it type by type.
+- **Before → after**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | B: door schedule of `XX_AR_L01` (type, count, width, height, fire rating) | ~490,000 characters paging `find_elements` + `get_element` (the audit's estimate) | **4,181** in one call |
+  | B: door schedule of all 1,458 doors by type | the same | **3,759** |
+  | C: room schedule, first answer | all 163 spaces, 42,353 characters | **39,012** for a page of 150, with the totals of all 163 |
+  | E: room schedule, first answer | all 307 spaces, 87,014 characters (the cap was 500, ~112,000) | **42,703** for a page of 150, with the totals of all 307 |
 

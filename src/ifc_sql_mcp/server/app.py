@@ -1,4 +1,4 @@
-"""Build the MCP server: nine read-only tools, two resources and a prompt (ADR 6).
+"""Build the MCP server: ten read-only tools, two resources and a prompt (ADR 6).
 
 :func:`build_server` registers everything on the SDK's ``MCPServer``. The tool functions
 here are thin: each runs one function of :mod:`~ifc_sql_mcp.server.tools` (or
@@ -74,8 +74,9 @@ Building models exported from Autodesk Revit as IFC files, loaded into PostgreSQ
 checked for data quality. Everything is read-only.
 
 Start with list_models: every other tool takes a model_id from it. Then list_storeys, \
-find_elements and get_element for elements, quantity_takeoff for totals, space_schedule \
-for rooms and data_quality_report for findings. For questions those tools do not answer, \
+find_elements and get_element for elements, quantity_takeoff for totals, schedule for \
+door, window or wall schedules (grouped, with chosen properties), space_schedule for \
+rooms and data_quality_report for findings. For questions those tools do not answer, \
 call describe_schema for the tables, views and columns, then run_sql; the ifc://schema \
 resource holds the same description in one document. The model_briefing prompt outlines \
 a briefing on one model.
@@ -165,14 +166,28 @@ At most {tools.MAX_GROUPS} groups, largest value first (storeys lowest first). A
 group means no storey, no Revit type or no material. {UNTRUSTED}"""
 
 SPACE_SCHEDULE = f"""\
-Return the room schedule of one model: every space (IfcSpace) with number (e.g. A101), \
-name (e.g. Kitchen), storey, area_m2, perimeter_m, volume_m3, height_m and its OmniClass \
-Table 13 code and title, lowest storey first; with the number of spaces, their total \
-area and how many have no area. total_area_m2 is null, not 0, when no space has an area; \
-note then says so. A room exported twice (Revit Rooms and MEP Spaces) has two spaces: \
-duplicate_of marks the repeat, and total_area_without_duplicates_m2 counts each room \
-once. At most {tools.MAX_SPACES} spaces. Use get_element with a \
-space's object_id for its properties. {UNTRUSTED}"""
+Return the room schedule of one model, a page at a time: each space (IfcSpace) with \
+number (e.g. A101), name (e.g. Kitchen), storey, area_m2, perimeter_m, volume_m3, \
+height_m and its OmniClass Table 13 code and title, lowest storey first. The number of \
+spaces, their total area and how many have no area always cover every page, so read \
+the first page for the totals and page on (offset = next_offset) only for the rows. \
+total_area_m2 is null, not 0, when no space has an area; note then says so. A room \
+exported twice (Revit Rooms and MEP Spaces) has two spaces: duplicate_of marks the \
+repeat, and total_area_without_duplicates_m2 counts each room once. At most \
+{tools.SPACE_PAGE_SIZE} spaces a page. Use get_element with a space's object_id for its \
+properties. {UNTRUSTED}"""
+
+SCHEDULE = f"""\
+Schedule the elements of one IFC class the way Revit does: grouped by storey, Revit type \
+(family:type) or class, with up to {tools.MAX_SCHEDULE_FIELDS} fields. A field is a \
+canonical quantity (length_m, area_m2, volume_m3, perimeter_m, height_m, width_m, in m, \
+m2, m3) or a property as PsetName.PropName (Pset_DoorCommon.FireRating, \
+IfcDoor.OverallWidth). Each group gives its element count and, per field, how many \
+elements have a value, the {tools.MAX_SCHEDULE_VALUES} most common values with their \
+counts, and the minimum, maximum and sum of the numbers. A few kilobytes for any model \
+size: use it for door, window, wall or room schedules instead of paging find_elements \
+and get_element. storey_name limits it to one storey. A field no element has comes back \
+empty, and note names the closest properties the elements do have. {UNTRUSTED}"""
 
 DATA_QUALITY_REPORT = f"""\
 Report the findings of one model's latest successful data quality check (`ifc-sql dq`).
@@ -475,9 +490,52 @@ def build_server(engine: Engine, limits: Limits | None = None) -> MCPServer:
         )
 
     @server.tool(title="Space schedule", description=SPACE_SCHEDULE, annotations=READ_ONLY)
-    def space_schedule(model_id: ModelId) -> Annotated[CallToolResult, tools.SpaceSchedule]:
+    def space_schedule(
+        model_id: ModelId,
+        limit: Annotated[
+            int, Field(description="Page size.", ge=1, le=tools.SPACE_PAGE_SIZE)
+        ] = tools.SPACE_PAGE_SIZE,
+        offset: Annotated[
+            int, Field(description="Spaces to skip: next_offset of the previous page.", ge=0)
+        ] = 0,
+    ) -> Annotated[CallToolResult, tools.SpaceSchedule]:
         return calls.tool(
-            "space_schedule", lambda connection: tools.space_schedule(connection, model_id)
+            "space_schedule",
+            lambda connection: tools.space_schedule(
+                connection, model_id, limit=limit, offset=offset
+            ),
+        )
+
+    @server.tool(title="Schedule", description=SCHEDULE, annotations=READ_ONLY)
+    def schedule(
+        model_id: ModelId,
+        ifc_class: Annotated[
+            str,
+            _filter("IFC entity, exact (IfcWallStandardCase) or normalised (IfcDoor)."),
+        ],
+        group_by: Annotated[
+            list[tools.ScheduleGroupBy],
+            Field(
+                description="What to group by, in order, e.g. [revit_type].",
+                min_length=1,
+                max_length=3,
+            ),
+        ],
+        fields: Annotated[
+            list[Annotated[str, Field(min_length=1, max_length=300)]],
+            Field(
+                description="Quantities (width_m) or properties (Pset_DoorCommon.FireRating).",
+                min_length=1,
+                max_length=tools.MAX_SCHEDULE_FIELDS,
+            ),
+        ],
+        storey_name: Annotated[str | None, _filter("Only this storey, from list_storeys.")] = None,
+    ) -> Annotated[CallToolResult, tools.Schedule]:
+        return calls.tool(
+            "schedule",
+            lambda connection: tools.schedule(
+                connection, model_id, ifc_class, group_by, fields, storey_name=storey_name
+            ),
         )
 
     @server.tool(

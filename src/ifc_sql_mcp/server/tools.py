@@ -12,7 +12,8 @@ Every list is bounded, and says when it was cut. Text that came from an IFC file
 is only ever returned as a value, never written into an instruction (ADR 6).
 """
 
-from collections.abc import Mapping
+import difflib
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Annotated, Any, Literal, NamedTuple
 
@@ -31,7 +32,8 @@ MAX_PAGE_SIZE = 100
 MAX_PROPERTIES = 500
 MAX_ELEMENT_FINDINGS = 100
 MAX_GROUPS = 200
-MAX_SPACES = 500
+SPACE_PAGE_SIZE = 150
+"""Most spaces per space_schedule page: about 225 characters each, 34,000 in all (A11)."""
 DEFAULT_SAMPLES = 3
 MAX_SAMPLES = 20
 
@@ -891,14 +893,18 @@ class Space(BaseModel):
 
 
 class SpaceSchedule(ToolResult):
-    """The room schedule of a model, by storey and number."""
+    """One page of the room schedule of a model, by storey and number, with its totals."""
 
     model_id: int
-    spaces: list[Space]
-    space_count: int
+    spaces: list[Space] = Field(description="This page of the spaces.")
+    space_count: int = Field(description="Spaces in the model, on every page together.")
+    offset: int
+    limit: int
+    next_offset: int | None = Field(description="Offset of the next page; null on the last.")
     total_area_m2: float | None = Field(
-        description="Sum of area_m2 over the spaces returned; null, not 0, when none has one. "
-        "Counts a room exported twice twice: see total_area_without_duplicates_m2."
+        description="Sum of area_m2 over all the model's spaces, not only this page; null, not "
+        "0, when none has one. Counts a room exported twice twice: see "
+        "total_area_without_duplicates_m2."
     )
     duplicate_spaces: int = Field(description="Spaces that repeat an earlier one (duplicate_of).")
     total_area_without_duplicates_m2: float | None = Field(
@@ -906,16 +912,34 @@ class SpaceSchedule(ToolResult):
     )
     spaces_without_area: int
     note: str | None = Field(description="A warning when some or all spaces have no area.")
-    truncated: bool = Field(description=f"True when there are more than {MAX_SPACES} spaces.")
 
     def logged_rows(self) -> int:
-        """Return the number of spaces."""
+        """Return the number of spaces on the page."""
         return len(self.spaces)
 
 
-def space_schedule(connection: Connection, model_id: int) -> SpaceSchedule:
-    """The model's spaces from v_space_schedule, lowest storey first."""
+def space_schedule(
+    connection: Connection, model_id: int, *, limit: int = SPACE_PAGE_SIZE, offset: int = 0
+) -> SpaceSchedule:
+    """One page of the model's spaces from v_space_schedule, lowest storey first.
+
+    The totals and counts cover every space of the model, whichever page is asked for: a
+    schedule of 500 rooms no longer has to be read whole (about 112,000 characters) for its
+    total (audit finding A11).
+    """
     _require_model(connection, model_id)
+    totals = connection.execute(
+        text(
+            """
+            SELECT count(*) AS spaces, count(area_m2) AS with_area, sum(area_m2) AS area,
+                   count(*) FILTER (WHERE duplicate_of IS NOT NULL) AS duplicates,
+                   sum(area_m2) FILTER (WHERE duplicate_of IS NULL) AS unique_area
+            FROM ifc.v_space_schedule
+            WHERE model_id = :model_id
+            """
+        ),
+        {"model_id": model_id},
+    ).one()
     rows = connection.execute(
         text(
             """
@@ -926,45 +950,355 @@ def space_schedule(connection: Connection, model_id: int) -> SpaceSchedule:
             LEFT JOIN ifc.spatial_element AS storey ON s.storey_id = storey.object_id
             WHERE s.model_id = :model_id
             ORDER BY storey.elevation_m NULLS LAST, s.number, s.object_id
-            LIMIT :limit
+            LIMIT :limit OFFSET :offset
             """
         ),
-        {"model_id": model_id, "limit": MAX_SPACES + 1},
+        {"model_id": model_id, "limit": limit, "offset": offset},
     ).mappings()
     spaces = [Space.model_validate(dict(row)) for row in rows]
-    kept = spaces[:MAX_SPACES]
-    with_area = [space.area_m2 for space in kept if space.area_m2 is not None]
-    unique_area = [
-        space.area_m2 for space in kept if space.area_m2 is not None and space.duplicate_of is None
-    ]
-    duplicates = sum(space.duplicate_of is not None for space in kept)
-    without = len(kept) - len(with_area)
+    without = totals.spaces - totals.with_area
     note = None
-    if kept and not with_area:
+    if totals.spaces and not totals.with_area:
         note = (
-            f"WARNING: none of the {len(kept):,} spaces has an area, so there is no total "
+            f"WARNING: none of the {totals.spaces:,} spaces has an area, so there is no total "
             '(null, not 0). Export the IFC from Revit with "Export base quantities" ticked.'
         )
     elif without:
-        note = f"{without:,} of {len(kept):,} spaces have no area; the total covers the others."
-    if duplicates:
+        note = f"{without:,} of {totals.spaces:,} spaces have no area; the total covers the others."
+    if totals.duplicates:
         repeat = (
-            f"{duplicates:,} spaces repeat an earlier one with the same number, name, storey "
-            "and area (Revit Rooms and MEP Spaces both exported): total_area_m2 counts those "
-            "rooms twice, total_area_without_duplicates_m2 once."
+            f"{totals.duplicates:,} spaces repeat an earlier one with the same number, name, "
+            "storey and area (Revit Rooms and MEP Spaces both exported): total_area_m2 counts "
+            "those rooms twice, total_area_without_duplicates_m2 once."
         )
         note = f"{note} {repeat}" if note else repeat
+    following = offset + len(spaces)
     return SpaceSchedule(
         model_id=model_id,
-        spaces=kept,
-        space_count=len(kept),
-        total_area_m2=sum(with_area) if with_area else None,
-        duplicate_spaces=duplicates,
-        total_area_without_duplicates_m2=sum(unique_area) if unique_area else None,
+        spaces=spaces,
+        space_count=totals.spaces,
+        offset=offset,
+        limit=limit,
+        next_offset=following if following < totals.spaces else None,
+        total_area_m2=totals.area,
+        duplicate_spaces=totals.duplicates,
+        total_area_without_duplicates_m2=totals.unique_area,
         spaces_without_area=without,
         note=note,
-        truncated=len(spaces) > MAX_SPACES,
     )
+
+
+# --------------------------------------------------------------------------- schedule
+
+ScheduleGroupBy = Literal["storey", "revit_type", "ifc_class"]
+QuantityField = Literal["length_m", "area_m2", "volume_m3", "perimeter_m", "height_m", "width_m"]
+QUANTITY_FIELDS: tuple[QuantityField, ...] = (
+    "length_m",
+    "area_m2",
+    "volume_m3",
+    "perimeter_m",
+    "height_m",
+    "width_m",
+)
+MAX_SCHEDULE_FIELDS = 8
+MAX_SCHEDULE_VALUES = 10
+"""Most distinct values listed per field and group, most common first."""
+MAX_SCHEDULE_CHARS = 30_000
+"""Most characters of groups (as compact JSON) one schedule carries, as for run_sql."""
+SIGNIFICANT_DIGITS = 6
+"""Numbers are told apart to this many digits: Revit writes one door's 0.87 m width as
+0.870000000000002 and the next one's as 0.870000000000012."""
+
+type ScheduleValue = IfcText | bool | float
+
+
+class ValueCount(BaseModel):
+    """One value of a field, and how many elements of the group have it."""
+
+    value: ScheduleValue
+    elements: int
+
+
+class FieldSummary(BaseModel):
+    """One field of a schedule row: its values in the group, the way Revit schedules them."""
+
+    elements_with_value: int = Field(description="Elements of the group that have a value.")
+    distinct_values: int
+    values: list[ValueCount] = Field(
+        description=f"The most common values first, at most {MAX_SCHEDULE_VALUES}."
+    )
+    unit: str | None = Field(description="Unit of the numbers: m, m2, m3, or the property's.")
+    min: float | None = Field(description="Smallest number, for a numeric field.")
+    max: float | None
+    sum: float | None = Field(description="Sum of the numbers, e.g. a type's total area.")
+
+
+class ScheduleRow(BaseModel):
+    """One group of a schedule: a storey, a Revit type, a class, or a combination."""
+
+    group: list[IfcText | None] = Field(
+        description="The group's value for each group_by, in order; null means none (no "
+        "storey, no Revit type)."
+    )
+    elements: int
+    fields: dict[str, FieldSummary] = Field(description="One summary per field asked for.")
+
+
+class Schedule(ToolResult):
+    """Elements of one class, grouped, with chosen quantities and properties."""
+
+    model_id: int
+    ifc_class: str
+    storey_name: str | None
+    group_by: list[ScheduleGroupBy]
+    fields: list[str]
+    elements: int = Field(description="Elements in the schedule, all groups together.")
+    groups: list[ScheduleRow] = Field(
+        description="By storey elevation when grouped by storey, then the most elements first."
+    )
+    group_count: int = Field(description="Groups in all; more than returned when truncated.")
+    truncated: bool = Field(
+        description=f"True when more than {MAX_GROUPS} groups, or {MAX_SCHEDULE_CHARS:,} "
+        "characters of them, exist: narrow with storey_name, fewer fields or group_by keys."
+    )
+    note: str | None = Field(
+        description="Says when the schedule was cut, or no element has a field (with the "
+        "closest names that exist)."
+    )
+
+    def logged_rows(self) -> int:
+        """Return the number of groups."""
+        return len(self.groups)
+
+
+class _Key(NamedTuple):
+    """A schedule's group_by on v_element: the label, and how it sorts."""
+
+    label: str
+    order: str
+
+
+SCHEDULE_KEYS: dict[ScheduleGroupBy, _Key] = {
+    "storey": _Key("e.storey_name", "min(e.storey_elevation_m) NULLS LAST"),
+    "revit_type": _Key("e.revit_family || ':' || e.revit_type", ""),
+    "ifc_class": _Key("e.ifc_class_base", ""),
+}
+
+
+def schedule(
+    connection: Connection,
+    model_id: int,
+    ifc_class: str,
+    group_by: list[ScheduleGroupBy],
+    fields: list[str],
+    *,
+    storey_name: str | None = None,
+) -> Schedule:
+    """Group one class's elements and summarise the chosen fields per group (audit A11).
+
+    A field is a canonical quantity (``width_m``) or a property as ``PsetName.PropName``
+    (``Pset_DoorCommon.FireRating``, ``IfcDoor.OverallWidth``), matched without regard to
+    case. Instead of one row per element, each group lists each field's distinct values
+    with how many elements have them, and the minimum, maximum and sum of its numbers:
+    a door schedule of a 1,458-door tower is a few kilobytes, where paging the doors
+    through find_elements and get_element was about 490,000 characters.
+
+    Raises:
+        ToolInputError: The model does not exist, or a field is neither a quantity nor
+            ``PsetName.PropName``, or there are too many fields or group_by keys.
+    """
+    _require_model(connection, model_id)
+    keys = list(dict.fromkeys(group_by))
+    wanted = list(dict.fromkeys(field.strip() for field in fields))
+    if not keys:
+        raise ToolInputError("give at least one group_by: storey, revit_type or ifc_class")
+    if not wanted or len(wanted) > MAX_SCHEDULE_FIELDS:
+        raise ToolInputError(
+            f"give 1 to {MAX_SCHEDULE_FIELDS} fields: quantities ({', '.join(QUANTITY_FIELDS)}) "
+            "or properties as PsetName.PropName, e.g. Pset_DoorCommon.FireRating"
+        )
+    for field in wanted:
+        if field not in QUANTITY_FIELDS and "." not in field.strip("."):
+            raise ToolInputError(
+                f"field {field!r} is neither a quantity ({', '.join(QUANTITY_FIELDS)}) nor a "
+                "property as PsetName.PropName, e.g. Pset_DoorCommon.FireRating; get_element "
+                "lists an element's properties"
+            )
+
+    labels = [SCHEDULE_KEYS[key].label for key in keys]
+    columns = ", ".join(f"{label} AS g{n}" for n, label in enumerate(labels))
+    group_columns = ", ".join(f"g{n}" for n in range(len(labels)))
+    conditions = ["e.model_id = :model_id", ELEMENT_FILTERS["ifc_class"]]
+    params: dict[str, Any] = {"model_id": model_id, "ifc_class": ifc_class}
+    if storey_name is not None:
+        conditions.append(ELEMENT_FILTERS["storey_name"])
+        params["storey_name"] = storey_name
+    # Put together from the constant expressions above; values are parameters.
+    elements = (
+        f"SELECT e.*, {columns} FROM ifc.v_element AS e "  # noqa: S608
+        f"WHERE {' AND '.join(conditions)}"
+    )
+    order = [SCHEDULE_KEYS[key].order for key in keys if SCHEDULE_KEYS[key].order]
+    groups = connection.execute(
+        text(
+            f"SELECT {group_columns}, count(*) AS elements FROM ({elements}) AS e "  # noqa: S608
+            f"GROUP BY {group_columns} "
+            f"ORDER BY {', '.join([*order, 'elements DESC'])}, {group_columns}"
+        ),
+        params,
+    ).all()
+    rows = {
+        tuple(row[:-1]): ScheduleRow(group=list(row[:-1]), elements=row[-1], fields={})
+        for row in groups
+    }
+    missing = []
+    for field in wanted:
+        summaries = _field_summaries(
+            connection, elements, group_columns, len(labels), field, params
+        )
+        for key, row in rows.items():
+            row.fields[field] = summaries.get(key, _EMPTY_FIELD)
+        if groups and not summaries:
+            missing.append(field)
+    kept: list[ScheduleRow] = []
+    size = 0
+    for row in rows.values():
+        size += len(row.model_dump_json())
+        if kept and (len(kept) == MAX_GROUPS or size > MAX_SCHEDULE_CHARS):
+            break  # the first group is always shown, however long
+        kept.append(row)
+    note = _schedule_note(connection, elements, params, groups, missing, ifc_class)
+    if len(kept) < len(rows):
+        cut = (
+            f"Showing the first {len(kept):,} of {len(rows):,} groups: all of them would pass "
+            f"{MAX_GROUPS} groups or {MAX_SCHEDULE_CHARS:,} characters. Narrow it with "
+            "storey_name, fewer fields or fewer group_by keys."
+        )
+        note = f"{cut} {note}" if note else cut
+    return Schedule(
+        model_id=model_id,
+        ifc_class=ifc_class,
+        storey_name=storey_name,
+        group_by=keys,
+        fields=wanted,
+        elements=sum(row.elements for row in rows.values()),
+        groups=kept,
+        group_count=len(rows),
+        truncated=len(kept) < len(rows),
+        note=note,
+    )
+
+
+_EMPTY_FIELD = FieldSummary(
+    elements_with_value=0, distinct_values=0, values=[], unit=None, min=None, max=None, sum=None
+)
+
+
+def _field_values(elements: str, group_columns: str, field: str) -> tuple[str, dict[str, Any]]:
+    """A query of one row per element of ``elements`` that has a value for ``field``."""
+    if field in QUANTITY_FIELDS:
+        unit = {"area_m2": "m2", "volume_m3": "m3"}.get(field, "m")
+        # field is one of the constant quantity names, never caller text.
+        return (
+            f"SELECT {group_columns}, e.{field} AS num, NULL::text AS txt, "  # noqa: S608
+            f"NULL::boolean AS bool, '{unit}'::text AS unit FROM ({elements}) AS e "
+            f"WHERE e.{field} IS NOT NULL"
+        ), {}
+    return (
+        f"SELECT {group_columns}, p.value_num AS num, p.value_text AS txt, "  # noqa: S608
+        f"p.value_bool AS bool, p.unit FROM ({elements}) AS e "
+        "JOIN ifc.property AS p ON p.object_id = e.object_id "
+        "AND lower(p.pset_name || '.' || p.prop_name) = lower(:field) "
+        "WHERE p.value_num IS NOT NULL OR p.value_text IS NOT NULL OR p.value_bool IS NOT NULL"
+    ), {"field": field}
+
+
+def _field_summaries(
+    connection: Connection,
+    elements: str,
+    group_columns: str,
+    width: int,
+    field: str,
+    params: dict[str, Any],
+) -> dict[tuple[Any, ...], FieldSummary]:
+    """Each group's summary of ``field``; groups where no element has it are absent."""
+    exact, extra = _field_values(elements, group_columns, field)
+    # Values are counted with their numbers to SIGNIFICANT_DIGITS; min, max and sum are exact.
+    values = (
+        "SELECT v.*, CASE WHEN v.num IS NULL OR v.num = 0 THEN v.num ELSE "  # noqa: S608
+        "round(v.num::numeric, greatest(0, :digits - 1 - floor(log(abs(v.num::numeric)))::int))"
+        f"::float8 END AS rnum FROM ({exact}) AS v"
+    )
+    bound = {**params, **extra, "values": MAX_SCHEDULE_VALUES, "digits": SIGNIFICANT_DIGITS}
+    summaries: dict[tuple[Any, ...], FieldSummary] = {}
+    for row in connection.execute(
+        text(
+            f"SELECT {group_columns}, count(*), count(DISTINCT (rnum, txt, bool)), "  # noqa: S608
+            f"min(unit), min(num), max(num), sum(num) FROM ({values}) AS v GROUP BY {group_columns}"
+        ),
+        bound,
+    ):
+        key = tuple(row[:width])
+        count, distinct, unit, low, high, total = row[width:]
+        summaries[key] = FieldSummary(
+            elements_with_value=count,
+            distinct_values=distinct,
+            values=[],
+            unit=unit,
+            min=low,
+            max=high,
+            sum=total,
+        )
+    for row in connection.execute(
+        text(
+            f"SELECT {group_columns}, rnum, txt, bool, n FROM ("  # noqa: S608
+            f"SELECT {group_columns}, rnum, txt, bool, count(*) AS n, row_number() OVER ("
+            f"PARTITION BY {group_columns} ORDER BY count(*) DESC, rnum, txt, bool) AS rank "
+            f"FROM ({values}) AS v GROUP BY {group_columns}, rnum, txt, bool) AS ranked "
+            f"WHERE rank <= :values ORDER BY {group_columns}, rank"
+        ),
+        bound,
+    ):
+        number, text_value, boolean, count = row[width:]
+        value = next(v for v in (text_value, boolean, number) if v is not None)
+        summaries[tuple(row[:width])].values.append(ValueCount(value=value, elements=count))
+    return summaries
+
+
+def _schedule_note(
+    connection: Connection,
+    elements: str,
+    params: dict[str, Any],
+    groups: Sequence[Any],
+    missing: list[str],
+    ifc_class: str,
+) -> str | None:
+    """Why a schedule is empty, or which fields no element has and what exists instead."""
+    if not groups:
+        return (
+            f"No element of class {ifc_class} matches; quantity_takeoff with group_by ifc_class "
+            "lists the model's classes, and list_storeys its storeys. Spaces are not "
+            "elements: space_schedule lists them."
+        )
+    if not missing:
+        return None
+    existing = (
+        connection.execute(
+            text(
+                f"SELECT DISTINCT p.pset_name || '.' || p.prop_name FROM ({elements}) AS e "  # noqa: S608
+                "JOIN ifc.property AS p ON p.object_id = e.object_id"
+            ),
+            params,
+        )
+        .scalars()
+        .all()
+    )
+    notes = []
+    for field in missing:
+        closest = difflib.get_close_matches(field, existing, n=5, cutoff=0.5)
+        hint = f" The closest these elements have: {', '.join(closest)}." if closest else ""
+        notes.append(f"No element in this schedule has {field}.{hint}")
+    return " ".join(notes)
 
 
 # --------------------------------------------------------------------------- data_quality_report
