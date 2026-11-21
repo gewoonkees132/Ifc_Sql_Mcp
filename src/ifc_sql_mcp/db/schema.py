@@ -73,7 +73,7 @@ IFC_CLASS_PATTERN = r"^Ifc[A-Z][A-Za-z0-9]*$"
 DISCIPLINE_PATTERN = r"^[A-Z]{2,8}$"
 
 QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m", "width_m")
-QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "geometry")
+QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "ifc_attribute", "geometry")
 SEVERITIES = ("error", "warning", "info")
 DIMENSIONS = ("completeness", "validity", "consistency", "uniqueness")
 OBJECT_KINDS = ("spatial_element", "element")
@@ -133,6 +133,11 @@ IMPLAUSIBLE_COMMENT = (
 )
 
 
+QUANTITY_SOURCE_COMMENT = (
+    "Where the value came from: ifc_qto (IfcElementQuantity), revit_pset (Revit parameter "
+    "property set), ifc_attribute (an attribute of the entity, such as a door's "
+    "OverallWidth) or geometry (computed from the shape)."
+)
 QUANTITY_NAME_COMMENT = (
     "Canonical quantity; the suffix is its unit: length_m, area_m2, volume_m3, perimeter_m, "
     "height_m, width_m. width_m is IFC's Width: a door's or window's width, a wall's or "
@@ -544,8 +549,7 @@ quantity = Table(
         "source",
         Text,
         nullable=False,
-        comment="Where the value came from: ifc_qto (IfcElementQuantity), revit_pset (Revit "
-        "parameter property set) or geometry (computed from the shape).",
+        comment=QUANTITY_SOURCE_COMMENT,
     ),
     Column("value", Double, nullable=False, comment="Value in the unit named by the suffix."),
     Column(

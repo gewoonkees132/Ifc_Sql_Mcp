@@ -12,6 +12,15 @@ What it reads, and from where:
   ``IfcElement`` (everything physical, openings included). Other products, such as the
   970 ``IfcDistributionPort`` connection points in the plumbing model, are not loaded;
   their count is logged.
+* **Attributes** that are measurements or kinds of operation, not properties: a door's
+  or window's ``OverallWidth`` and ``OverallHeight`` and its operation or partitioning
+  type, on the occurrence and on its type (:data:`_ATTRIBUTES`). Each is stored as a
+  property of a set named after the entity that declares it (``IfcDoor.OverallWidth``),
+  typed by the schema's declaration, so it is converted like any measure.
+* **Predefined property sets** (``IfcDoorLiningProperties``, ``IfcDoorPanelProperties``,
+  ``IfcWindowLiningProperties``...), whose values are attributes too: every attribute
+  with a simple value becomes a property of a set named after the class. ``NOTDEFINED``
+  is no value, as for ``PredefinedType``.
 * **Properties** by walking ``IfcRelDefinesByProperties`` and the type's
   ``HasPropertySets`` directly, rather than through ``ifcopenshell.util.element.get_psets``.
   That helper merges sets that share a name (losing which value came from the type),
@@ -71,6 +80,36 @@ _QUANTITY_VALUE_INDEX = 3
 
 # Attributes every property set definition has; any other non-empty one is data.
 _PROPERTY_SET_HEADER = frozenset({"type", "GlobalId", "OwnerHistory", "Name", "Description"})
+
+# Attributes read as properties, by the entity that declares them. A door schedule needs
+# the overall size and how the door opens; IFC puts them in attributes, not property
+# sets. Names an entity's schema does not have (IFC2X3's IfcDoor has no OperationType)
+# are skipped.
+_ATTRIBUTES: dict[str, tuple[str, ...]] = {
+    "IfcDoor": ("OverallWidth", "OverallHeight", "OperationType", "UserDefinedOperationType"),
+    "IfcWindow": (
+        "OverallWidth",
+        "OverallHeight",
+        "PartitioningType",
+        "UserDefinedPartitioningType",
+    ),
+    "IfcDoorType": ("OperationType", "UserDefinedOperationType"),
+    "IfcDoorStyle": ("OperationType", "ConstructionType"),
+    "IfcWindowType": ("PartitioningType", "UserDefinedPartitioningType"),
+    "IfcWindowStyle": ("OperationType", "ConstructionType"),
+}
+
+# IFC's simple types, as value types: the attribute declares "boolean", a property
+# would say IfcBoolean.
+_SIMPLE_TYPES = {
+    "boolean": "IfcBoolean",
+    "logical": "IfcLogical",
+    "string": "IfcLabel",
+    "real": "IfcReal",
+    "number": "IfcReal",
+    "integer": "IfcInteger",
+}
+_NOT_DEFINED = "NOTDEFINED"
 
 # An ISO 10303-21 (STEP) file opens and closes with these keywords.
 _STEP_START = b"ISO-10303-21;"
@@ -137,6 +176,16 @@ def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
+
+
+def _is_predefined(definition: Entity) -> bool:
+    """True for a property set definition that is neither a property nor a quantity set."""
+    return not definition.is_a("IfcPropertySet") and not definition.is_a("IfcElementQuantity")
+
+
+def _is_value(value: object) -> bool:
+    """True for a simple attribute value worth storing: not absent, not NOTDEFINED."""
+    return isinstance(value, str | int | float | bool) and value != _NOT_DEFINED
 
 
 def _by_id(entities: Any) -> list[Entity]:
@@ -336,22 +385,34 @@ class _Extractor:
     # ----------------------------------------------------------------- property values
 
     def _values(self, entity: Entity, global_id: str) -> Iterator[RawValue]:
+        definitions: list[tuple[Entity, bool]] = []
         for relation in _by_id(entity.IsDefinedBy):
             if not relation.is_a("IfcRelDefinesByProperties"):
                 continue
             definition = relation.RelatingPropertyDefinition
             # IFC4 can wrap several sets in one IfcPropertySetDefinitionSet.
             if definition.is_a("IfcPropertySetDefinitionSet"):
-                definitions = list(definition.wrappedValue)
+                definitions.extend((each, False) for each in definition.wrappedValue)
             else:
-                definitions = [definition]
-            for each in definitions:
-                yield from self._definition_values(each, global_id, from_type=False)
+                definitions.append((definition, False))
+        yield from self._attribute_values(entity, global_id, from_type=False)
 
         element_type = ifcopenshell.util.element.get_type(entity)
         if element_type is not None:
-            for definition in _by_id(element_type.HasPropertySets):
-                yield from self._definition_values(definition, global_id, from_type=True)
+            definitions.extend((d, True) for d in _by_id(element_type.HasPropertySets))
+            yield from self._attribute_values(element_type, global_id, from_type=True)
+
+        # A predefined set is named after its class; a second one of the same class (a
+        # double door's two panels) gets a number, in file order.
+        seen: Counter[str] = Counter()
+        for definition, from_type in definitions:
+            if _is_predefined(definition):
+                seen[definition.is_a()] += 1
+                count = seen[definition.is_a()]
+                name = definition.is_a() if count == 1 else f"{definition.is_a()} {count}"
+                yield from self._predefined_values(definition, name, global_id, from_type)
+            else:
+                yield from self._definition_values(definition, global_id, from_type=from_type)
 
     def _definition_values(
         self, definition: Entity, global_id: str, *, from_type: bool
@@ -359,17 +420,8 @@ class _Extractor:
         set_name = _text(definition.Name)
         if definition.is_a("IfcPropertySet"):
             members, is_quantity_set = definition.HasProperties, False
-        elif definition.is_a("IfcElementQuantity"):
-            members, is_quantity_set = definition.Quantities, True
         else:
-            # Revit 2011 gives door and window styles an IfcDoorLiningProperties (or
-            # window equivalent) named after one of their instances, with every attribute
-            # empty. Such predefined sets are skipped; one that holds data is reported.
-            info = definition.get_info(include_identifier=False, recursive=False)
-            if any(v is not None for k, v in info.items() if k not in _PROPERTY_SET_HEADER):
-                message = f"{definition.is_a()} {set_name!r} holds values that are not read"
-                self.issues.append(Issue(IssueCode.UNSUPPORTED_PROPERTY_SET, global_id, message))
-            return
+            members, is_quantity_set = definition.Quantities, True
         for member in members or ():
             value = self._member_value(member, set_name, global_id)
             if value is None:
@@ -385,6 +437,76 @@ class _Extractor:
                 from_quantity_set=is_quantity_set,
                 order=(int(definition.id()), int(member.id())),
             )
+
+    def _attribute_values(
+        self, entity: Entity, global_id: str, *, from_type: bool
+    ) -> Iterator[RawValue]:
+        """The attributes of :data:`_ATTRIBUTES` that ``entity`` has, as properties."""
+        for declaring, names in _ATTRIBUTES.items():
+            if not entity.is_a(declaring):
+                continue
+            declared = self._declared_types(entity)
+            for index, name in enumerate(names):
+                value = getattr(entity, name, None) if name in declared else None
+                if _is_value(value):
+                    yield RawValue(
+                        set_name=declaring,
+                        name=name,
+                        value_type=declared[name],
+                        value=value,
+                        unit=None,
+                        from_type=from_type,
+                        from_quantity_set=False,
+                        order=(int(entity.id()), index),
+                        from_attribute=True,
+                    )
+
+    def _predefined_values(
+        self, definition: Entity, set_name: str, global_id: str, from_type: bool
+    ) -> Iterator[RawValue]:
+        """Every simple attribute of a predefined property set, as a property.
+
+        Revit 2011 gives door and window styles such sets with every attribute empty, and
+        Revit 2022 with only NOTDEFINED enumerations: they yield nothing. An attribute
+        that refers to another entity (``ShapeAspectStyle``) is not read, and reported.
+        """
+        declared = self._declared_types(definition)
+        skipped: list[str] = []
+        for index, (name, value_type) in enumerate(declared.items()):
+            if name in _PROPERTY_SET_HEADER:
+                continue
+            value = getattr(definition, name, None)
+            if isinstance(value, ifcopenshell.entity_instance):
+                skipped.append(name)
+            elif _is_value(value):
+                yield RawValue(
+                    set_name=set_name,
+                    name=name,
+                    value_type=value_type,
+                    value=value,
+                    unit=None,
+                    from_type=from_type,
+                    from_quantity_set=False,
+                    order=(int(definition.id()), index),
+                    from_attribute=True,
+                )
+        if skipped:
+            message = f"{set_name}.{skipped[0]} refers to another entity, which is not read"
+            self.issues.append(Issue(IssueCode.UNSUPPORTED_PROPERTY_SET, global_id, message))
+
+    def _declared_types(self, entity: Entity) -> dict[str, str]:
+        """Each attribute of the entity's class, with the IFC type it is declared as."""
+        declaration = self.schema.declaration_by_name(entity.is_a()).as_entity()
+        types: dict[str, str] = {}
+        for attribute in declaration.all_attributes():
+            kind = attribute.type_of_attribute()
+            named = kind.as_named_type()
+            if named is not None:
+                types[str(attribute.name())] = str(named.declared_type().name())
+            elif kind.as_simple_type() is not None:
+                simple = str(kind.as_simple_type().declared_type())
+                types[str(attribute.name())] = _SIMPLE_TYPES.get(simple, "IfcLabel")
+        return types
 
     def _member_value(
         self, member: Entity, set_name: str | None, global_id: str

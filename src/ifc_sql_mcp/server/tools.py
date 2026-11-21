@@ -721,7 +721,8 @@ MATERIAL_NOT_FEATURE = (
 
 NO_QUANTITIES_NOTE = (
     "WARNING: no element in this takeoff has {metric}, so there is no total (null, not 0). "
-    "The model holds no quantity of any kind: the IFC file was exported without them. In "
+    "The model holds no IFC base quantities and no Revit dimension parameters (at most a "
+    "door's or window's size): the IFC file was exported without them. In "
     'Revit\'s IFC export setup, tick "Export base quantities" (or "Export Revit property '
     'sets") and export again.'
 )
@@ -764,10 +765,13 @@ def _coverage_note(
         return ""
     if coverage.elements_with_value:
         return PARTIAL_NOTE.format(summary=coverage.summary)
+    # Attributes (a door's overall size) are written whatever the export options, so only
+    # quantity sets and Revit parameters say whether the file was exported with quantities.
     quantities = connection.execute(
         text(
             "SELECT EXISTS (SELECT 1 FROM ifc.quantity AS q JOIN ifc.object AS o "
-            "USING (object_id) WHERE o.model_id = :model_id)"
+            "USING (object_id) WHERE o.model_id = :model_id "
+            "AND q.source IN ('ifc_qto', 'revit_pset'))"
         ),
         {"model_id": model_id},
     ).scalar_one()

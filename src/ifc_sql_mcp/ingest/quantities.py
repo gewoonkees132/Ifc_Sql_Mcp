@@ -14,6 +14,9 @@ values stay in ``property`` as well. The rules come in two families (ADR 3, ADR 
 * **Revit parameters** (source ``revit_pset``): ``PSet_Revit_Dimensions`` (Revit 2011)
   or ``Dimensions`` (Revit 2013 and later), when the file was exported with Revit
   property sets.
+* **IFC attributes** (source ``ifc_attribute``): a door's and a window's
+  ``OverallWidth`` and ``OverallHeight``, which every Revit export writes, even with
+  base quantities and Revit property sets switched off (audit finding A4).
 
 Within a family, a net value is preferred, and the gross one is a **fallback**: it
 supplies the quantity only when its set has no net value, or only an implausible one
@@ -150,6 +153,9 @@ QUANTITY_RULES: tuple[QuantityRule, ...] = (
     ),
     *_qto("Qto_RailingBaseQuantities", ("Length", "length_m", "m")),
     QuantityRule(("GSA Space Areas",), "GSA BIM Area", "area_m2", "ifc_qto", "m2", fallback=True),
+    # A door's and a window's overall size are attributes of the occurrence (A4).
+    QuantityRule(("IfcDoor", "IfcWindow"), "OverallWidth", "width_m", "ifc_attribute", "m"),
+    QuantityRule(("IfcDoor", "IfcWindow"), "OverallHeight", "height_m", "ifc_attribute", "m"),
     QuantityRule(REVIT_DIMENSION_SETS, "Length", "length_m", "revit_pset", "m"),
     QuantityRule(REVIT_DIMENSION_SETS, "Area", "area_m2", "revit_pset", "m2"),
     QuantityRule(REVIT_DIMENSION_SETS, "Volume", "volume_m3", "revit_pset", "m3"),
@@ -172,13 +178,14 @@ def _set_rank(rule: QuantityRule, value: TypedValue, ifc_class_base: str | None)
 
 
 def _matches(rule: QuantityRule, value: TypedValue, ifc_class_base: str | None) -> bool:
-    is_ifc_quantity = rule.source == "ifc_qto"
     return (
         value.name == rule.property_name
         and _set_rank(rule, value, ifc_class_base) is not None
         # A property set that happens to be called "GSA Space Areas" is not an IFC
-        # quantity set, and a quantity set is not a Revit parameter.
-        and value.from_quantity_set == is_ifc_quantity
+        # quantity set, a quantity set is not a Revit parameter, and a set named IfcDoor
+        # is not the door's attributes.
+        and value.from_quantity_set == (rule.source == "ifc_qto")
+        and value.from_attribute == (rule.source == "ifc_attribute")
     )
 
 

@@ -62,6 +62,7 @@ class TypedValue:
     from_quantity_set: bool
     order: tuple[int, int]
     implausible: bool = False
+    from_attribute: bool = False
 
     @property
     def payload(self) -> tuple[object, ...]:
@@ -153,6 +154,7 @@ def type_value(
         from_type=raw.from_type,
         from_quantity_set=raw.from_quantity_set,
         order=raw.order,
+        from_attribute=raw.from_attribute,
     )
     return typed, issues
 

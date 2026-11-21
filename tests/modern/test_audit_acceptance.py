@@ -184,7 +184,6 @@ def test_a3_a_wall_type_counts_its_walls_not_their_openings(modern: Modern) -> N
     assert group.elements == 1_165
 
 
-@_open("A4", 6)
 def test_a4_doors_and_windows_have_their_sizes(modern: Modern) -> None:
     sized = modern.scalar(
         "SELECT ARRAY[count(*) FILTER (WHERE ifc_class_base = 'IfcDoor'), "

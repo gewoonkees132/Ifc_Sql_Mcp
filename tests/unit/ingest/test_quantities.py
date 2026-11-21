@@ -261,3 +261,29 @@ def test_the_gsa_area_stands_in_for_a_missing_space_net_floor_area_only() -> Non
     assert quantities("IfcSpace", qto("Qto_SpaceBaseQuantities", "NetFloorArea", 30.0, "m2"), gsa)[
         "area_m2"
     ] == (30.0, "Qto_SpaceBaseQuantities.NetFloorArea")
+
+
+# --------------------------------------------------------------------------- IFC attributes (A4)
+
+
+def test_a_doors_overall_size_is_its_width_and_height_from_its_attributes() -> None:
+    raws = (
+        value("IfcDoor", "OverallWidth", 1.697, "IfcPositiveLengthMeasure", from_attribute=True),
+        value("IfcDoor", "OverallHeight", 2.1, "IfcPositiveLengthMeasure", from_attribute=True),
+    )
+    values, _ = resolve_properties(GID, raws, SI_UNITS)
+    records, issues = derive_quantities(GID, values, "IfcDoor")
+
+    assert (issues, [(r.name, r.source, r.value, r.source_ref) for r in records]) == (
+        [],
+        [
+            ("height_m", "ifc_attribute", 2.1, "IfcDoor.OverallHeight"),
+            ("width_m", "ifc_attribute", 1.697, "IfcDoor.OverallWidth"),
+        ],
+    )
+
+
+def test_a_property_set_named_after_an_entity_is_not_its_attributes() -> None:
+    records, issues = derive(value("IfcDoor", "OverallWidth", 0.9, "IfcPositiveLengthMeasure"))
+
+    assert (records, issues) == ([], [])

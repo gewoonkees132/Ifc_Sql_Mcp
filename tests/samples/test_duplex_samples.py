@@ -53,9 +53,11 @@ EXPECTED: dict[str, dict[str, dict[str, int]]] = {
         },
         "property_values": {
             "IfcPropertySingleValue entities": 5213,
-            "property rows": 13455,
+            "property rows": 13545,
             "rows from quantity sets": 21,
-            "rows with is_type_property": 8594,
+            "rows from entity attributes": 90,
+            "rows with is_type_property": 8608,
+            "rows from an IfcTypeObject": 14,
             "rows in PSet_Revit_Type_* sets": 8594,
             "placeholder (value = name)": 7650,
             "empty string": 473,
@@ -69,6 +71,8 @@ EXPECTED: dict[str, dict[str, dict[str, int]]] = {
             "perimeter_m (revit_pset)": 54,
             "volume_m3 (revit_pset)": 131,
             "length_m (revit_pset)": 84,
+            "width_m (ifc_attribute)": 38,
+            "height_m (ifc_attribute)": 38,
         },
         "materials": {
             "materials": 18,

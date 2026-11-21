@@ -261,20 +261,91 @@ def test_a_property_set_definition_set_is_unpacked(tmp_path: Path) -> None:
     }
 
 
-def test_a_predefined_property_set_with_data_is_reported(tmp_path: Path) -> None:
+def _named(values: tuple[Any, ...]) -> dict[tuple[str, str], Any]:
+    return {(v.set_name, v.name): v for v in values}
+
+
+def test_a_doors_size_and_operation_are_read_from_its_attributes(tmp_path: Path) -> None:
+    tiny = Tiny()
+    door = tiny.root(
+        "IfcDoor", Name="Door:Type:2", Tag="2", OverallWidth=1697.0, OverallHeight=2100.0
+    )
+    door_type = tiny.root(
+        "IfcDoorType", Name="Type", PredefinedType="DOOR", OperationType="SLIDING_TO_LEFT"
+    )
+    tiny.root("IfcRelDefinesByType", RelatedObjects=[door], RelatingType=door_type)
+
+    values = _named(only_element(tiny.read(tmp_path)).values)
+
+    width = values["IfcDoor", "OverallWidth"]
+    assert (width.value, width.value_type, width.from_attribute, width.from_type) == (
+        1697.0,
+        "IfcPositiveLengthMeasure",
+        True,
+        False,
+    )
+    assert values["IfcDoor", "OverallHeight"].value == 2100.0
+    operation = values["IfcDoorType", "OperationType"]
+    assert (operation.value, operation.value_type, operation.from_type) == (
+        "SLIDING_TO_LEFT",
+        "IfcDoorTypeOperationEnum",
+        True,
+    )
+
+
+def test_a_predefined_property_set_is_read_attribute_by_attribute(tmp_path: Path) -> None:
     tiny = Tiny()
     door = tiny.root("IfcDoor", Name="Door:Type:2", Tag="2")
-    door_type = tiny.root(
-        "IfcDoorType", Name="Type", PredefinedType="DOOR", OperationType="SINGLE_SWING_LEFT"
-    )
+    door_type = tiny.root("IfcDoorType", Name="Type", PredefinedType="DOOR")
+    # Revit 2011 writes empty sets; Revit 2022 writes NOTDEFINED: neither is a value.
     empty = tiny.root("IfcDoorLiningProperties", Name="empty")
-    filled = tiny.root("IfcDoorLiningProperties", Name="filled", LiningDepth=0.1)
-    door_type.HasPropertySets = [empty, filled]
+    undefined = tiny.root("IfcDoorPanelProperties", Name="undefined", PanelOperation="NOTDEFINED")
+    filled = tiny.root("IfcDoorLiningProperties", Name="filled", LiningDepth=100.0)
+    panel = tiny.root(
+        "IfcDoorPanelProperties", Name="panel", PanelOperation="SWINGING", PanelWidth=0.5
+    )
+    door_type.HasPropertySets = [empty, undefined, filled, panel]
     tiny.root("IfcRelDefinesByType", RelatedObjects=[door], RelatingType=door_type)
+
     raw = tiny.read(tmp_path)
-    assert only_element(raw).values == ()
+    values = _named(only_element(raw).values)
+
+    # A second set of one class gets a number, in file order.
+    assert sorted(values) == [
+        ("IfcDoorLiningProperties 2", "LiningDepth"),
+        ("IfcDoorPanelProperties 2", "PanelOperation"),
+        ("IfcDoorPanelProperties 2", "PanelWidth"),
+    ]
+    depth = values["IfcDoorLiningProperties 2", "LiningDepth"]
+    assert (depth.value, depth.value_type, depth.from_type, depth.from_attribute) == (
+        100.0,
+        "IfcPositiveLengthMeasure",
+        True,
+        True,
+    )
+    assert codes(raw) == []
+
+
+def test_a_predefined_attribute_that_is_an_entity_is_reported(tmp_path: Path) -> None:
+    tiny = Tiny()
+    door = tiny.root("IfcDoor", Name="Door:Type:2", Tag="2")
+    door_type = tiny.root("IfcDoorType", Name="Type", PredefinedType="DOOR")
+    aspect = tiny.model.create_entity(
+        "IfcShapeAspect", ShapeRepresentations=[], ProductDefinitional=True
+    )
+    lining = tiny.root(
+        "IfcDoorLiningProperties", Name="lining", LiningDepth=100.0, ShapeAspectStyle=aspect
+    )
+    door_type.HasPropertySets = [lining]
+    tiny.root("IfcRelDefinesByType", RelatedObjects=[door], RelatingType=door_type)
+
+    raw = tiny.read(tmp_path)
+
+    assert list(_named(only_element(raw).values)) == [("IfcDoorLiningProperties", "LiningDepth")]
     assert codes(raw) == [IssueCode.UNSUPPORTED_PROPERTY_SET]
-    assert "filled" in raw.issues[0].message
+    assert raw.issues[0].message == (
+        "IfcDoorLiningProperties.ShapeAspectStyle refers to another entity, which is not read"
+    )
 
 
 # --------------------------------------------------------------------------- relations

@@ -72,6 +72,7 @@ the test module for findings that add a tool or a command.
 | A8 | Unknown totals are reported as 0 | [#10](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/10) | done | `test_a8_an_area_nobody_measured_is_not_zero`: total 0 → null, with a warning |
 | A2 | Revit 2021's duplicated, unscaled quantities reach the LLM | [#4](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/4) | done | `test_a2_the_stored_wall_areas_add_up_to_the_real_total`: 1,157,891,673.6 → 946.0 m² |
 | A1 | The quantity sets modern Revit writes are ignored | [#3](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/3) | done | `test_a1_modern_quantity_sets_become_quantities`: A wall area null → 946.0 m², C spaces 0 → 163 of 163 |
+| A4 | Door and window sizes are not loaded | [#6](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/6) | done | `test_a4_doors_and_windows_have_their_sizes`: 0 → 1,458 of 1,458 doors, `PI005` 1.697 m wide |
 
 ## Per finding
 
@@ -203,3 +204,32 @@ the test module for findings that add a tool or a command.
   | C: spaces with an area | 0 of 163 | **163 of 163** (8,090.7 m², duplicates included: A7) |
   | E: room areas, m² | 30,344.7 (Revit parameters) | 30,344.7 (now from `NetFloorArea`, the same) |
   | A / C / E: `ifc_qto` quantities | 0 / 0 / 0 | 776 / 4,617 / 8,980 |
+
+### A4: door and window sizes are not loaded
+
+- **Attributes as properties.** A door's and a window's `OverallWidth` and
+  `OverallHeight`, and how it opens (`OperationType`, `ConstructionType`,
+  `PartitioningType` on the occurrence or its type), are read as properties of a set
+  named after the declaring entity (`IfcDoor.OverallWidth`). They are typed by the
+  schema's declaration, so a millimetre file's widths are converted like any length.
+- **Predefined sets.** `IfcDoorLiningProperties`, `IfcDoorPanelProperties`, the window
+  ones and the rest are read attribute by attribute, as a set named after the class; a
+  second set of one class (a double door's second panel) gets a number. `NOTDEFINED` is
+  no value, as for `PredefinedType`. Only an attribute that refers to another entity
+  (`ShapeAspectStyle`) is still reported as `unsupported_property_set`.
+- **Quantities.** The overall size becomes `width_m` and `height_m` with a new source,
+  `ifc_attribute` (migration 0013). `v_quantity` v3 ranks it after `revit_pset` and
+  before `geometry`. Attributes are written whatever the export options, so the A8
+  warning ("tick *Export base quantities*") now looks at base quantities and Revit
+  parameters only.
+- **Duplex.** The architectural model's 14 doors and 24 windows gain their sizes (76
+  quantities), and its door styles their `OperationType` (14 rows). The pins and the
+  quirks document carry the new counts.
+- **Before → after on file B**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | Doors with `width_m` and `height_m` | 0 of 1,458 | **1,458 of 1,458** |
+  | Windows with `width_m` and `height_m` | 0 of 1,199 | **1,199 of 1,199** |
+  | Width of type `PI005 80x210` (Claude read 0.80 m from the name) | — | **1.697 m** |
+  | `unsupported_property_set` findings | 1,458 | **0** |

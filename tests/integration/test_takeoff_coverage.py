@@ -40,6 +40,18 @@ def test_a_model_without_quantities_has_no_total_and_says_why(
     assert "Export base quantities" in takeoff.note
 
 
+def test_a_door_size_alone_still_means_the_export_had_no_quantities(conn: Connection) -> None:
+    model_id, _ = _walls(conn, 2)
+    door = add_element(conn, model_id, "IfcDoor", "Door:Type:9")
+    add_quantity(
+        conn, door, "width_m", 0.9, source="ifc_attribute", source_ref="IfcDoor.OverallWidth"
+    )
+
+    takeoff = tools.quantity_takeoff(conn, model_id, "ifc_class", "area_m2")
+
+    assert "Export base quantities" in takeoff.note
+
+
 def test_quantities_of_another_kind_point_at_get_element(conn: Connection) -> None:
     model_id, walls = _walls(conn, 2)
     add_quantity(conn, walls[0], "length_m", 4.0)

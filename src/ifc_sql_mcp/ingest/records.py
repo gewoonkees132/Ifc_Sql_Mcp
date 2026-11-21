@@ -20,7 +20,7 @@ type ObjectKind = Literal["spatial_element", "element"]
 type QuantityName = Literal[
     "length_m", "area_m2", "volume_m3", "perimeter_m", "height_m", "width_m"
 ]
-type QuantitySource = Literal["ifc_qto", "revit_pset", "geometry"]
+type QuantitySource = Literal["ifc_qto", "revit_pset", "ifc_attribute", "geometry"]
 
 
 @dataclass(frozen=True, slots=True)

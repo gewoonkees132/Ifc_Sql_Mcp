@@ -191,11 +191,12 @@ proxy rather than becoming an `IfcBuildingElement`.
 | | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
 | typed elements | 99 | 926 | 99 | 498 |
-| property rows from an `IfcTypeObject` | 0 | 0 | 0 | 0 |
+| property rows from an `IfcTypeObject` | 14 | 0 | 0 | 0 |
 | rows in `PSet_Revit_Type_*` sets on instances | 8,594 | 35,268 | 0 | 0 |
 
-No type object in the four files carries a property set with values. ARC's door and
-window styles each have one predefined set, an `IfcDoorLiningProperties` or
+No type object in the four files carries a property set with values; the 14 rows are the
+door styles' own `OperationType` attribute, read since audit finding A4
+(`IfcDoorStyle.OperationType`). ARC's door and window styles each have one predefined set, an `IfcDoorLiningProperties` or
 `IfcWindowLiningProperties`, named after one of their instances and with every attribute
 empty (`grep -c '=IFCDOORLININGPROPERTIES(' data/samples/Duplex_A_20110907.ifc` gives 6,
 and the same for windows). `ifcopenshell.util.element.get_psets()` reports such a set as
@@ -265,8 +266,9 @@ the defect it is supposed to report.
 | | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
 | `IfcPropertySingleValue` entities reached from loaded objects | 5,213 | 28,129 | 2,366 | 16,049 |
-| property rows | 13,455 | 63,683 | 6,862 | 41,649 |
+| property rows | 13,545 | 63,683 | 6,862 | 41,649 |
 | of which from quantity sets | 21 | 42 | 1 | 1 |
+| of which entity attributes (a door's `OverallWidth`, a style's `OperationType`) | 90 | 0 | 0 | 0 |
 
 One `IfcPropertySet` can be related to many elements, so there are more rows than
 property entities. All of them are single values; other property kinds (lists, tables,
@@ -289,6 +291,7 @@ this table (`quantities.QUANTITY_RULES`); nothing else becomes a quantity:
 | `volume_m3` | `revit_pset` | `….Volume` |
 | `perimeter_m` | `revit_pset` | `….Perimeter` |
 | `height_m` | `revit_pset` | `….Unbounded Height` (spaces) |
+| `width_m`, `height_m` | `ifc_attribute` | `IfcDoor` and `IfcWindow` `OverallWidth`, `OverallHeight` (since A4) |
 
 | | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
@@ -298,6 +301,8 @@ this table (`quantities.QUANTITY_RULES`); nothing else becomes a quantity:
 | perimeter_m (revit_pset) | 54 | 42 | 1 | 1 |
 | volume_m3 (revit_pset) | 131 | 42 | 1 | 1 |
 | length_m (revit_pset) | 84 | 433 | 2 | 231 |
+| width_m (ifc_attribute) | 38 | 0 | 0 | 0 |
+| height_m (ifc_attribute) | 38 | 0 | 0 | 0 |
 
 **GSA BIM Area counts as `area_m2`.** Every space carries a `GSA Space Areas` quantity
 set with one `IfcQuantityArea`, `GSA BIM Area` (GSA being the US General Services

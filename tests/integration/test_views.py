@@ -114,6 +114,27 @@ def _rows(conn: Connection, sql: str, **params: object) -> list[RowMapping]:
     return list(conn.execute(text(sql), params).mappings())
 
 
+@pytest.mark.parametrize(
+    ("sources", "chosen"),
+    [
+        (("geometry", "ifc_attribute", "revit_pset", "ifc_qto"), "ifc_qto"),
+        (("geometry", "ifc_attribute", "revit_pset"), "revit_pset"),
+        (("geometry", "ifc_attribute"), "ifc_attribute"),
+        (("geometry",), "geometry"),
+    ],
+)
+def test_v_quantity_ranks_the_four_sources(
+    conn: Connection, building: Building, sources: tuple[str, ...], chosen: str
+) -> None:
+    door = add_element(conn, building.model_id, "IfcDoor", "M_Single-Flush:0915 x 2134mm:1")
+    for rank, source in enumerate(sources):
+        add_quantity(conn, door, "width_m", 0.9 + rank / 100, source=source, source_ref=source)
+
+    [row] = _rows(conn, "SELECT source FROM ifc.v_quantity WHERE object_id = :id", id=door)
+
+    assert row["source"] == chosen
+
+
 def test_v_quantity_prefers_ifc_quantity_sets_over_revit_parameters(
     conn: Connection, building: Building
 ) -> None:

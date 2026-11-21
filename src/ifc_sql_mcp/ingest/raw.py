@@ -52,6 +52,9 @@ class RawValue:
         from_type: True if the set belongs to the element's IfcTypeObject.
         from_quantity_set: True if the set is an IfcElementQuantity.
         order: (set id, value id) in the STEP file, for deterministic tie-breaking.
+        from_attribute: True if the value is an attribute of an entity rather than an
+            IfcProperty: a door's ``OverallWidth`` (under a set named after the declaring
+            entity) or a lining's ``LiningDepth`` (under a set named after its class).
     """
 
     set_name: str | None
@@ -62,6 +65,7 @@ class RawValue:
     from_type: bool
     from_quantity_set: bool
     order: tuple[int, int]
+    from_attribute: bool = False
 
 
 @dataclass(frozen=True, slots=True)

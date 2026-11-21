@@ -41,7 +41,7 @@ checksum-verified, not stored in this repository), then loads and checks them. O
 empty database:
 
 ```
-loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,455 property values, 0 issues (run 1)
+loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,545 property values, 0 issues (run 1)
 loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property values, 46 issues (run 2)
 loaded Duplex_Electrical_20121207.ifc as model 3 (ELE): 109 objects, 6,862 property values, 88 issues (run 3)
 loaded Duplex_Plumbing_20121113.ifc as model 4 (PLU): 504 objects, 41,649 property values, 550 issues (run 4)
@@ -80,7 +80,7 @@ PostgreSQL listens on loopback. Anywhere else, set your own (`.env.example`,
 
 | File | Discipline | Unit declared | Elements | Spaces | Property values | Transform issues | Findings (warning / info) |
 |---|---|---|---:|---:|---:|---:|---:|
-| `Duplex_A_20110907.ifc` | ARC | m | 268 | 21 | 13,455 | 0 | 7,650 / 473 |
+| `Duplex_A_20110907.ifc` | ARC | m | 268 | 21 | 13,545 | 0 | 7,650 / 473 |
 | `Duplex_MEP_20110907.ifc` | MEP | m | 926 | 42 | 63,683 | 46 | 30,013 / 1,961 |
 | `Duplex_Electrical_20121207.ifc` | ELE | ft | 103 | 1 | 6,862 | 88 | 89 / 3,291 |
 | `Duplex_Plumbing_20121113.ifc` | PLU | mm | 498 | 1 | 41,649 | 550 | 1,471 / 13,223 |
