@@ -93,7 +93,8 @@ async def test_the_input_schemas_state_the_limits_and_the_allowed_values(
     def field(tool: str, name: str) -> dict[str, Any]:
         return schemas[tool]["properties"][name]  # type: ignore[no-any-return]
 
-    assert schemas["list_models"]["properties"] == {}
+    assert list(schemas["list_models"]["properties"]) == ["include_replaced"]
+    assert field("list_models", "include_replaced")["default"] is False
     assert schemas["list_storeys"]["required"] == ["model_id"]
     assert field("list_storeys", "model_id")["minimum"] == 1
     assert schemas["find_elements"]["required"] == ["model_id"]
@@ -258,9 +259,9 @@ async def test_the_schema_resource_describes_every_table_view_and_column(
     finally:
         owner.dispose()
 
-    assert len(relations) == 21
+    assert len(relations) == 22
     assert schema.startswith("# Schema `ifc`\n")
-    assert "7 views and 14\ntables follow." in schema
+    assert "8 views and 14\ntables follow." in schema
     for name, kind, comment in relations:
         heading = f"### {name}\n\n{' '.join(comment.split())}\n"
         assert heading in schema, name

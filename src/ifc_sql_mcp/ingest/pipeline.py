@@ -23,8 +23,15 @@ end state is the same as if the two had run one after the other.
 
 A process killed between steps 3 and 6 leaves its run ``running`` for good; nothing
 reaps such rows (ADR 4).
+
+A new model can be given a project (``project_key``) and the model it replaces
+(``replaces``): Revit's default project number, ``0001``, made the audit's Italian tower
+the Duplex's fifth model, and a weekly re-export was counted next to last week's (audit
+finding A12). A model given neither, whose project number or name is a Revit placeholder,
+gets a warning in the result.
 """
 
+import dataclasses
 import logging
 import re
 import time
@@ -68,6 +75,10 @@ class FileChangedError(Exception):
     """The file's bytes changed between hashing it and parsing it."""
 
 
+class ReplacesError(ValueError):
+    """The model to replace does not exist, or another model already replaces it."""
+
+
 @dataclass(frozen=True, slots=True)
 class IngestResult:
     """What one ingest did.
@@ -82,6 +93,8 @@ class IngestResult:
         issue_counts: Transform issues per code; empty when skipped.
         concurrent: True when skipped because another ingest of the same file committed
             while this one was running.
+        warnings: What the user should know: the project is a Revit placeholder, or
+            ``project_key`` and ``replaces`` were not applied to a file already loaded.
     """
 
     run_id: int
@@ -91,6 +104,7 @@ class IngestResult:
     row_counts: dict[str, int] = field(default_factory=dict)
     issue_counts: dict[str, int] = field(default_factory=dict)
     concurrent: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 def check_discipline(value: str) -> str:
@@ -105,30 +119,57 @@ def check_discipline(value: str) -> str:
     return value
 
 
-def ingest_file(engine: Engine, path: Path, discipline: str) -> IngestResult:
+def ingest_file(
+    engine: Engine,
+    path: Path,
+    discipline: str,
+    *,
+    project_key: str | None = None,
+    replaces: int | None = None,
+) -> IngestResult:
     """Load the IFC file at ``path`` unless the same bytes are already loaded.
 
     Args:
         engine: Engine on a database migrated to the latest revision.
         path: The IFC file.
         discipline: Discipline code for the model, e.g. ``ARC``.
+        project_key: The project the new model belongs to (``model.project_key``). With
+            ``replaces`` and no key, the replaced model's key is kept.
+        replaces: The model this one is a new version of (``model.replaces_model_id``).
 
     Returns:
         What the run did: loaded the file, or found it already loaded.
 
     Raises:
-        ValueError: if ``discipline`` is not a valid code; nothing is written.
+        ValueError: if ``discipline`` is not a valid code or ``project_key`` is blank;
+            nothing is written.
+        ReplacesError: if ``replaces`` names no model, or one already replaced; nothing
+            is written.
         OSError: if the file cannot be read; nothing is written.
         IngestError: if extract, transform or load fails; the run is recorded as failed.
     """
     check_discipline(discipline)
+    if project_key is not None:
+        project_key = project_key.strip()
+        if not project_key:
+            raise ValueError("the project key must not be blank")
+    if replaces is not None:
+        with engine.connect() as connection:
+            project_key = _check_replaces(connection, replaces, project_key)
     sha256 = sha256_file(path)
 
     with engine.begin() as connection:
         existing = _loaded_model(connection, sha256)
         if existing is not None:
             run_id = _insert_run(connection, path.name, sha256, "skipped", existing[0])
-            return _skipped(run_id, path, discipline, existing, concurrent=False)
+            result = _skipped(run_id, path, discipline, existing, concurrent=False)
+            if project_key is None and replaces is None:
+                return result
+            unchanged = (
+                f"{path.name} is already loaded as model {result.model_id}, so --project and "
+                "--replaces were not applied: that model is unchanged"
+            )
+            return dataclasses.replace(result, warnings=(unchanged,))
 
     with engine.begin() as connection:
         run_id = _insert_run(connection, path.name, sha256, "running")
@@ -136,7 +177,13 @@ def ingest_file(engine: Engine, path: Path, discipline: str) -> IngestResult:
         records = _extract_and_transform(path, sha256, run_id)
         started = time.perf_counter()
         with engine.begin() as connection:
-            loaded = load(connection, records, discipline)
+            loaded = load(
+                connection,
+                records,
+                discipline,
+                project_key=project_key,
+                replaces_model_id=replaces,
+            )
             _finish_run(connection, run_id, "succeeded", loaded.model_id, loaded.row_counts)
         logger.info(
             "loaded",
@@ -159,6 +206,9 @@ def ingest_file(engine: Engine, path: Path, discipline: str) -> IngestResult:
             _finish_run(connection, run_id, "failed", error=message)
         raise IngestError(run_id, message) from exc
 
+    warning = None if project_key else _placeholder_warning(records, loaded.model_id)
+    if warning:
+        logger.warning("placeholder project", extra={"model_id": loaded.model_id})
     return IngestResult(
         run_id=run_id,
         status="succeeded",
@@ -166,6 +216,47 @@ def ingest_file(engine: Engine, path: Path, discipline: str) -> IngestResult:
         discipline=discipline,
         row_counts=loaded.row_counts,
         issue_counts=dict(sorted(Counter(i.code.value for i in records.issues).items())),
+        warnings=(warning,) if warning else (),
+    )
+
+
+def _check_replaces(connection: Connection, replaces: int, project_key: str | None) -> str | None:
+    """Check that ``replaces`` can be replaced; return the project key the new model gets."""
+    model = schema.model
+    row = connection.execute(
+        select(model.c.project_key).where(model.c.model_id == replaces)
+    ).one_or_none()
+    if row is None:
+        raise ReplacesError(f"there is no model {replaces} to replace")
+    later = connection.execute(
+        select(model.c.model_id).where(model.c.replaces_model_id == replaces)
+    ).scalar()
+    if later is not None:
+        raise ReplacesError(
+            f"model {replaces} is already replaced by model {later}; replace model {later}"
+        )
+    return project_key if project_key is not None else row.project_key
+
+
+def _is_placeholder(value: str | None) -> bool:
+    return value is None or value.strip() in ("", *schema.REVIT_PLACEHOLDER_PROJECT_NAMES)
+
+
+def _placeholder_warning(records: ModelRecords, model_id: int) -> str | None:
+    """Say when Revit's default project information decides the model's project."""
+    number, name = records.model.project_name, records.model.project_long_name
+    if not _is_placeholder(number):
+        return None
+    if _is_placeholder(name):
+        return (
+            f"the project number {number!r} and name {name!r} are Revit's defaults, so model "
+            f"{model_id} joins no project; give it one with --project, and fill in Project "
+            "Information in Revit"
+        )
+    return (
+        f"the project number {number!r} is Revit's default, so model {model_id} is grouped "
+        f"by its project name {name!r}; give it a project with --project, or fill in the "
+        "Project Number in Revit"
     )
 
 

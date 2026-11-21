@@ -67,6 +67,9 @@ erDiagram
         text project_global_id
         text project_name
         text project_long_name
+        text project_key "given at ingest: --project"
+        text project_group "generated: what project-wide views group by"
+        bigint replaces_model_id FK "the earlier version: --replaces"
         text length_unit "declared unit; *_m columns are converted"
         timestamptz ingested_at
     }
@@ -230,7 +233,8 @@ accommodates:
   parameter.
 - **Project GlobalIds don't match.** The architectural model's `IfcProject` GlobalId
   differs from the other three files, so `project_global_id` is stored but cannot
-  match models. `v_storey_alignment` matches the disciplines by project name instead.
+  match models. `v_storey_alignment` matches the disciplines by `project_group` instead
+  ([below](#projects-and-versions)).
 - **Quantity sets coexist with Revit parameters.** Spaces carry a `GSA Space Areas`
   quantity set (an `IfcElementQuantity`) next to the Revit `Area` parameter, which is
   why a quantity can have more than one source.
@@ -290,7 +294,8 @@ name parts of openings in models already loaded.
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |
 | `v_dq_finding` | finding of each model's latest successful data-quality run | The rule's dimension and scope (model content or loader coverage, v2) and the object's GlobalId, class and name next to each finding, for the run `v_model_summary` counts ([data-quality.md](data-quality.md#reading-the-findings)). |
-| `v_storey_alignment` | storey and model, for models that share a project name | The storey matched across disciplines on a normalised name, each model's elevation, how many of the project's models have the storey, and the spread of their elevations ([below](#storeys-across-disciplines)). |
+| `v_model_current` | model that no later model replaces | The current version of each model, with its `project_group`. Project-wide views read these ([below](#projects-and-versions)). |
+| `v_storey_alignment` | storey and model, for current models of one project (v2) | The storey matched across disciplines on a normalised name, each model's elevation, how many of the project's models have the storey, and the spread of their elevations ([below](#storeys-across-disciplines)). |
 
 `tests/integration/test_views.py` builds a small building that reproduces these cases
 and checks each figure. `tests/integration/test_load.py` loads the synthetic fixture and
@@ -302,9 +307,10 @@ checks the views on it, and `tests/samples/test_duplex_ingest.py` checks
 Discipline models of one building are exported separately, and each can define its own
 levels. `v_storey_alignment` puts them side by side:
 
-- **Same project** means the same `model.project_name` (`IfcProject.Name`, Revit's
-  Project Number), compared exactly. The project GlobalId cannot be used because ARC's
-  differs from the other three. Models without a project name are left out.
+- **Same project** means the same `model.project_group` ([below](#projects-and-versions)),
+  compared exactly, among the current models (`v_model_current`). The project GlobalId
+  cannot be used because ARC's differs from the other three. Models in no project are
+  left out.
 - **Same storey** means the same `storey_key`: the `IfcBuildingStorey` name with every
   run of whitespace replaced by one space, trimmed and lower-cased. `'Level 2'`,
   `' LEVEL  2'` and `'level\t2'` match. `'Level 02'`, `'L2'` and a storey at the same
@@ -313,8 +319,8 @@ levels. `v_storey_alignment` puts them side by side:
 - **One row per storey and model**, with the model's own name and elevation, plus
   `storey_model_count` (how many of the project's models have this key),
   `project_model_count` and `elevation_spread_m` (highest minus lowest elevation). A
-  storey lines up when the counts are equal and the spread is 0. Every loaded version of
-  a model counts as a model, so load one version per discipline to compare disciplines.
+  storey lines up when the counts are equal and the spread is 0. A model a later version
+  replaces is not compared, so load a re-export with `--replaces`.
 
 On the four Duplex files, after `make ingest-samples` (`make psql`):
 
@@ -322,7 +328,7 @@ On the four Duplex files, after `make ingest-samples` (`make psql`):
 SELECT storey_key, discipline, storey_name, elevation_m,
        storey_model_count AS models_with_it, project_model_count AS models,
        elevation_spread_m AS spread_m
-FROM ifc.v_storey_alignment WHERE project_name = '0001'
+FROM ifc.v_storey_alignment WHERE project_group = 'Duplex Apartment'
 ORDER BY elevation_m, storey_key, discipline;
 ```
 
@@ -355,6 +361,45 @@ WHERE storey_model_count < project_model_count OR elevation_spread_m <> 0;
 -- t/fdn
 ```
 
+### Projects and versions
+
+Two questions decide what a project-wide answer adds up: which models are one project,
+and which version of a model is the current one. The file cannot be trusted with either
+(audit finding A12). Revit writes `0001`, `Project Number` and `Project Name` until
+someone fills in Project Information, so v1 of `v_storey_alignment` made the audit's
+Italian tower (`0001`) the Duplex's fifth model. A weekly re-export was a second model
+of the same project, counted next to last week's.
+
+- **`model.project_key`** is the project given at ingest:
+  `ifc-sql ingest model.ifc --discipline ARC --project 2024-017`.
+- **`model.project_group`**, a generated column, is what project-wide views group by:
+  `project_key`, else `project_name` (`IfcProject.Name`, Revit's Project Number), else
+  `project_long_name`, leaving out Revit's placeholders. A model in no project
+  (`project_group` NULL) is compared with no other. On the audit's files:
+
+  | Model | `project_name` / `project_long_name` | `project_group` |
+  |---|---|---|
+  | Duplex (all four) | `0001` / `Duplex Apartment` | `Duplex Apartment` |
+  | A and D, the house | `001-00` / `Sample House` | `001-00` |
+  | B, the tower | `0001` / `Project Name` | NULL |
+  | C, the office | `Project Number` / `Project Name` | NULL |
+  | E, the school | `170016` / `Nittedal ungdomsskole` | `170016` |
+
+- **`model.replaces_model_id`** is the earlier version a model replaces:
+  `ifc-sql ingest week_12.ifc --discipline ARC --replaces 4`. The new model keeps the old
+  one's `project_key` unless given another. A model is replaced at most once (a unique
+  key), and never by itself. The replaced model stays loaded, and every tool still reads
+  it by its id. **`v_model_current`** lists the models no later model replaces, and
+  `v_storey_alignment` and `list_models` read only those (`list_models` takes
+  `include_replaced` to show the others).
+- **A warning at ingest** says when a placeholder decided the project:
+
+  ```
+  warning: the project number '0001' and name 'Project Name' are Revit's defaults, so model 2 joins no project; give it one with --project, and fill in Project Information in Revit
+  ```
+
+  The data quality rule `placeholder_project_info` reports the same on every check.
+
 ## Loading
 
 ```bash
@@ -386,6 +431,7 @@ come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):
 | Database unreachable | none | 1 | `cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc: connection failed: …` (the password is masked) |
 | Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but ingest needs revision 0009: run `ifc-sql migrate` first`` |
 | No such file; missing or invalid `--discipline` | none | 2 | Usage error, e.g. `Invalid value for '--discipline': discipline must be 2 to 8 capital letters, e.g. ARC; got 'arc'` |
+| `--replaces` a model that does not exist, or one already replaced; a blank `--project` | none | 2 | Usage error, e.g. `Invalid value for '--replaces': model 1 is already replaced by model 2; replace model 2` |
 
 The outputs are from runs of the command in this container, except the concurrent one,
 whose wording is checked by `tests/integration/test_cli_ingest.py`. An empty file and a

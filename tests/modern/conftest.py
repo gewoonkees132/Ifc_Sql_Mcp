@@ -36,9 +36,11 @@ def modern(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
     settings = create_database("test_modern")
     upgrade(settings)
     engine = make_engine(settings.database_url)
-    ingested = {
-        key: ingest_file(engine, audit_path(key), d) for key, d in AUDIT_DISCIPLINES.items()
-    }
+    # D is A with fire ratings added: loaded as A's new version (audit finding A12).
+    ingested = {}
+    for key, discipline in AUDIT_DISCIPLINES.items():
+        replaces = ingested["a"].model_id if key == "d" else None
+        ingested[key] = ingest_file(engine, audit_path(key), discipline, replaces=replaces)
     ingested["duplex"] = ingest_file(engine, sample_path("arc"), "ARC")
     rules = load_catalogue()
     with engine.begin() as connection:

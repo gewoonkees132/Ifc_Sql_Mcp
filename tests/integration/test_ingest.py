@@ -197,8 +197,8 @@ def test_a_failure_late_in_the_load_rolls_back_everything(
 ) -> None:
     """Every row is inserted before the failure; none of them may survive it."""
 
-    def load_then_fail(*args: Any) -> LoadResult:
-        load(*args)
+    def load_then_fail(*args: Any, **options: Any) -> LoadResult:
+        load(*args, **options)
         raise RuntimeError("disk full")
 
     monkeypatch.setattr(pipeline, "load", load_then_fail)

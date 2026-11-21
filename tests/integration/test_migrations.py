@@ -1,6 +1,7 @@
 """The migrations: they run both ways, and they agree with schema.py."""
 
 import io
+import warnings
 from collections.abc import Callable
 
 import make_revit_quirks
@@ -85,6 +86,7 @@ def test_migration_history_is_one_linear_chain() -> None:
         "0014",
         "0015",
         "0016",
+        "0017",
     ]
 
 
@@ -141,7 +143,10 @@ def test_schema_py_matches_migrated_database(test_settings: Settings) -> None:
     """
     engine = migration_engine(test_settings.database_url)
     try:
-        with engine.connect() as connection:
+        with engine.connect() as connection, warnings.catch_warnings():
+            # Alembic cannot compare a generated column's expression, and says so;
+            # test_storey_alignment.py checks model.project_group by its values.
+            warnings.filterwarnings("ignore", "Computed default on .* cannot be modified")
             context = MigrationContext.configure(connection, opts=AUTOGENERATE_OPTIONS)
             differences = compare_metadata(context, metadata)
     finally:

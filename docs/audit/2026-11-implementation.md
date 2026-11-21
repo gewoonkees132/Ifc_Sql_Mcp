@@ -78,6 +78,7 @@ the test module for findings that add a tool or a command.
 | A9 | Data quality measures the loader, not the model | [#11](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/11) | done | `test_a9_data_quality_reports_what_the_model_lacks`, `test_a9_the_loaders_gaps_are_reported_apart_from_the_models`: B: errors that are loader gaps 1,458 → 0; no quantities, no rooms, placeholder project and materials, 8,079 missing fire ratings: none reported → all reported |
 | A10 | The LLM cannot find the schema | [#12](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/12) | done | `tests/integration/test_schema_discovery.py`: of the sessions' 20 failed calls, errors that name what to use 0 → 20 |
 | A11 | Schedules cost too much context | [#13](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/13) | done | `test_a11_a_door_schedule_fits_in_a_few_kilobytes`: B's L01 door schedule, ~490,000 characters by paging → 4,181; 159 doors in 6 types, every width as IfcOpenShell reads it |
+| A12 | Projects and versions are guessed from the file | [#14](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/14) | done | `test_a12_a_placeholder_project_number_joins_no_project`, `test_a12_a_new_export_replaces_the_old_one_in_project_wide_views`: B aligned with other models 1 → 0; A next to its re-export D 2 models → 1 |
 
 ## Per finding
 
@@ -384,4 +385,40 @@ the test module for findings that add a tool or a command.
   | B: door schedule of all 1,458 doors by type | the same | **3,759** |
   | C: room schedule, first answer | all 163 spaces, 42,353 characters | **39,012** for a page of 150, with the totals of all 163 |
   | E: room schedule, first answer | all 307 spaces, 87,014 characters (the cap was 500, ~112,000) | **42,703** for a page of 150, with the totals of all 307 |
+
+### A12: projects and versions are guessed from the file
+
+- **Migration 0017** adds three columns to `ifc.model`, plus a view:
+  - `project_key`, set by `ifc-sql ingest --project`;
+  - `project_group`, generated: `project_key`, else the project number, else its name,
+    never a Revit placeholder;
+  - `replaces_model_id`, set by `ifc-sql ingest --replaces`: unique, never the model
+    itself, `SET NULL` when the old model is deleted;
+  - `v_model_current`, the models no later model replaces.
+
+  `v_storey_alignment` v2 groups current models by `project_group`. `list_models` shows
+  each model's project group and versions, and leaves replaced models out unless
+  `include_replaced`.
+- **Decisions.**
+  - *The name stands in for a placeholder number.* The issue said a placeholder never
+    forms a project by itself. The four Duplex files are numbered `0001` and named
+    `Duplex Apartment`; grouping them by their name keeps them one project without a
+    `--project`. B (`0001` / `Project Name`) and C (`Project Number` / `Project Name`)
+    have only placeholders and join no project.
+  - *A replacement keeps the project.* `--replaces` without `--project` takes the
+    replaced model's key, so a weekly re-export needs one option.
+  - *A replaced model stays loaded.* It drops out of project-wide views and the default
+    model list, but every tool still reads it by its id, for comparison (A15).
+  - *Options on a file already loaded* are not applied. The model is identified by its
+    bytes (ADR 4), and changing it from a repeat ingest would be a hidden edit. The CLI
+    says so in a warning.
+- **The warning at ingest** names the placeholder and what decided the group.
+  `placeholder_project_info` (A9) reports the same on every check.
+- **Before → after** (`harness/figures.py`; the modern suite loads D with `--replaces` A)
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | B: other models it is aligned with (`v_storey_alignment`) | 1 (the Duplex, as project `0001`) | **0** |
+  | Project `001-00`: models compared | 2 (A and its re-export D) | **1** (D) |
+  | Duplex: models in its project | 4 | 4 (grouped as `Duplex Apartment`) |
 

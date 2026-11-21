@@ -383,7 +383,9 @@ only references create UniFormat rows.
 - **Project GlobalIds differ.** ARC's `IfcProject` is `1xS3BCk291UvhgP2a6eflL`, the others'
   is `0o8nNAbaT5OQLV8CAFemQP`, although all four say project `0001`, `Duplex Apartment`.
   `project_global_id` is stored but cannot match models across disciplines, so
-  `v_storey_alignment` matches them by project name instead.
+  `v_storey_alignment` matches them by `project_group` instead. That is their name here,
+  because `0001` is Revit's default number
+  ([data-model.md](data-model.md#projects-and-versions)).
 - **PredefinedType.** A type object's value applies to its occurrences unless it is
   `NOTDEFINED`; `NOTDEFINED` itself is stored as NULL. `USERDEFINED` is kept; the custom
   text that goes with it lives in `ObjectType`, free text the column's format could not

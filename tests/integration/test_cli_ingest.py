@@ -6,7 +6,7 @@ from pathlib import Path
 import make_revit_quirks
 import pytest
 from cli_output import plain
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 from typer.testing import CliRunner, Result
 
 from ifc_sql_mcp import cli
@@ -92,7 +92,7 @@ def test_ingest_says_when_a_concurrent_ingest_loaded_the_file(
     concurrent = IngestResult(
         run_id=7, status="skipped", model_id=3, discipline="ARC", concurrent=True
     )
-    monkeypatch.setattr(cli, "ingest_file", lambda *args: concurrent)
+    monkeypatch.setattr(cli, "ingest_file", lambda *args, **options: concurrent)
 
     result = _ingest(FIXTURE)
 
@@ -108,7 +108,7 @@ def test_ingest_reports_a_file_it_cannot_read(
 ) -> None:
     """Typer checks the path first; this covers a file that becomes unreadable after that."""
 
-    def unreadable(*args: object) -> IngestResult:
+    def unreadable(*args: object, **options: object) -> IngestResult:
         raise PermissionError(13, "Permission denied")
 
     monkeypatch.setattr(cli, "ingest_file", unreadable)
@@ -117,3 +117,132 @@ def test_ingest_reports_a_file_it_cannot_read(
 
     assert result.exit_code == 1
     assert f"cannot read {FIXTURE}: Permission denied" in plain(result.stderr)
+
+
+# --------------------------------------------------------------------------- projects, versions
+
+
+def _variant(tmp_path: Path, name: str, number: str, long_name: str) -> Path:
+    """The fixture with another project number and name: other bytes, so a new model."""
+    text = FIXTURE.read_text(encoding="utf-8").replace(
+        "'0042',$,$,'Fixture House'", f"'{number}',$,$,'{long_name}'"
+    )
+    path = tmp_path / name
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def _models(database: Engine) -> list[tuple[object, ...]]:
+    with database.connect() as connection:
+        return [
+            tuple(row)
+            for row in connection.execute(
+                text(
+                    "SELECT m.model_id, m.project_key, m.project_group, m.replaces_model_id, "
+                    "c.model_id IS NOT NULL FROM ifc.model AS m "
+                    "LEFT JOIN ifc.v_model_current AS c USING (model_id) ORDER BY 1"
+                )
+            )
+        ]
+
+
+def test_a_project_given_at_ingest_and_a_new_version_that_replaces_the_old(
+    database: Engine, tmp_path: Path
+) -> None:
+    first = CliRunner().invoke(
+        cli.app, ["ingest", str(FIXTURE), "--discipline", "ARC", "--project", " tower "]
+    )
+    newer = _variant(tmp_path, "revit_quirks_week_2.ifc", "0042", "Fixture House 2")
+    second = CliRunner().invoke(
+        cli.app, ["ingest", str(newer), "--discipline", "ARC", "--replaces", "1"]
+    )
+
+    assert (first.exit_code, second.exit_code) == (0, 0), first.output + second.output
+    assert "warning:" not in first.stderr + second.stderr
+    # The new version keeps the project, and only it is current.
+    assert _models(database) == [(1, "tower", "tower", None, False), (2, "tower", "tower", 1, True)]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        (["--replaces", "99"], "there is no model 99 to replace"),
+        (["--replaces", "1"], "model 1 is already replaced by model 2; replace model 2"),
+        (["--project", "  "], "the project key must not be blank"),
+    ],
+)
+def test_a_replacement_or_project_that_cannot_be_is_a_usage_error(
+    database: Engine, tmp_path: Path, arguments: list[str], message: str
+) -> None:
+    _ingest(FIXTURE)
+    week_2 = _variant(tmp_path, "week_2.ifc", "0042", "Fixture House 2")
+    CliRunner().invoke(cli.app, ["ingest", str(week_2), "--discipline", "ARC", "--replaces", "1"])
+    with database.connect() as connection:
+        runs = connection.execute(text("SELECT count(*) FROM ifc.ingestion_run")).scalar_one()
+    week_3 = _variant(tmp_path, "week_3.ifc", "0042", "Fixture House 3")
+
+    result = CliRunner().invoke(cli.app, ["ingest", str(week_3), "--discipline", "ARC", *arguments])
+
+    assert result.exit_code == 2
+    assert message in plain(result.stderr)
+    with database.connect() as connection:  # nothing was written, not even a run
+        assert (
+            connection.execute(text("SELECT count(*) FROM ifc.ingestion_run")).scalar_one() == runs
+        )
+
+
+@pytest.mark.parametrize(
+    ("number", "long_name", "warning"),
+    [
+        (
+            "0001",
+            "Fixture House",
+            "warning: the project number '0001' is Revit's default, so model 1 is grouped by "
+            "its project name 'Fixture House'; give it a project with --project, or fill in "
+            "the Project Number in Revit",
+        ),
+        (
+            "0001",
+            "Project Name",
+            "warning: the project number '0001' and name 'Project Name' are Revit's defaults, "
+            "so model 1 joins no project; give it one with --project, and fill in Project "
+            "Information in Revit",
+        ),
+    ],
+)
+def test_a_revit_default_project_gets_a_warning(
+    database: Engine, tmp_path: Path, number: str, long_name: str, warning: str
+) -> None:
+    result = _ingest(_variant(tmp_path, "default.ifc", number, long_name))
+
+    assert result.exit_code == 0
+    assert warning in result.stderr
+    assert result.stdout.startswith("loaded default.ifc as model 1 (ARC)")
+
+
+def test_a_project_given_stops_the_warning(database: Engine, tmp_path: Path) -> None:
+    path = _variant(tmp_path, "default.ifc", "0001", "Project Name")
+
+    result = CliRunner().invoke(
+        cli.app, ["ingest", str(path), "--discipline", "ARC", "--project", "tower"]
+    )
+
+    assert result.exit_code == 0
+    assert "warning:" not in result.stderr
+
+
+def test_options_on_a_file_already_loaded_are_not_applied_and_it_says_so(
+    database: Engine,
+) -> None:
+    _ingest(FIXTURE)
+
+    result = CliRunner().invoke(
+        cli.app, ["ingest", str(FIXTURE), "--discipline", "ARC", "--project", "tower"]
+    )
+
+    assert result.exit_code == 0
+    assert (
+        "warning: revit_quirks.ifc is already loaded as model 1, so --project and --replaces "
+        "were not applied: that model is unchanged" in result.stderr
+    )
+    assert _models(database) == [(1, None, "0042", None, True)]

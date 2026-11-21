@@ -46,7 +46,7 @@ async def test_list_models_describes_each_model_and_its_data_quality(server: MCP
         result = await call(client, "list_models")
 
     first, second = result["models"]
-    assert result["truncated"] is False
+    assert (result["truncated"], result["replaced_left_out"]) == (False, 0)
     common = {
         "file_name": "revit_quirks.ifc",
         "ifc_schema": "IFC2X3",
@@ -54,6 +54,9 @@ async def test_list_models_describes_each_model_and_its_data_quality(server: MCP
         "authoring_app": "ifc-sql-mcp fixture generator 1",
         "project_name": "0042",
         "project_long_name": "Fixture House",
+        "project_group": "0042",
+        "replaces_model_id": None,
+        "replaced_by_model_id": None,
         "length_unit": "ft",
         "storeys": 3,
         "spaces": 2,

@@ -28,6 +28,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Computed,
     DateTime,
     Double,
     ForeignKey,
@@ -174,6 +175,18 @@ def _within_model(target: str) -> ForeignKey:
 
 # --------------------------------------------------------------------------- model, runs
 
+REVIT_PLACEHOLDER_PROJECT_NAMES = ("0001", "Project Number", "Project Name")
+"""What Revit writes as the project number or name until someone fills them in. Models with
+these share them by chance, so they never make two models one project (audit finding A12)."""
+
+_PLACEHOLDERS = ", ".join(f"'{name}'" for name in REVIT_PLACEHOLDER_PROJECT_NAMES)
+PROJECT_GROUP = (
+    "COALESCE(project_key, "
+    f"CASE WHEN btrim(project_name) NOT IN ('', {_PLACEHOLDERS}) THEN project_name END, "
+    f"CASE WHEN btrim(project_long_name) NOT IN ('', {_PLACEHOLDERS}) THEN project_long_name END)"
+)
+"""The generated ``model.project_group``: the project a model is grouped in, if any."""
+
 model = Table(
     "model",
     metadata,
@@ -237,6 +250,28 @@ model = Table(
         server_default=func.now(),
         comment="When the model was committed to the database.",
     ),
+    Column(
+        "project_key",
+        Text,
+        comment="Project the model belongs to, as given at ingest (ifc-sql ingest --project), "
+        "or inherited from the model it replaces. NULL when none was given.",
+    ),
+    Column(
+        "project_group",
+        Text,
+        Computed(PROJECT_GROUP, persisted=True),
+        comment="What project-wide views group models by: project_key, else project_name, "
+        "else project_long_name, leaving out Revit's placeholders (0001, Project Number, "
+        "Project Name). NULL: the model joins no project.",
+    ),
+    Column(
+        "replaces_model_id",
+        BigInteger,
+        ForeignKey("ifc.model.model_id", ondelete="SET NULL"),
+        unique=True,
+        comment="The earlier version of the same model that this one replaces (ifc-sql ingest "
+        "--replaces). A replaced model stays loaded but is not current: see v_model_current.",
+    ),
     _not_blank("file_name"),
     CheckConstraint("file_sha256 ~ '^[0-9a-f]{64}$'", name="file_sha256_hex"),
     CheckConstraint("file_size_bytes > 0", name="file_size_bytes_positive"),
@@ -244,6 +279,8 @@ model = Table(
     CheckConstraint(f"discipline ~ '{DISCIPLINE_PATTERN}'", name="discipline_format"),
     CheckConstraint(f"project_global_id ~ '{GLOBAL_ID_PATTERN}'", name="project_global_id_format"),
     _not_blank("length_unit"),
+    _not_blank("project_key"),
+    CheckConstraint("replaces_model_id <> model_id", name="replaces_model_id_not_itself"),
     comment="One row per ingested IFC file version. Deleting a model deletes everything "
     "loaded from it.",
 )

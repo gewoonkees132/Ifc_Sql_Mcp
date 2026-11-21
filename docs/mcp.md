@@ -158,9 +158,17 @@ here and trimmed where marked `…`.
 
 ### list_models
 
-No parameters. Every loaded model, oldest first: id, file, discipline, IFC schema,
-authoring application, project, the length unit the file declared, counts, and the
-status of its latest data quality check. At most 200 models.
+| Parameter | Type | |
+|---|---|---|
+| `include_replaced` | boolean, default false | also list the models a later version replaces |
+
+The loaded models, oldest first: id, file, discipline, IFC schema, authoring application,
+project, the length unit the file declared, counts, and the status of its latest data
+quality check. At most 200 models. `project_group` says which models are one project
+(never a Revit default such as `0001`), and `replaces_model_id` and
+`replaced_by_model_id` link the versions of a model. A model a later version replaces is
+left out unless `include_replaced`, and `replaced_left_out` counts those
+([data-model.md](data-model.md#projects-and-versions), audit finding A12).
 
 ```jsonc
 // list_models {}  — models[1] of 4
@@ -173,6 +181,7 @@ status of its latest data quality check. At most 200 models.
   "authoring_app": "Autodesk Revit MEP 2011",
   "project_name": "0001",
   "project_long_name": "Duplex Apartment",
+  "project_group": "Duplex Apartment", "replaces_model_id": null, "replaced_by_model_id": null,
   "length_unit": "m",
   "ingested_at": "2026-11-17T19:51:54.616708Z",
   "storeys": 3, "spaces": 42, "elements": 926,

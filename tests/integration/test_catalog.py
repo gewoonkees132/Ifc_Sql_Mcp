@@ -59,6 +59,7 @@ def test_views_are_the_documented_set(engine: Engine) -> None:
     assert sorted(inspect(engine).get_view_names(schema=SCHEMA)) == [
         "v_dq_finding",
         "v_element",
+        "v_model_current",
         "v_model_summary",
         "v_quantity",
         "v_space_schedule",

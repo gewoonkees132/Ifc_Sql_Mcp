@@ -61,18 +61,27 @@ class LoadResult:
     row_counts: dict[str, int]
 
 
-def load(connection: Connection, records: ModelRecords, discipline: str) -> LoadResult:
+def load(
+    connection: Connection,
+    records: ModelRecords,
+    discipline: str,
+    *,
+    project_key: str | None = None,
+    replaces_model_id: int | None = None,
+) -> LoadResult:
     """Insert one model and everything that belongs to it.
 
     Args:
         connection: A connection inside the transaction that should hold the model.
         records: The transform's output for one file.
         discipline: Discipline code for ``model.discipline``, e.g. ``ARC``.
+        project_key: ``model.project_key``, the project given at ingest.
+        replaces_model_id: ``model.replaces_model_id``, the model this one replaces.
 
     Returns:
         The new model's id and the number of rows written to each table.
     """
-    model_id = _insert_model(connection, records.model, discipline)
+    model_id = _insert_model(connection, records.model, discipline, project_key, replaces_model_id)
     object_ids = _insert_objects(connection, model_id, records.objects)
     material_ids = _insert_materials(connection, model_id, records.materials)
 
@@ -119,7 +128,13 @@ def copy_rows(connection: Connection, table: Table, rows: Sequence[Row]) -> None
 # --------------------------------------------------------------------------- tables with ids
 
 
-def _insert_model(connection: Connection, model: ModelRecord, discipline: str) -> int:
+def _insert_model(
+    connection: Connection,
+    model: ModelRecord,
+    discipline: str,
+    project_key: str | None,
+    replaces_model_id: int | None,
+) -> int:
     statement = (
         insert(schema.model)
         .values(
@@ -134,6 +149,8 @@ def _insert_model(connection: Connection, model: ModelRecord, discipline: str) -
             project_name=model.project_name,
             project_long_name=model.project_long_name,
             length_unit=model.length_unit,
+            project_key=project_key,
+            replaces_model_id=replaces_model_id,
         )
         .returning(schema.model.c.model_id)
     )

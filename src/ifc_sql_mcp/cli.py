@@ -33,7 +33,13 @@ from ifc_sql_mcp.dq.run import (
     loaded_model_ids,
 )
 from ifc_sql_mcp.dq.sync import sync_rules
-from ifc_sql_mcp.ingest.pipeline import IngestError, IngestResult, check_discipline, ingest_file
+from ifc_sql_mcp.ingest.pipeline import (
+    IngestError,
+    IngestResult,
+    ReplacesError,
+    check_discipline,
+    ingest_file,
+)
 from ifc_sql_mcp.logging_config import configure_logging
 from ifc_sql_mcp.server.app import build_server
 
@@ -172,12 +178,31 @@ def ingest(
             help="Discipline of the model: 2 to 8 capital letters, e.g. ARC, MEP, ELE, PLU.",
         ),
     ],
+    project: Annotated[
+        str | None,
+        typer.Option(
+            "--project",
+            help="The project this model belongs to, e.g. the project's number. Models with "
+            "the same project are compared across disciplines. Without it, the file's own "
+            "project number or name is used, unless it is a Revit default.",
+        ),
+    ] = None,
+    replaces: Annotated[
+        int | None,
+        typer.Option(
+            "--replaces",
+            min=1,
+            metavar="MODEL_ID",
+            help="The model this file is a new export of. That model stays loaded, but only "
+            "this one counts in project-wide views. Its --project is kept unless given.",
+        ),
+    ] = None,
 ) -> None:
     """Load one IFC file. A file whose exact bytes are already loaded is skipped.
 
     Exit codes: 0 when the file was loaded or already was; 1 when the ingest failed
     (unreadable file, database unreachable or not migrated, load error); 2 for a usage
-    error (no such file, invalid discipline).
+    error (no such file, invalid discipline, blank project, no model to replace).
     """
     settings: Settings = ctx.obj
     database = redact(settings.database_url)
@@ -185,7 +210,11 @@ def ingest(
     engine = make_engine(settings.database_url)
     try:
         _require_latest_revision(settings, "ingest")
-        result = ingest_file(engine, path, discipline)
+        result = ingest_file(engine, path, discipline, project_key=project, replaces=replaces)
+    except ReplacesError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--replaces'") from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--project'") from exc
     except OperationalError as exc:
         typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
         raise typer.Exit(1) from exc
@@ -198,6 +227,8 @@ def ingest(
     finally:
         engine.dispose()
     typer.echo(_summary(path.name, result))
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}", err=True)
 
 
 def _dq_summary(result: DqResult) -> str:

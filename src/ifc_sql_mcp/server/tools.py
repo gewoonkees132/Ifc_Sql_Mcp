@@ -91,6 +91,15 @@ class ModelSummary(ToolResult):
     authoring_app: IfcText | None
     project_name: IfcText | None = Field(description="IfcProject.Name.")
     project_long_name: IfcText | None = Field(description="IfcProject.LongName.")
+    project_group: IfcText | None = Field(
+        description="The project this model is compared with others in: the project given at "
+        "ingest, else project_name, else project_long_name, never a Revit default (0001, "
+        "Project Number, Project Name). Null: it belongs to no project."
+    )
+    replaces_model_id: int | None = Field(description="The earlier version this one replaces.")
+    replaced_by_model_id: int | None = Field(
+        description="The later version that replaces this one; null for a current model."
+    )
     length_unit: str | None = Field(
         description="Unit the file declared. Every value this server returns is converted "
         "to metres, m2 and m3 whatever it says."
@@ -109,6 +118,9 @@ class ModelList(ToolResult):
     """The loaded models, oldest first."""
 
     models: list[ModelSummary]
+    replaced_left_out: int = Field(
+        description="Models a later version replaces, left out unless include_replaced."
+    )
     truncated: bool = Field(description=f"True when more than {MAX_MODELS} models are loaded.")
 
     def logged_rows(self) -> int:
@@ -117,11 +129,14 @@ class ModelList(ToolResult):
 
 
 MODEL_SUMMARY = """
-SELECT model_id, file_name, discipline, ifc_schema, mvd, authoring_app, project_name,
-       project_long_name, length_unit, ingested_at, storey_count, space_count, element_count,
-       property_count, quantity_count, material_count, dq_run_id, dq_finished_at,
-       dq_error_count, dq_warning_count, dq_info_count
-FROM ifc.v_model_summary
+SELECT s.model_id, s.file_name, s.discipline, s.ifc_schema, s.mvd, s.authoring_app,
+       s.project_name, s.project_long_name, m.project_group, m.replaces_model_id,
+       later.model_id AS replaced_by_model_id, s.length_unit, s.ingested_at, s.storey_count,
+       s.space_count, s.element_count, s.property_count, s.quantity_count, s.material_count,
+       s.dq_run_id, s.dq_finished_at, s.dq_error_count, s.dq_warning_count, s.dq_info_count
+FROM ifc.v_model_summary AS s
+JOIN ifc.model AS m ON m.model_id = s.model_id
+LEFT JOIN ifc.model AS later ON later.replaces_model_id = s.model_id
 """
 
 
@@ -135,6 +150,9 @@ def _model_summary(row: RowMapping) -> ModelSummary:
         authoring_app=row["authoring_app"],
         project_name=row["project_name"],
         project_long_name=row["project_long_name"],
+        project_group=row["project_group"],
+        replaces_model_id=row["replaces_model_id"],
+        replaced_by_model_id=row["replaced_by_model_id"],
         length_unit=row["length_unit"],
         ingested_at=row["ingested_at"],
         storeys=row["storey_count"],
@@ -154,20 +172,35 @@ def _model_summary(row: RowMapping) -> ModelSummary:
     )
 
 
-def list_models(connection: Connection) -> ModelList:
-    """Every loaded model, oldest first, with its counts and data quality status."""
+def list_models(connection: Connection, *, include_replaced: bool = False) -> ModelList:
+    """The loaded models, oldest first, with their counts and data quality status.
+
+    A model a later version replaces is left out unless ``include_replaced``: it is last
+    week's export, kept for comparison (audit finding A12).
+    """
+    current = "" if include_replaced else "WHERE later.model_id IS NULL "
     rows = connection.execute(
-        text(f"{MODEL_SUMMARY} ORDER BY model_id LIMIT :limit"), {"limit": MAX_MODELS + 1}
+        text(f"{MODEL_SUMMARY} {current}ORDER BY s.model_id LIMIT :limit"),
+        {"limit": MAX_MODELS + 1},
     ).mappings()
     models = [_model_summary(row) for row in rows]
-    return ModelList(models=models[:MAX_MODELS], truncated=len(models) > MAX_MODELS)
+    replaced = 0
+    if not include_replaced:
+        replaced = connection.execute(
+            text("SELECT count(*) FROM ifc.model WHERE replaces_model_id IS NOT NULL")
+        ).scalar_one()
+    return ModelList(
+        models=models[:MAX_MODELS],
+        replaced_left_out=replaced,
+        truncated=len(models) > MAX_MODELS,
+    )
 
 
 def model_summary(connection: Connection, model_id: int) -> ModelSummary:
     """One model's summary (the ``ifc://models/{model_id}/summary`` resource)."""
     row = (
         connection.execute(
-            text(f"{MODEL_SUMMARY} WHERE model_id = :model_id"), {"model_id": model_id}
+            text(f"{MODEL_SUMMARY} WHERE s.model_id = :model_id"), {"model_id": model_id}
         )
         .mappings()
         .one_or_none()

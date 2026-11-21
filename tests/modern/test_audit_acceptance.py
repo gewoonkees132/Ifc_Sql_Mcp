@@ -347,15 +347,54 @@ def test_a11_a_door_schedule_fits_in_a_few_kilobytes(modern: Modern) -> None:
     assert len(rooms.model_dump_json()) < 50_000
 
 
-@_open("A12", 14)
 def test_a12_a_placeholder_project_number_joins_no_project(modern: Modern) -> None:
     tower = modern.scalar(
         "SELECT count(*) FROM ifc.v_storey_alignment "
         "WHERE model_id = :m AND project_model_count > 1",
         m=modern.model("b"),
     )
+    groups = dict(
+        modern.rows(
+            "SELECT model_id, project_group FROM ifc.model WHERE model_id = ANY(:ids)",
+            ids=[modern.model(k) for k in ("a", "b", "c", "d", "e", "duplex")],
+        )
+    )
 
     assert tower == 0
+    # B (0001 / Project Name) and C (Project Number / Project Name) are in no project; the
+    # Duplex (0001) is grouped by its name, the others by their number.
+    assert [groups[modern.model(k)] for k in ("a", "b", "c", "d", "e", "duplex")] == [
+        "001-00",
+        None,
+        None,
+        "001-00",
+        "170016",
+        "Duplex Apartment",
+    ]
+    assert {modern.model("b"), modern.model("c")}.isdisjoint(
+        modern.scalar("SELECT array_agg(DISTINCT model_id) FROM ifc.v_storey_alignment") or []
+    )
+
+
+def test_a12_a_new_export_replaces_the_old_one_in_project_wide_views(modern: Modern) -> None:
+    house, again = modern.model("a"), modern.model("d")
+    current = modern.scalar(
+        "SELECT array_agg(model_id ORDER BY model_id) FROM ifc.v_model_current "
+        "WHERE model_id IN (:a, :d)",
+        a=house,
+        d=again,
+    )
+    aligned = modern.scalar(
+        "SELECT array_agg(DISTINCT model_id) FROM ifc.v_storey_alignment "
+        "WHERE project_group = '001-00'"
+    )
+
+    assert current == [again]
+    assert aligned == [again]  # A no longer counts next to its own re-export
+    with modern.engine.connect() as connection:
+        listed = [m.model_id for m in tools.list_models(connection).models]
+    assert again in listed
+    assert house not in listed
 
 
 @_open("A13", 15)
