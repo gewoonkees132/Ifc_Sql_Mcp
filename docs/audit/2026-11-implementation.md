@@ -79,6 +79,7 @@ the test module for findings that add a tool or a command.
 | A10 | The LLM cannot find the schema | [#12](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/12) | done | `tests/integration/test_schema_discovery.py`: of the sessions' 20 failed calls, errors that name what to use 0 → 20 |
 | A11 | Schedules cost too much context | [#13](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/13) | done | `test_a11_a_door_schedule_fits_in_a_few_kilobytes`: B's L01 door schedule, ~490,000 characters by paging → 4,181; 159 doors in 6 types, every width as IfcOpenShell reads it |
 | A12 | Projects and versions are guessed from the file | [#14](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/14) | done | `test_a12_a_placeholder_project_number_joins_no_project`, `test_a12_a_new_export_replaces_the_old_one_in_project_wide_views`: B aligned with other models 1 → 0; A next to its re-export D 2 models → 1 |
+| A13 | Findings that are noise | [#15](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/15) | done | `test_a13_normal_revit_behaviour_is_not_reported`: B's U-value and opening-tag findings 6,488 → 0; its warnings 6,778 → 290 |
 
 ## Per finding
 
@@ -421,4 +422,37 @@ the test module for findings that add a tool or a command.
   | B: other models it is aligned with (`v_storey_alignment`) | 1 (the Duplex, as project `0001`) | **0** |
   | Project `001-00`: models compared | 2 (A and its re-export D) | **1** (D) |
   | Duplex: models in its project | 4 | 4 (grouped as `Duplex Apartment`) |
+
+### A13: findings that are noise
+
+- **Openings.** `parse_revit_name` takes `named_after_host`, which the transform sets for
+  every feature element. Revit names an opening after the wall it cuts and tags it with
+  its own id, so a Tag that differs from the name's ElementId is normal there, and is
+  not reported. Every other element is checked as before.
+- **Derived units.** Extract reads `IfcDerivedUnit`. A derived unit gets an SI factor
+  when it is coherent: every element an SI unit without a prefix, the kilogram
+  excepted. Revit's U-value unit, kg·K⁻¹·s⁻³, is W/(m²·K) exactly. Thermal
+  transmittance, mass density, power, pressure, force, flow rate, velocity, current,
+  voltage, frequency, light and time measures then get their SI unit (`W/(m2*K)`,
+  `kg/m3`, `W`, `Pa`, …) and no issue. A kilowatt is scaled by 1,000.
+- **Decisions.**
+  - *Stored as written when unsure, as before.* The four base dimensions drop a value
+    whose unit has no SI factor. A derived measure whose unit is undeclared or
+    incoherent keeps its number, without a unit, and is reported.
+  - *A mass in grams is scaled to kilograms.* IfcOpenShell's `get_unit_scale` gives a
+    kilogram as 1,000 (grams). The SI unit is the kilogram.
+  - *Temperatures are left out.* Revit declares degrees Celsius, which an offset, not a
+    factor, separates from kelvin.
+  - *Units are written in ASCII* (`W/(m2*K)`), like `m2` and `m3`.
+- **Why 4,416 findings were 2,208 values.** Each U-value was reported twice, from the
+  occurrence and from its type, and both resolve to one stored value: 1,023 doors,
+  1,182 windows and 3 walls.
+- **Before → after** (`harness/figures.py`)
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | B: `measure_not_converted` for U-values | 4,416 | **0**; 2,208 U-values stored in `W/(m2*K)` |
+  | B: `revit_tag_mismatch` on openings | 2,072 | **0** |
+  | B: warnings (model content / loader coverage) | 6,778 (2,084 / 4,694) | **290** (12 / 278: the stair names of A14) |
+  | E: `measure_not_converted` | 1,624 | **0**: power, pressure, flow, U-values and voltage get their unit |
 

@@ -51,7 +51,7 @@ def _as_id(segment: str) -> int | None:
 
 
 def parse_revit_name(
-    global_id: str, name: str | None, tag: str | None
+    global_id: str, name: str | None, tag: str | None, *, named_after_host: bool = False
 ) -> tuple[RevitName, list[Issue]]:
     """Split a Revit element name into family, type and ElementId.
 
@@ -60,6 +60,10 @@ def parse_revit_name(
         name: IFC Name of the element.
         tag: IFC Tag of the element; Revit writes the ElementId there, except on most
             openings.
+        named_after_host: True for a feature element (an opening). Revit names it after
+            the wall it cuts and tags it with its own id, so a Tag that differs from the
+            name's ElementId is normal and not reported (audit finding A13: 2,072 such
+            findings on the audit's tower).
 
     Returns:
         The parsed parts and any issues. A missing name is not an issue (it is visible
@@ -89,7 +93,7 @@ def parse_revit_name(
     tag_id = _as_id(tag.strip()) if tag else None
     by_tag = [candidate for candidate in candidates if candidate[0] == tag_id]
     element_id, body = by_tag[0] if by_tag else candidates[0]
-    if tag_id is not None and not by_tag:
+    if tag_id is not None and not by_tag and not named_after_host:
         message = f"name {name!r} gives ElementId {element_id}, but Tag is {tag!r}"
         issues.append(Issue(IssueCode.REVIT_TAG_MISMATCH, global_id, message))
 

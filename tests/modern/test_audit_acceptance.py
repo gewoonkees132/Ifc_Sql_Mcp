@@ -397,7 +397,6 @@ def test_a12_a_new_export_replaces_the_old_one_in_project_wide_views(modern: Mod
     assert house not in listed
 
 
-@_open("A13", 15)
 def test_a13_normal_revit_behaviour_is_not_reported(modern: Modern) -> None:
     unconverted_u_values = modern.scalar(
         "SELECT count(*) FROM ifc.v_dq_finding WHERE model_id = :m "
@@ -412,6 +411,15 @@ def test_a13_normal_revit_behaviour_is_not_reported(modern: Modern) -> None:
 
     assert unconverted_u_values == 0
     assert opening_tags == 0
+    # The U-values are stored with their unit, as Revit declared it: W/(m2 K) in SI. The
+    # 4,416 findings were 2,208 values (1,023 doors, 1,182 windows, 3 walls), each reported
+    # from its occurrence and from its type.
+    u_values = modern.rows(
+        "SELECT p.unit, count(*) FROM ifc.property AS p JOIN ifc.object AS o USING (object_id) "
+        "WHERE o.model_id = :m AND p.value_type = 'IfcThermalTransmittanceMeasure' GROUP BY 1",
+        m=modern.model("b"),
+    )
+    assert u_values == [("W/(m2*K)", 2_208)]
 
 
 @_open("A14", 16)

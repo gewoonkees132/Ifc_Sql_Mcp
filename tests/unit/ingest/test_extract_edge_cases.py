@@ -173,7 +173,52 @@ def test_derived_and_context_dependent_units(tmp_path: Path) -> None:
     derived = tiny.model.create_entity("IfcDerivedUnit", Elements=[], UnitType="USERDEFINED")
     tiny.units.Units = [step, derived]
     raw = tiny.read(tmp_path)
-    assert [(u.name, u.scale_to_si) for u in raw.units] == [("STEP", None)]
+    # A derived unit without elements is no unit an SI factor can be found for.
+    assert [(u.name, u.scale_to_si) for u in raw.units] == [("STEP", None), ("USERDEFINED", None)]
+
+
+def test_derived_units_have_a_factor_only_when_coherent_si(tmp_path: Path) -> None:
+    """Revit's U-value unit is kg K-1 s-3, which is W/(m2 K); a millimetre is not coherent."""
+    tiny = Tiny()
+
+    def si(name: str, unit_type: str, prefix: str | None = None) -> Any:
+        return tiny.model.create_entity("IfcSIUnit", UnitType=unit_type, Prefix=prefix, Name=name)
+
+    def derived(unit_type: str, *elements: tuple[Any, int]) -> Any:
+        parts = [
+            tiny.model.create_entity("IfcDerivedUnitElement", Unit=unit, Exponent=exponent)
+            for unit, exponent in elements
+        ]
+        return tiny.model.create_entity("IfcDerivedUnit", Elements=parts, UnitType=unit_type)
+
+    exponents = tiny.model.create_entity("IfcDimensionalExponents", 1, 0, 0, 0, 0, 0, 0)
+    step = tiny.model.create_entity(
+        "IfcContextDependentUnit", Dimensions=exponents, UnitType="LENGTHUNIT", Name="STEP"
+    )
+    kilogram = si("GRAM", "MASSUNIT", "KILO")
+    tiny.units.Units = [
+        derived(
+            "THERMALTRANSMITTANCEUNIT",
+            (kilogram, 1),
+            (si("KELVIN", "THERMODYNAMICTEMPERATUREUNIT"), -1),
+            (si("SECOND", "TIMEUNIT"), -3),
+        ),
+        derived("MASSDENSITYUNIT", (si("GRAM", "MASSUNIT"), 1), (si("METRE", "LENGTHUNIT"), -3)),
+        derived("VOLUMETRICFLOWRATEUNIT", (si("METRE", "LENGTHUNIT", "MILLI"), 3)),
+        derived("LINEARVELOCITYUNIT", (step, 1), (si("SECOND", "TIMEUNIT"), -1)),
+        kilogram,
+        si("WATT", "POWERUNIT", "KILO"),
+    ]
+    raw = tiny.read(tmp_path)
+
+    assert [(u.unit_type, u.is_si, u.scale_to_si) for u in raw.units] == [
+        ("THERMALTRANSMITTANCEUNIT", True, 1.0),
+        ("MASSDENSITYUNIT", False, None),  # grams, not kilograms
+        ("VOLUMETRICFLOWRATEUNIT", False, None),  # millimetres
+        ("LINEARVELOCITYUNIT", False, None),  # steps per second
+        ("MASSUNIT", True, 1.0),  # IfcOpenShell says 1000: grams
+        ("POWERUNIT", True, 1000.0),
+    ]
 
 
 # --------------------------------------------------------------------------- property values

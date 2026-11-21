@@ -331,8 +331,10 @@ def _element_records(
     layers: list[ElementMaterialLayerRecord] = []
     issues: list[Issue] = []
     for element in elements:
-        revit, name_issues = parse_revit_name(element.global_id, element.name, element.tag)
         feature = is_feature(element.ancestry)
+        revit, name_issues = parse_revit_name(
+            element.global_id, element.name, element.tag, named_after_host=feature
+        )
         element_layers, layer_issues = material_layers(
             element.global_id, element.materials, length_unit
         )

@@ -37,7 +37,12 @@ from ifc_sql_mcp.ingest import plausibility
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.raw import RawUnit, RawValue
 from ifc_sql_mcp.ingest.records import PropertyRecord
-from ifc_sql_mcp.ingest.units import DIMENSIONLESS_MEASURES, MEASURE_DIMENSIONS, to_si
+from ifc_sql_mcp.ingest.units import (
+    DIMENSIONLESS_MEASURES,
+    MEASURE_DIMENSIONS,
+    Dimension,
+    to_si,
+)
 
 REVIT_TYPE_SET_PREFIX = "PSet_Revit_Type_"
 
@@ -126,7 +131,7 @@ def type_value(
     elif isinstance(value, int | float):
         number = float(value)
         dimension = MEASURE_DIMENSIONS.get(raw.value_type or "")
-        if dimension is not None:
+        if dimension is not None and dimension.required:
             unit = raw.unit if raw.unit and raw.unit.unit_type == dimension.unit_type else None
             unit = unit or units[dimension.unit_type]
             converted = to_si(number, unit)
@@ -134,6 +139,8 @@ def type_value(
                 message = f"{ref} = {value!r} is in {unit.name}, which has no SI conversion"
                 return None, [Issue(IssueCode.UNIT_NOT_CONVERTIBLE, global_id, message)]
             number, unit_symbol = converted, dimension.si_symbol
+        elif (derived := _derived_si(number, dimension, raw, units)) is not None:
+            number, unit_symbol = derived
         elif raw.unit is not None or _has_physical_unit(raw.value_type):
             message = f"{ref} = {value!r} ({raw.value_type}) is stored as written, without a unit"
             issues.append(Issue(IssueCode.MEASURE_NOT_CONVERTED, global_id, message))
@@ -157,6 +164,22 @@ def type_value(
         from_attribute=raw.from_attribute,
     )
     return typed, issues
+
+
+def _derived_si(
+    number: float, dimension: Dimension | None, raw: RawValue, units: Mapping[str, RawUnit]
+) -> tuple[float, str] | None:
+    """A derived measure in SI with its unit, when its own or the project's unit says how.
+
+    ``None`` when the file declares no unit for it, or one without a known SI factor:
+    the value is then stored as written and reported (audit finding A13).
+    """
+    if dimension is None:
+        return None
+    own = raw.unit if raw.unit and raw.unit.unit_type == dimension.unit_type else None
+    unit = own or units.get(dimension.unit_type)
+    converted = to_si(number, unit) if unit is not None else None
+    return None if converted is None else (converted, dimension.si_symbol)
 
 
 def _has_physical_unit(value_type: str | None) -> bool:

@@ -116,6 +116,13 @@ def test_a_tag_that_matches_no_reading_is_reported() -> None:
     assert issues == [IssueCode.REVIT_TAG_MISMATCH]
 
 
+def test_an_opening_tagged_with_its_own_id_is_normal() -> None:
+    """Revit names an opening after the wall it cuts and tags it with its own id (A13)."""
+    name = "Basic Wall:1AR_MUR_CV003 _Interno_Esterno Poroton Ventilata:2907718"
+    parsed, issues = parse_revit_name(GID, name, "3184370", named_after_host=True)
+    assert (parsed.element_id, issues) == (2907718, [])
+
+
 @pytest.mark.parametrize("tag", ["", "A-12", "0"])
 def test_a_tag_that_is_not_an_element_id_is_ignored(tag: str) -> None:
     assert parse("Basic Wall:Generic:138437", tag) == (

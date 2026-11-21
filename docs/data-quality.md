@@ -197,6 +197,8 @@ A few of these calls deserve a sentence:
   the one that was dropped.
 - **`measure_not_converted` is a warning**: the value is stored, but in the file's own
   unit and without one, so it cannot be compared with the same measure from another file.
+  A derived measure whose unit the file declares in SI, such as Revit's U-values, gets
+  its unit instead and is not reported ([revit-ifc-quirks.md](revit-ifc-quirks.md)).
 
 ## Findings on the four Duplex files
 

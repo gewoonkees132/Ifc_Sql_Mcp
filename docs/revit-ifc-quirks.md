@@ -80,11 +80,19 @@ declare plane angles in degrees.
 - **Plane angles become radians**, with `unit = 'rad'` (16, 420, 0 and 228 rows). The
   rule "a number with a unit is in SI" then has no exception, and degrees are one
   multiplication away. Showing degrees is a presentation choice for the views or tools.
-- Only length, area, volume and plane angle are converted, because they are the only
-  measure types in these files. Any other measure with a physical unit (an
-  `IfcPowerMeasure`, say) is stored as written without a unit and reported as
-  `measure_not_converted`, so nothing claims to be SI that is not. Pure numbers
-  (`IfcReal`, `IfcInteger`, `IfcCountMeasure`) need no unit.
+- Length, area, volume and plane angle are always converted: the Duplex files declare
+  no other unit. Revit 2019 to 2022 also declare **derived units**, as coherent SI: a
+  U-value's is `IFCDERIVEDUNIT` of kg, K⁻¹ and s⁻³, which is W/(m²·K). So a derived
+  measure (thermal transmittance, mass density, power, pressure, flow rate, voltage,
+  current, frequency, force, mass, light, time) gets the SI unit (`W/(m2*K)`, `kg/m3`,
+  `W`, `Pa`, `m3/s`, …) when the file declares its unit and that unit is coherent SI or
+  an SI unit with a prefix (a kilowatt is scaled by 1,000). On the audit's tower, all
+  2,208 U-values of its doors, windows and walls are stored in `W/(m2*K)` (audit
+  finding A13). A measure whose unit is not declared, or is not coherent (a flow in
+  mm³/s), is stored as written without a unit and reported as `measure_not_converted`,
+  so nothing claims to be SI that is not. Temperatures stay as written: Revit declares
+  degrees Celsius, which are offset from kelvin, not scaled. Pure numbers (`IfcReal`,
+  `IfcInteger`, `IfcCountMeasure`) need no unit.
 - A file that declares no unit for a converted dimension gets IFC's SI default and a
   `unit_assumed_si` issue.
 
@@ -151,7 +159,10 @@ Revit also writes the ElementId into `Tag`:
 **Handling** (`revit_names.py`): read the id from the end of the name. When the last two
 segments are both numbers and the last is smaller, it is a part number. When the Tag is
 a number, it decides between the two readings, and a Tag that matches neither is
-reported (`revit_tag_mismatch`). The segments before the id are family, type and an
+reported (`revit_tag_mismatch`). An opening is the exception: Revit names it after the
+wall it cuts and tags it with its own id, so its Tag never matches and is not reported.
+On the audit's tower, all 2,072 `revit_tag_mismatch` findings were openings (audit
+finding A13). The segments before the id are family, type and an
 optional label, which is not stored (it stays in `object.name`). A name that does not end
 in an id is reported (`revit_name_unparsed`) and its parts are NULL. On the four files
 every name parses and every parsed id agrees with its Tag.

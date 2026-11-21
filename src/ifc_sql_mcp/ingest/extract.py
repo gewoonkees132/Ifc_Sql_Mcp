@@ -170,6 +170,15 @@ def _check_complete(path: Path, size_bytes: int) -> None:
         raise ExtractError(f"{path.name}: the file ends before END-ISO-10303-21; (truncated)")
 
 
+def _coherent_si(unit: Entity) -> bool:
+    """True for an SI unit in which a coherent SI quantity is written: no prefix, or kg."""
+    if unit is None or not unit.is_a("IfcSIUnit"):
+        return False
+    if _text(unit.Name) == "GRAM":
+        return _text(unit.Prefix) == "KILO"
+    return unit.Prefix is None
+
+
 def _text(value: object) -> str | None:
     """Return ``value`` if it is a string, else ``None`` (IFC leaves optional text unset)."""
     return value if isinstance(value, str) else None
@@ -298,17 +307,37 @@ class _Extractor:
         return tuple(unit for unit in units if unit is not None)
 
     def _unit(self, unit: Entity) -> RawUnit | None:
-        """Describe a named unit; derived and monetary units are not needed here."""
+        """Describe a named or derived unit; monetary units are not needed here.
+
+        A derived unit (W/(m2 K) as kg K-1 s-3) has a factor only when it is coherent SI:
+        every element an SI unit without a prefix, the kilogram excepted. Its values are
+        then SI as written. A mass in grams is scaled to kilograms, the SI unit;
+        IfcOpenShell scales it to grams.
+        """
+        if unit is not None and unit.is_a("IfcDerivedUnit"):
+            elements = unit.Elements or ()
+            coherent = bool(elements) and all(_coherent_si(e.Unit) for e in elements)
+            unit_type = _text(unit.UnitType) or ""
+            return RawUnit(
+                unit_type=unit_type,
+                name=unit_type,
+                prefix=None,
+                is_si=coherent,
+                scale_to_si=1.0 if coherent else None,
+            )
         if unit is None or not unit.is_a("IfcNamedUnit"):
             return None
         is_si = bool(unit.is_a("IfcSIUnit"))
         convertible = is_si or unit.is_a("IfcConversionBasedUnit")
+        scale = float(ifcopenshell.util.unit.get_unit_scale(unit)) if convertible else None
+        if _text(unit.UnitType) == "MASSUNIT" and scale is not None:
+            scale = scale / 1000 if is_si and _text(unit.Name) == "GRAM" else None
         return RawUnit(
             unit_type=_text(unit.UnitType) or "",
             name=_text(unit.Name) or "",
             prefix=_text(unit.Prefix) if is_si else None,
             is_si=is_si,
-            scale_to_si=float(ifcopenshell.util.unit.get_unit_scale(unit)) if convertible else None,
+            scale_to_si=scale,
         )
 
     def _log_skipped_products(self) -> None:
