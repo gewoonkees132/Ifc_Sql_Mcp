@@ -1,0 +1,6 @@
+q1	I'm the architect on the residential tower loaded as model 6 (our Revit 2022 export). For the cost plan I need the total wall area, and the wall area of the five wall types with the most area. Give me the numbers.
+q2	Model 6 is our Revit 2022 tower. Make me a door schedule for level XX_AR_L01: door type, how many, width, height and fire rating.
+q3	Model 5 is a house exported from Revit 2021 to IFC4. What is the total net wall area, broken down by wall type?
+q4	Model 7 is an office building exported from Revit 2021. What is the total net floor area of all the rooms, and which five rooms are the largest?
+q5	As the project architect I have to hand model 6 over to the contractor. Is it fit for that? Summarise its data quality in plain terms and tell me what I should fix in Revit before I re-export.
+q6	In model 5, how many doors and how many windows are on each level?
