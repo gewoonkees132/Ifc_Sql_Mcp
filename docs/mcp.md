@@ -1,7 +1,7 @@
 # The MCP server
 
 `ifc-sql serve` serves the loaded models to an LLM over the
-[Model Context Protocol](https://modelcontextprotocol.io): eight read-only tools, two
+[Model Context Protocol](https://modelcontextprotocol.io): nine read-only tools, two
 resources and a prompt. An MCP client (Claude Desktop, Claude Code, …) starts it and
 talks to it over stdin and stdout. It connects to PostgreSQL only as the read-only role
 `ifc_reader`. The design, and the alternatives that were rejected, are in
@@ -20,7 +20,8 @@ uv run ifc-sql serve
 - [Tools](#tools): [list_models](#list_models), [list_storeys](#list_storeys),
   [find_elements](#find_elements), [get_element](#get_element),
   [quantity_takeoff](#quantity_takeoff), [space_schedule](#space_schedule),
-  [data_quality_report](#data_quality_report), [run_sql](#run_sql)
+  [data_quality_report](#data_quality_report), [describe_schema](#describe_schema),
+  [run_sql](#run_sql)
 - [Resources](#resources) and [the prompt](#the-model_briefing-prompt)
 - [Errors](#errors), [limits](#limits), [logging](#logging) and [tests](#tests)
 
@@ -55,7 +56,7 @@ Register the `uv` command below with a client, not `make`.
 client, as an MCP client would, and checks every model. On the four Duplex files:
 
 ```
-connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 8 tools, 1 resource, 1 resource template, 1 prompt
+connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 9 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
   model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
   model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
@@ -461,6 +462,46 @@ The counts on all four files are the table in
 [data-quality.md](data-quality.md#findings-on-the-four-duplex-files);
 `tests/samples/test_duplex_mcp.py` checks that the report agrees with it.
 
+### describe_schema
+
+| Parameter | Type | |
+|---|---|---|
+| `relation` | text, 1–200 characters | one table or view; leave out for all |
+
+The tables and views `run_sql` can read, from the database's own catalogue, so the
+description always matches the database. Without `relation`: each view and table with
+its comment and column names, views first (21 relations, 8,295 characters on the Duplex
+database, a third of `ifc://schema`). With `relation` (`v_element`, `ifc.property`, any
+case): that one in full, each column's type, whether it can be null and its comment, and
+a table's keys.
+
+This is the same catalogue as the [`ifc://schema`](#resources) resource, as a tool,
+because in Claude Desktop the user attaches resources and the model cannot fetch them.
+In the audit's six sessions, 20 of 72 calls failed on guessed names, `v_property` and
+`information_schema` among them (audit finding A10,
+[ADR 9](adr/0009-schema-discovery-tool.md)).
+
+```jsonc
+// describe_schema {"relation": "property"}
+{
+  "relations": [
+    {"name": "property", "kind": "table",
+     "description": "Property set values, one row per (object, property set, property): an entity-attribute-value table with typed value columns (ADR 2). …",
+     "column_names": ["object_id", "pset_name", "prop_name", "value_type", "value_text", "value_num", "value_bool", "unit", "is_type_property", "is_implausible"],
+     "columns": [{"name": "object_id", "type": "bigint", "not_null": true, "description": "…"}, …],
+     "keys": ["PRIMARY KEY (object_id, pset_name, prop_name)",
+              "FOREIGN KEY (object_id) REFERENCES object(object_id) ON DELETE CASCADE"]}
+  ],
+  "note": "run_sql reads this relation as property, without the ifc. prefix."
+}
+```
+
+An unknown name gets the closest names and the full list:
+
+```
+schema ifc has no table or view named 'v_space'. Closest: v_space_schedule, v_takeoff. The tables and views of schema ifc are: v_dq_finding, v_element, v_model_summary, … spatial_element. Call describe_schema for their columns; property values are in property(object_id, pset_name, prop_name, value_text, value_num, value_bool, unit).
+```
+
 ### run_sql
 
 | Parameter | Type | |
@@ -469,8 +510,9 @@ The counts on all four files are the table in
 | `max_rows` | 1–500, default 100 | |
 
 One read-only query on schema `ifc`, for the questions the other tools do not answer.
-Unqualified names resolve to `ifc` (`FROM v_element`); read
-[`ifc://schema`](#resources) for the tables and columns. It returns the columns (name
+Unqualified names resolve to `ifc` (`FROM v_element`); [describe_schema](#describe_schema)
+gives the tables and columns, and the description names `property` and its columns,
+which nearly every question beyond counts needs. It returns the columns (name
 and PostgreSQL type) and the rows as arrays, at most `max_rows` and at most 30,000
 characters of rows; `truncated`, `truncated_by` and `note` say when there were more.
 
@@ -521,16 +563,22 @@ recognises (count, sum, avg, round, lower, coalesce, date_trunc, string_agg, row
 | `DELETE FROM ifc.property` | `query refused: only a query that reads data is allowed (SELECT, WITH … SELECT, TABLE, UNION, INTERSECT, EXCEPT or VALUES); this is a DELETE statement` |
 | `WITH d AS (DELETE FROM ifc.property RETURNING *) SELECT count(*) FROM d` | `query refused: the query contains DELETE: statements that change data are not allowed, also not inside WITH` |
 | `SELECT pg_sleep(10)` | `query refused: function pg_sleep() is not allowed. Allowed are the standard SQL functions (…) and these PostgreSQL functions: age, array_dims, …` |
-| `SELECT * FROM pg_stat_activity` | `query refused: pg_stat_activity is a PostgreSQL system catalogue; only schema ifc can be read, and the ifc://schema resource lists its tables and views` |
+| `SELECT * FROM pg_stat_activity` | `query refused: pg_stat_activity is a PostgreSQL system catalogue; only schema ifc can be read: call describe_schema for its tables, views and columns` |
+| `SELECT table_name FROM information_schema.tables` | `query refused: only schema ifc can be read, not information_schema.tables; call describe_schema for its tables, views and columns` |
 
 Also refused: more than one statement, SELECT … INTO, FOR UPDATE and the other locking
 clauses, SET, RESET, SHOW, EXPLAIN, COPY, DO, CALL, transaction control, other schemas
 and schema-qualified function calls ([ADR 6](adr/0006-mcp-server.md#5-run_sql-four-layers-each-tested-on-its-own-against-postgresql)
 has the rules and the reasons). A query the database rejects comes back with
-PostgreSQL's message and hint:
+PostgreSQL's message and hint. When a relation or column does not exist, the commonest
+failure, the error also names what does: the closest names, and every relation of the
+schema, or the columns of the relations the query reads (of the one its qualifier
+names, when it has one). The query runs inside a savepoint, so the transaction can still
+read the catalogue after the error.
 
 ```
-the database refused the query: column "storey_nme" does not exist Hint: Perhaps you meant to reference the column "v_element.storey_name". (SQLSTATE 42703)
+the database refused the query: column "storey_nme" does not exist Hint: Perhaps you meant to reference the column "v_element.storey_name". (SQLSTATE 42703). Closest: storey_name, storey_id, type_name. Columns of v_element: object_id, model_id, discipline, … width_m, materials.
+the database refused the query: relation "v_property" does not exist (SQLSTATE 42P01). Closest: property. The tables and views of schema ifc are: v_dq_finding, v_element, … spatial_element. Call describe_schema for their columns; property values are in property(object_id, pset_name, prop_name, value_text, value_num, value_bool, unit).
 ```
 
 **Values.** A `numeric` that a float holds exactly is a number (`numeric(9,3)`
@@ -593,6 +641,8 @@ messages, from the tests and the runs above:
 | Statement timeout (5 s) | `the query was cancelled after 5 seconds (the statement timeout); narrow it down, aggregate, or add a LIMIT` |
 | Lock timeout (1 s) | `the query waited too long for a lock, probably behind a migration or a load in progress; try again shortly` |
 | Database refused the query | `the database refused the query: <PostgreSQL's message> Hint: <its hint> (SQLSTATE …)` |
+| Unknown relation or column in `run_sql` | the same, followed by the closest names and the relations or columns that exist ([run_sql](#run_sql)) |
+| Unknown relation in `describe_schema` | `schema ifc has no table or view named 'v_space'. Closest: v_space_schedule, v_takeoff. The tables and views of schema ifc are: …` |
 | Database down after startup | `the database cannot be reached right now; try again later` |
 | A bug in the server | `internal error in <tool>; the server's log has the details` |
 
@@ -623,8 +673,9 @@ timestamp:
 ```
 level=info logger=ifc_sql_mcp.server.app msg="tool call" tool=run_sql sql_sha256=58e9a8a8860a5b29 sql_chars=336 outcome=ok seconds=0.034 rows=4
 level=info logger=ifc_sql_mcp.server.app msg="tool call" tool=run_sql sql_sha256=f0d94bba0817dd7d sql_chars=24 outcome=refused seconds=0.0 error="query refused: only a query that reads data is allowed (SELECT, WITH … SELECT, TABLE, UNION, INTERSECT, EXCEPT or VALUES); this is a DELETE statement"
-level=info logger=ifc_sql_mcp.server.app msg="tool call" tool=run_sql sql_sha256=58d0e5bcb0e3a0aa sql_chars=32 outcome=database_error seconds=0.014 error="the database refused the query: column \"storey_nme\" does not exist Hint: Perhaps you meant to reference the column \"v_element.storey_name\". (SQLSTATE 42703)"
-level=info logger=ifc_sql_mcp.server.app msg="resource read" uri=ifc://schema outcome=ok seconds=0.028 chars=23307
+level=info logger=ifc_sql_mcp.server.app msg="tool call" tool=run_sql sql_sha256=58d0e5bcb0e3a0aa sql_chars=32 outcome=database_error seconds=0.039 error="the database refused the query: column \"storey_nme\" does not exist Hint: Perhaps you meant to reference the column \"v_element.storey_name\". (SQLSTATE 42703). Closest: storey_name, storey_id, type_name. Columns of v_element: object_id, model_id, discipline, global_id, ifc_class, ifc_class_base, is_fe… [cut: 578 characters, the first 300 shown]"
+level=info logger=ifc_sql_mcp.server.app msg="tool call" tool=describe_schema relation=None outcome=ok seconds=0.022 rows=21
+level=info logger=ifc_sql_mcp.server.app msg="resource read" uri=ifc://schema outcome=ok seconds=0.022 chars=26541
 ```
 
 `outcome` is one of `ok`, `invalid`, `refused`, `timeout`, `database_error`,
@@ -643,6 +694,7 @@ from Alembic (`Context impl PostgresqlImpl.`), as ingest and dq do.
 | `tests/unit/server/test_unreachable_database.py` | Tools and resources on a database that does not answer; a refused query needs none. |
 | `tests/integration/test_mcp_protocol.py` | What a client sees, in both protocol eras: tools with input and output schemas and annotations, resources, the prompt, the schema resource against the catalogue. |
 | `tests/integration/test_mcp_tools.py` | Each tool's exact output on the synthetic fixture, pagination and limits, unknown ids, invalid `group_by` and `metric`, a checked and a never-checked model. |
+| `tests/integration/test_schema_discovery.py` | `describe_schema` in brief and in full; the names added to an unknown relation's or column's error; the 20 failed calls of the audit's sessions, replayed, each now answered with the name to use. |
 | `tests/integration/test_run_sql.py` | Every `run_sql` layer on its own: validator, executor, transaction (timeouts, `set_config`, a session per call), privileges; results, cuts and logging; the pinned list of functions sqlglot types. |
 | `tests/integration/test_mcp_failures.py` | A bug in a tool or resource: a generic message, the traceback in the log. |
 | `tests/integration/test_cli_serve.py`, `tests/unit/test_cli.py` | `ifc-sql serve` on an unreachable, unmigrated and too old database, and with a wrong password. |

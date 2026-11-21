@@ -76,6 +76,7 @@ the test module for findings that add a tool or a command.
 | A6 | IFC4 material constituent sets are not read | [#8](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/8) | done | `test_a6_ifc4_doors_and_windows_have_their_materials`: A windows 0 → 17 of 17 |
 | A7 | Rooms exported twice are counted twice | [#9](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/9) | done | `test_a7_rooms_exported_twice_are_found`: 0 → 47; 6,124.8 m² without duplicates |
 | A9 | Data quality measures the loader, not the model | [#11](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/11) | done | `test_a9_data_quality_reports_what_the_model_lacks`, `test_a9_the_loaders_gaps_are_reported_apart_from_the_models`: B: errors that are loader gaps 1,458 → 0; no quantities, no rooms, placeholder project and materials, 8,079 missing fire ratings: none reported → all reported |
+| A10 | The LLM cannot find the schema | [#12](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/12) | done | `tests/integration/test_schema_discovery.py`: of the sessions' 20 failed calls, errors that name what to use 0 → 20 |
 
 ## Per finding
 
@@ -324,4 +325,28 @@ the test module for findings that add a tool or a command.
 
   The 1,458 errors were door panel sets, gone with A4. The remaining loader-coverage
   warnings are what A13 and A14 fix.
+
+### A10: the LLM cannot find the schema
+
+- **`describe_schema`** ([ADR 9](../adr/0009-schema-discovery-tool.md)) reads the live
+  catalogue, as the resource does. Without arguments it gives every relation's comment
+  and column names (8,295 characters, a third of `ifc://schema`). Given one relation it
+  gives that relation in full. The server now has nine tools.
+- **Errors that answer.** `run_sql` runs each query in a savepoint. An unknown relation
+  (42P01) gets the closest names, every relation and `property`'s columns. An unknown
+  column (42703) gets the closest names and the columns of the relations the query reads,
+  narrowed by its qualifier. The `information_schema` refusal, and the run_sql
+  description and server instructions, name `describe_schema`.
+- **Decision.** The audit's sessions guessed `v_property` five times, so a view of that
+  name was considered and rejected. It would fit these sessions and miss the next
+  model's guesses; an error that lists the real names fits any guess (ADR 9).
+- **Proof: the sessions, replayed.** `test_every_failed_call_of_the_audit_sessions_now_names_what_exists`
+  runs the 20 failed calls of `evidence/llm_sessions.md` against the server: 14 unknown
+  relations, 4 `information_schema` queries and 2 unknown columns. The record cuts four
+  of the queries at 273 characters; each one fails on a name before the cut.
+
+  | The 20 failed calls | Before | After |
+  |---|---:|---:|
+  | Errors that name the relation or column to use | 0 (PostgreSQL gave no hint for either column) | **20** |
+  | Errors that point to the resource the model could not read | 4 | **0** |
 

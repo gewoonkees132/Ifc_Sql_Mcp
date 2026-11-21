@@ -397,7 +397,12 @@ async def test_a_database_error_comes_back_with_its_reason_and_hint(server: MCPS
 
     assert unknown == (
         'the database refused the query: column "nope" does not exist Hint: Perhaps you meant '
-        'to reference the column "v_element.name". (SQLSTATE 42703)'
+        'to reference the column "v_element.name". (SQLSTATE 42703). Columns of '
+        "v_element: object_id, model_id, discipline, global_id, ifc_class, ifc_class_base, "
+        "is_feature, name, revit_family, revit_type, host_revit_family, host_revit_type, "
+        "revit_element_id, type_name, predefined_type, tag, storey_id, storey_name, "
+        "storey_elevation_m, space_id, space_number, space_name, length_m, area_m2, volume_m3, "
+        "perimeter_m, height_m, width_m, materials."
     )
     assert division == "the database refused the query: division by zero (SQLSTATE 22012)"
 

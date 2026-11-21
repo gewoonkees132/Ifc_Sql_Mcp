@@ -27,7 +27,8 @@ The rules, in the order they are checked:
 6. It reads only schema ``ifc``. A schema-qualified name must be in ``ifc``, and an
    unqualified ``pg_*`` name, which PostgreSQL would resolve in ``pg_catalog`` before the
    search path, must be a CTE. Every catalogue relation starts with ``pg_``; the
-   ``ifc://schema`` resource describes the data instead.
+   ``describe_schema`` tool describes the data instead, and the refusal says so (an LLM
+   that cannot list tables reaches for ``information_schema``: audit finding A10).
 7. Functions come from an allowlist. sqlglot parses the standard SQL functions (count,
    sum, round, lower, date_trunc, string_agg, …) into typed nodes; they are allowed. Of
    the 2,600-odd functions in ``pg_catalog`` that ``ifc_reader`` may execute (2,644 on the
@@ -179,12 +180,12 @@ def _check_relations(statement: exp.Expr) -> None:
         if table.db and table.db.lower() != SCHEMA:
             raise QueryRefusedError(
                 f"only schema {SCHEMA} can be read, not {table.db}.{table.name}; "
-                "the ifc://schema resource lists its tables and views"
+                "call describe_schema for its tables, views and columns"
             )
         if not table.db and table.name.lower().startswith("pg_") and table.name not in cte_names:
             raise QueryRefusedError(
                 f"{table.name} is a PostgreSQL system catalogue; only schema {SCHEMA} can be "
-                "read, and the ifc://schema resource lists its tables and views"
+                "read: call describe_schema for its tables, views and columns"
             )
 
 

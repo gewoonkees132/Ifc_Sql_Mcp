@@ -206,8 +206,8 @@ def test_refuses_a_query_that_writes_or_locks_anywhere_inside(sql: str, reason: 
     [
         (
             "SELECT * FROM pg_catalog.pg_class",
-            "only schema ifc can be read, not pg_catalog.pg_class; the ifc://schema resource "
-            "lists its tables and views",
+            "only schema ifc can be read, not pg_catalog.pg_class; call describe_schema for its "
+            "tables, views and columns",
         ),
         ("SELECT * FROM information_schema.columns", "only schema ifc can be read"),
         ("SELECT * FROM public.alembic_version", "only schema ifc can be read"),

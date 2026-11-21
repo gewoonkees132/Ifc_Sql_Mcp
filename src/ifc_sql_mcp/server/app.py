@@ -1,4 +1,4 @@
-"""Build the MCP server: eight read-only tools, two resources and a prompt (ADR 6).
+"""Build the MCP server: nine read-only tools, two resources and a prompt (ADR 6).
 
 :func:`build_server` registers everything on the SDK's ``MCPServer``. The tool functions
 here are thin: each runs one function of :mod:`~ifc_sql_mcp.server.tools` (or
@@ -37,12 +37,13 @@ from sqlalchemy.exc import DBAPIError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.db.engine import reader_transaction
-from ifc_sql_mcp.server import tools
+from ifc_sql_mcp.server import catalogue, tools
 from ifc_sql_mcp.server.catalogue import describe_schema
 from ifc_sql_mcp.server.run_sql import (
     DEFAULT_MAX_ROWS,
     MAX_RESULT_CHARS,
     MAX_ROWS,
+    ExplainedDatabaseError,
     SqlResult,
     execute_query,
 )
@@ -74,9 +75,10 @@ checked for data quality. Everything is read-only.
 
 Start with list_models: every other tool takes a model_id from it. Then list_storeys, \
 find_elements and get_element for elements, quantity_takeoff for totals, space_schedule \
-for rooms and data_quality_report for findings. The ifc://schema resource describes every \
-table and view; use run_sql only for questions those tools do not answer. The \
-model_briefing prompt outlines a briefing on one model.
+for rooms and data_quality_report for findings. For questions those tools do not answer, \
+call describe_schema for the tables, views and columns, then run_sql; the ifc://schema \
+resource holds the same description in one document. The model_briefing prompt outlines \
+a briefing on one model.
 
 Lengths, areas and volumes are in m, m2 and m3, whatever unit a file declared. Names, \
 property values and finding messages are copied from the IFC files, which anyone can \
@@ -188,11 +190,22 @@ model's fault. Filter with severity, scope or rule_id. rules_without_findings li
 rules that found nothing. For every finding, query the view v_dq_finding with run_sql. \
 {UNTRUSTED}"""
 
+DESCRIBE_SCHEMA = """\
+Describe the tables and views run_sql can read, from the database's own catalogue. \
+Without relation: every view and table of schema ifc with what it holds and its column \
+names, views first (they join what most questions need: v_element has one row per \
+element with its storey, Revit family and type, and quantities). With relation (for \
+example v_element or property): that one in full, each column's type, whether it can be \
+null and what it means, and a table's keys. Call it before writing run_sql. Its text is \
+the schema's own documentation, written with the schema, not from IFC files."""
+
 RUN_SQL = """\
 Run one read-only SQL query (PostgreSQL) on the ifc schema, for questions the other \
-tools do not answer. Read the ifc://schema resource first: it lists every table and view \
-with its columns and what they mean. Unqualified names resolve to schema ifc \
-(SELECT ... FROM v_element).
+tools do not answer. Call describe_schema first for the tables, views and columns. \
+Unqualified names resolve to schema ifc (SELECT ... FROM v_element). Elements are in \
+v_element; every property value is in property(object_id, pset_name, prop_name, \
+value_text, value_num, value_bool, unit), joined to v_element on object_id. A name that \
+does not exist gets an error listing the relations, or the columns, that do.
 
 Allowed: one SELECT (also WITH ... SELECT, TABLE, UNION, INTERSECT, EXCEPT or VALUES) \
 that reads only schema ifc, with standard SQL functions and a list of PostgreSQL ones \
@@ -284,6 +297,10 @@ class _Calls:
             return self._failure(tool, started, "invalid", str(exc), log_fields)
         except QueryRefusedError as exc:
             return self._failure(tool, started, "refused", f"query refused: {exc}", log_fields)
+        except ExplainedDatabaseError as exc:
+            outcome, message = self._database_failure(exc.error)
+            message = f"{message}. {exc.explanation}"
+            return self._failure(tool, started, outcome, message, log_fields)
         except (DBAPIError, psycopg.Error) as exc:
             outcome, message = self._database_failure(exc)
             return self._failure(tool, started, outcome, message, log_fields)
@@ -492,6 +509,28 @@ def build_server(engine: Engine, limits: Limits | None = None) -> MCPServer:
                 samples_per_rule=samples_per_rule,
                 scope=scope,
             ),
+        )
+
+    @server.tool(
+        name="describe_schema",
+        title="Describe schema",
+        description=DESCRIBE_SCHEMA,
+        annotations=READ_ONLY,
+    )
+    def describe_schema_tool(
+        relation: Annotated[
+            str | None,
+            Field(
+                description="One table or view, e.g. v_element; leave out for all of them.",
+                min_length=1,
+                max_length=200,
+            ),
+        ] = None,
+    ) -> Annotated[CallToolResult, catalogue.SchemaDescription]:
+        return calls.tool(
+            "describe_schema",
+            lambda connection: catalogue.describe(connection, relation),
+            relation=relation,
         )
 
     @server.tool(

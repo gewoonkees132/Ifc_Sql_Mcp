@@ -56,7 +56,7 @@ repeat is recorded as a skipped run (the check runs again, as a new recorded run
 `make smoke` then talks to the server over stdio:
 
 ```
-connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 8 tools, 1 resource, 1 resource template, 1 prompt
+connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 9 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
   model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
   model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
@@ -133,18 +133,21 @@ that were rejected.
   finding is the model's gap or the loader's. Each run is recorded and evaluated set-based, so
   quality can be compared over time; a removed rule is retired, not deleted, while
   findings cite it.
-- **MCP server** ([ADR 6](docs/adr/0006-mcp-server.md), [docs/mcp.md](docs/mcp.md)): seven
+- **MCP server** ([ADR 6](docs/adr/0006-mcp-server.md),
+  [ADR 9](docs/adr/0009-schema-discovery-tool.md), [docs/mcp.md](docs/mcp.md)): seven
   fixed tools (models, storeys, element search and detail, takeoffs, room schedule, data
-  quality report) handle the common questions with tested SQL, and `run_sql` the rest. The
-  server connects only as a read-only role, opens a new session per call, and bounds every
-  result. `run_sql` passes four layers, each tested on its own against PostgreSQL: a
-  sqlglot validator with a function allowlist, a cursor that PostgreSQL accepts only for
-  one SELECT, a read-only transaction with timeouts, and the role's privileges.
+  quality report) handle the common questions with tested SQL, and `run_sql` the rest,
+  with `describe_schema` as its map and errors that name the tables and columns that
+  exist. The server connects only as a read-only role, opens a new session per call, and
+  bounds every result. `run_sql` passes four layers, each tested on its own against
+  PostgreSQL: a sqlglot validator with a function allowlist, a cursor that PostgreSQL
+  accepts only for one SELECT, a read-only transaction with timeouts, and the role's
+  privileges.
 
 ### Asking through MCP
 
 The fixed tools answer most questions in one call. For the rest, `run_sql` takes one
-read-only query, with [`ifc://schema`](docs/mcp.md#resources) as its map. Which walls of
+read-only query, with [`describe_schema`](docs/mcp.md#describe_schema) as its map. Which walls of
 the architectural model are external, by type:
 
 ```sql
@@ -186,11 +189,11 @@ src/ifc_sql_mcp/
   cli.py                 ifc-sql: migrate, ingest, dq, serve
   config.py              settings from IFC_SQL_* environment variables
   logging_config.py      key=value logs on stderr (stdout is the MCP protocol)
-  db/                    schema.py, engines, migrations 0001-0009, versioned view SQL
+  db/                    schema.py, engines, migrations 0001-0016, versioned view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   dq/                    rule catalogue, sync, runs
   rules/dq_rules.yaml    the 43 data quality rules
-  server/                MCP server: tools, run_sql, SQL validator, schema resource
+  server/                MCP server: tools, run_sql, SQL validator, schema description
 tests/
   unit/                  no database needed
   integration/           real PostgreSQL, throwaway databases
@@ -209,7 +212,7 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
-| [docs/adr/](docs/adr/README.md) | Eight architecture decision records |
+| [docs/adr/](docs/adr/README.md) | Nine architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog was implemented: per finding, the issue, the commits and the figures before and after |
 | [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials |

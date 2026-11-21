@@ -48,7 +48,7 @@ async def test_serve_speaks_only_mcp_on_stdout_and_logs_to_stderr(mcp_settings: 
 
     assert not_protocol == []
     assert protocol == "2026-07-28"
-    assert len(tools) == 8
+    assert len(tools) == 9
     assert not result.is_error
     assert result.structured_content is not None
     assert [s["name"] for s in result.structured_content["storeys"]] == [

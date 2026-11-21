@@ -18,6 +18,11 @@ choice gives three guarantees, each checked by ``tests/integration/test_run_sql.
 * **At most ``max_rows + 1`` rows leave the database.** A client-side cursor would
   receive the whole result before the first row could be dropped.
 
+A query that names a relation or column that does not exist is the commonest failure
+(audit finding A10: 20 of 72 calls in six sessions). The query runs inside a savepoint,
+so after such an error the transaction can still read the catalogue, and the error
+carries the names that do exist (:func:`~ifc_sql_mcp.server.catalogue.explain_unknown_name`).
+
 ``set_config('statement_timeout', '0', true)`` inside a query cannot lift the timeout of
 the statement it runs in (PostgreSQL arms the timer when the statement starts; a test
 shows the cancellation), only of later statements in the transaction. The only one
@@ -28,10 +33,12 @@ undoes the setting. The validator refuses ``set_config`` anyway.
 import json
 from typing import Literal
 
+import psycopg
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection
 
 from ifc_sql_mcp.db.engine import psycopg_connection
+from ifc_sql_mcp.server.catalogue import explain_unknown_name
 from ifc_sql_mcp.server.tools import ToolResult
 from ifc_sql_mcp.server.values import MAX_TEXT_CHARS, JsonValue, to_cell
 
@@ -46,6 +53,20 @@ keep a result in the conversation.
 """
 
 CURSOR_NAME = "run_sql"
+
+
+class ExplainedDatabaseError(Exception):
+    """The database refused the query, and the catalogue says what would have worked.
+
+    Attributes:
+        error: The database's own error.
+        explanation: The relations or columns that do exist, to append to its message.
+    """
+
+    def __init__(self, error: psycopg.Error, explanation: str) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.explanation = explanation
 
 
 class Column(BaseModel):
@@ -81,15 +102,26 @@ def execute_query(connection: Connection, sql: str, max_rows: int) -> SqlResult:
     """Run ``sql`` in ``connection``'s transaction and return at most ``max_rows`` rows.
 
     ``sql`` is executed as written; call :func:`~ifc_sql_mcp.server.sql_guard.check_query`
-    first. Database errors propagate as psycopg exceptions.
+    first. Database errors propagate as psycopg exceptions, except an unknown relation or
+    column.
+
+    Raises:
+        ExplainedDatabaseError: ``sql`` names a relation or column that does not exist.
     """
+    savepoint = connection.begin_nested()
     cursor = psycopg_connection(connection).cursor(name=CURSOR_NAME)
     try:
         cursor.execute(sql)
         fetched = cursor.fetchmany(max_rows + 1)
         columns = [Column(name=c.name, type=c.type_display) for c in cursor.description or []]
+    except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn) as exc:
+        savepoint.rollback()
+        message = exc.diag.message_primary or str(exc)
+        explanation = explain_unknown_name(connection, sql, exc.sqlstate or "", message)
+        raise ExplainedDatabaseError(exc, explanation) from exc
     finally:
         cursor.close()
+    savepoint.commit()
 
     rows: list[list[JsonValue]] = []
     size = 0
