@@ -14,6 +14,7 @@ from typing import Any
 import make_revit_quirks
 import pytest
 from counts import FIXTURE_ROWS, table_counts, total_rows
+from geometry_model import SLAB, WALL, write_measured_model
 from locks import wait_until_a_session_waits_on_a_lock
 from rows import add_model
 from sqlalchemy import Engine, RowMapping, text
@@ -303,3 +304,57 @@ def test_an_ingest_that_waited_loads_the_file_when_the_other_one_fails(
     assert (result.status, result.concurrent) == ("succeeded", False)
     assert result.model_id != failed_id
     assert _totals(ingest_engine) == FIXTURE_ROWS
+
+
+# --------------------------------------------------------------------------- geometry
+
+
+def test_geometry_quantities_rank_last_and_the_run_records_the_time(
+    ingest_engine: Engine, tmp_path: Path
+) -> None:
+    path = write_measured_model(tmp_path / "measured.ifc")
+
+    result = ingest_file(ingest_engine, path, "ARC", geometry=True)
+
+    with ingest_engine.connect() as connection:
+        areas = dict(
+            connection.execute(
+                text(
+                    "SELECT name, area_m2 FROM ifc.v_element WHERE model_id = :m "
+                    "AND area_m2 IS NOT NULL"
+                ),
+                {"m": result.model_id},
+            ).all()
+        )
+        sources = (
+            connection.execute(
+                text(
+                    "SELECT DISTINCT q.source FROM ifc.quantity AS q JOIN ifc.object AS o "
+                    "USING (object_id) WHERE o.model_id = :m"
+                ),
+                {"m": result.model_id},
+            )
+            .scalars()
+            .all()
+        )
+        seconds = connection.execute(
+            text("SELECT geometry_seconds FROM ifc.ingestion_run WHERE ingestion_run_id = :r"),
+            {"r": result.run_id},
+        ).scalar_one()
+
+    assert areas == pytest.approx({WALL: 13.0, SLAB: 16.0})
+    assert sources == ["geometry"]
+    assert seconds is not None
+    assert seconds >= 0
+    assert result.issue_counts["geometry_not_measured"] == 1  # the beam
+
+
+def test_without_geometry_the_run_measures_nothing(ingest_engine: Engine, tmp_path: Path) -> None:
+    result = ingest_file(ingest_engine, write_measured_model(tmp_path / "m.ifc"), "ARC")
+
+    with ingest_engine.connect() as connection:
+        seconds = connection.execute(
+            text("SELECT geometry_seconds FROM ifc.ingestion_run WHERE ingestion_run_id = :r"),
+            {"r": result.run_id},
+        ).scalar_one()
+    assert (seconds, result.row_counts["quantity"]) == (None, 0)

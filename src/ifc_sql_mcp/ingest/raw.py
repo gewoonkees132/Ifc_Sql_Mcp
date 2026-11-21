@@ -200,6 +200,23 @@ class RawProject:
 
 
 @dataclass(frozen=True, slots=True)
+class RawShape:
+    """What IfcOpenShell measured on one object's body (``ifc-sql ingest --geometry``).
+
+    Attributes:
+        global_id: The object.
+        side_area_m2: Area of the shape seen along its local Y axis: a wall's face.
+        footprint_area_m2: Area of the shape seen from above: a slab's or a space's plan.
+        volume_m3: Volume enclosed by the triangulated shape.
+    """
+
+    global_id: str
+    side_area_m2: float
+    footprint_area_m2: float
+    volume_m3: float
+
+
+@dataclass(frozen=True, slots=True)
 class RawModel:
     """Everything extracted from one IFC file.
 
@@ -210,6 +227,8 @@ class RawModel:
         spatial_elements: Sites, buildings, storeys and spaces, in file order.
         elements: Physical elements, in file order.
         issues: Problems found while reading (e.g. unsupported property kinds).
+        shapes: Shapes measured on request (``geometry.measure_shapes``); empty otherwise.
+        geometry_seconds: How long measuring them took; ``None`` when not asked for.
     """
 
     file: RawFile
@@ -218,3 +237,5 @@ class RawModel:
     spatial_elements: tuple[RawSpatialElement, ...]
     elements: tuple[RawElement, ...]
     issues: tuple[Issue, ...]
+    shapes: tuple[RawShape, ...] = ()
+    geometry_seconds: float | None = None

@@ -14,6 +14,10 @@ duplex  Duplex_A_20110907.ifc                  shares Revit's default project nu
 ======  =====================================  ==========================================
 
 Every model is checked by the data quality rules once, as ``ifc-sql dq`` does.
+
+A second database, ``measured``, holds files A and B loaded with ``--geometry`` (audit
+finding A5). It is separate so that every other test sees the files as an architect's
+plain ``ifc-sql ingest`` loads them.
 """
 
 from collections.abc import Callable, Iterator
@@ -47,5 +51,18 @@ def modern(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
         sync_rules(connection, rules)
     for result in ingested.values():
         check_model(engine, result.model_id, rules)
+    yield Modern(engine=engine, settings=settings, ingested=ingested)
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def measured(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
+    """Files A and B loaded with --geometry, in a database of their own."""
+    settings = create_database("test_modern_geometry")
+    upgrade(settings)
+    engine = make_engine(settings.database_url)
+    ingested = {
+        key: ingest_file(engine, audit_path(key), "ARC", geometry=True) for key in ("a", "b")
+    }
     yield Modern(engine=engine, settings=settings, ingested=ingested)
     engine.dispose()

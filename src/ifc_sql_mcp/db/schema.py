@@ -337,9 +337,16 @@ ingestion_run = Table(
         "filtered on, so a JSON object is simpler than a column per table.",
     ),
     Column("error", Text, comment="Error message of a failed run; NULL otherwise."),
+    Column(
+        "geometry_seconds",
+        Double,
+        comment="Seconds spent triangulating and measuring shapes (ifc-sql ingest "
+        "--geometry); NULL when the run did not measure geometry.",
+    ),
     _not_blank("file_name"),
     CheckConstraint("file_sha256 ~ '^[0-9a-f]{64}$'", name="file_sha256_hex"),
     CheckConstraint("jsonb_typeof(row_counts) = 'object'", name="row_counts_is_object"),
+    CheckConstraint("geometry_seconds >= 0", name="geometry_seconds_non_negative"),
     *_run_status_checks(("running", "succeeded", "failed", "skipped")),
     comment="Audit log of ingest attempts, one row per run, including failed and skipped "
     "runs. Written outside the load transaction so failures are recorded too.",

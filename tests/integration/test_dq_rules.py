@@ -65,6 +65,7 @@ FIXTURE_FINDINGS: dict[str, list[str]] = {
     "revit_name_unparsed": [fx.PROXY],
     "revit_tag_mismatch": [],
     "control_character_in_name": [],
+    "geometry_not_measured": [],
     "unnamed_property": [],
     "unsupported_property": [],
     "unsupported_property_set": [],

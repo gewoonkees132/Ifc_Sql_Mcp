@@ -18,7 +18,7 @@ from ifc_sql_mcp.db.schema import GLOBAL_ID_PATTERN
 from ifc_sql_mcp.ingest.classifications import collect_classifications
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.properties import resolve_properties
-from ifc_sql_mcp.ingest.quantities import derive_quantities
+from ifc_sql_mcp.ingest.quantities import derive_quantities, geometry_quantities
 from ifc_sql_mcp.ingest.raw import (
     RawElement,
     RawMaterialEntry,
@@ -389,6 +389,10 @@ def transform(raw: RawModel) -> ModelRecords:
         quantities.extend(object_quantities)
         classifications.extend(object_classes)
         issues.extend(object_issues)
+
+    quantities.extend(
+        geometry_quantities(raw.shapes, {r.global_id: r.ifc_class_base for r in objects})
+    )
 
     known = {obj.global_id for obj in accepted}
     spatial: list[SpatialElementRecord] = []

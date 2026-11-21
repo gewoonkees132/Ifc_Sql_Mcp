@@ -37,6 +37,7 @@ What it reads, and from where:
   files A and C, so neither is kept.
 """
 
+import dataclasses
 import hashlib
 import logging
 from collections import Counter
@@ -50,6 +51,7 @@ import ifcopenshell.util.classification
 import ifcopenshell.util.element
 import ifcopenshell.util.unit
 
+from ifc_sql_mcp.ingest.geometry import measure_shapes
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.raw import (
     RawElement,
@@ -134,8 +136,12 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def read_model(path: Path) -> RawModel:
+def read_model(path: Path, *, geometry: bool = False) -> RawModel:
     """Read the IFC file at ``path``.
+
+    Args:
+        path: The IFC file.
+        geometry: Also triangulate and measure the shapes (``geometry.measure_shapes``).
 
     Raises:
         FileNotFoundError: if there is no such file.
@@ -149,7 +155,13 @@ def read_model(path: Path) -> RawModel:
         model = ifcopenshell.open(str(path))
     except ifcopenshell.Error as exc:
         raise ExtractError(f"{path.name}: not a readable IFC file ({exc})") from exc
-    return _Extractor(model, path.name, sha256, size_bytes).run()
+    raw = _Extractor(model, path.name, sha256, size_bytes).run()
+    if not geometry:
+        return raw
+    shapes, issues, seconds = measure_shapes(model)
+    return dataclasses.replace(
+        raw, shapes=shapes, issues=raw.issues + tuple(issues), geometry_seconds=seconds
+    )
 
 
 def _check_complete(path: Path, size_bytes: int) -> None:

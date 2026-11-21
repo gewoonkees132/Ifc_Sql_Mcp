@@ -6,6 +6,7 @@ from pathlib import Path
 import make_revit_quirks
 import pytest
 from cli_output import plain
+from geometry_model import write_measured_model
 from sqlalchemy import Engine, text
 from typer.testing import CliRunner, Result
 
@@ -242,7 +243,18 @@ def test_options_on_a_file_already_loaded_are_not_applied_and_it_says_so(
 
     assert result.exit_code == 0
     assert (
-        "warning: revit_quirks.ifc is already loaded as model 1, so --project and --replaces "
-        "were not applied: that model is unchanged" in result.stderr
+        "warning: revit_quirks.ifc is already loaded as model 1, so --project, --replaces and "
+        "--geometry were not applied: that model is unchanged" in result.stderr
     )
     assert _models(database) == [(1, None, "0042", None, True)]
+
+
+def test_geometry_is_measured_on_request_and_logged(database: Engine, tmp_path: Path) -> None:
+    path = write_measured_model(tmp_path / "measured.ifc")
+
+    result = CliRunner().invoke(cli.app, ["ingest", str(path), "--discipline", "ARC", "--geometry"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("loaded measured.ifc as model 1 (ARC)")
+    assert 'msg="measured geometry" run_id=1 shapes=4' in result.stderr
+    assert "code=geometry_not_measured count=1" in result.stderr

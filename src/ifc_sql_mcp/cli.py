@@ -197,6 +197,15 @@ def ingest(
             "this one counts in project-wide views. Its --project is kept unless given.",
         ),
     ] = None,
+    geometry: Annotated[
+        bool,
+        typer.Option(
+            "--geometry",
+            help="Also measure the shapes, for files exported without quantities: wall side "
+            "areas, slab and space footprints, solid volumes. They rank after the file's "
+            "own quantities. Takes about a minute for a 15,000-object file on 4 cores.",
+        ),
+    ] = False,
 ) -> None:
     """Load one IFC file. A file whose exact bytes are already loaded is skipped.
 
@@ -210,7 +219,9 @@ def ingest(
     engine = make_engine(settings.database_url)
     try:
         _require_latest_revision(settings, "ingest")
-        result = ingest_file(engine, path, discipline, project_key=project, replaces=replaces)
+        result = ingest_file(
+            engine, path, discipline, project_key=project, replaces=replaces, geometry=geometry
+        )
     except ReplacesError as exc:
         raise typer.BadParameter(str(exc), param_hint="'--replaces'") from exc
     except ValueError as exc:

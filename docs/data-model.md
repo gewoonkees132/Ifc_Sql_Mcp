@@ -128,7 +128,7 @@ erDiagram
     quantity {
         bigint object_id PK, FK
         text name PK "length_m, area_m2, volume_m3, perimeter_m, height_m, width_m"
-        text source PK "ifc_qto, revit_pset, geometry"
+        text source PK "ifc_qto, revit_pset, ifc_attribute, geometry"
         float8 value
         text source_ref
     }
@@ -288,7 +288,7 @@ name parts of openings in models already loaded.
 
 | View | One row per | What it adds |
 |---|---|---|
-| `v_quantity` | object and quantity | Picks one value when several sources supply it, in the order `ifc_qto`, then `revit_pset`, then `geometry`: an IFC quantity set written by the exporter, then Revit's own parameter, then a value computed here. The other views read quantities through it. |
+| `v_quantity` | object and quantity | Picks one value when several sources supply it, in the order `ifc_qto`, then `revit_pset`, then `ifc_attribute`, then `geometry`: an IFC quantity set written by the exporter, then Revit's own parameter, then a door's or window's attribute, then a value measured from the shape (`--geometry`). The other views read quantities through it. |
 | `v_element` | element | Identity, Revit name parts (a feature element's are its host's, in `host_revit_*`), `is_feature`, storey and elevation, the containing room, the six canonical quantities as columns (`width_m` since v4), and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). Openings are rows too: filter `NOT is_feature` to count building elements. |
 | `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height, the OmniClass Table 13 code and title, and `duplicate_of` (v2): an earlier space with the same number, name, storey and floor area, as a model exporting both Revit Rooms and MEP Spaces writes. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
@@ -405,7 +405,17 @@ of the same project, counted next to last week's.
 ```bash
 make ingest-samples                          # make samples + make migrate, then the four files
 uv run ifc-sql ingest path/to/model.ifc --discipline ARC
+uv run ifc-sql ingest tower.ifc --discipline ARC --geometry            # measure the shapes too
+uv run ifc-sql ingest week_12.ifc --discipline ARC --replaces 4 --project 2024-017
 ```
+
+`--geometry` is for a file exported without quantities ([ADR 10](adr/0010-geometry-quantities.md)).
+IfcOpenShell triangulates the shapes of walls, slabs, spaces and other solids in
+parallel. A wall's side area, a slab's or space's footprint and every solid's volume
+become quantities of source `geometry`, ranked after the file's own. A body it cannot
+triangulate is reported as `geometry_not_measured`, and the run records the time in
+`ingestion_run.geometry_seconds`. On the audit's tower (14,642 objects) it measured
+8,285 shapes in 54 s on 4 cores, and gave its 6,095 walls their 103,057.7 m².
 
 `ifc-sql ingest` loads one file through `ingest/pipeline.py`. The steps, and why they
 come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):

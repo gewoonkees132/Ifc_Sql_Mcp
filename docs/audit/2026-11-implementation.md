@@ -82,6 +82,7 @@ the test module for findings that add a tool or a command.
 | A13 | Findings that are noise | [#15](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/15) | done | `test_a13_normal_revit_behaviour_is_not_reported`: B's U-value and opening-tag findings 6,488 → 0; its warnings 6,778 → 290 |
 | A14 | Modern stair part names are not parsed | [#16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/16) | done | `test_a14_every_stair_flight_has_its_revit_type`: B's stair flights with a Revit type 0 → 182 of 182; `revit_name_unparsed` 278 / 3 / 61 → 0 / 0 / 2 on B / A / E |
 | A15 | No way to compare two exports | [#17](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/17) | done | `test_a15_what_changed_between_two_exports`: A → D gives FireRating added on 42 walls and 9 curtain walls, 4 openings removed and 4 added, in one call |
+| A5 | No geometry quantities for files that carry none | [#7](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/7) | done | `test_a5_files_without_quantities_get_them_from_the_geometry`: B's walls with an area 0 → 6,095 of 6,095 (103,057.7 m²); A 964.6 m², within 2 % of 946.0 |
 | A16 | Control characters in names | [#18](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/18) | done | `test_a16_revit_types_hold_no_control_characters`: B's elements with a control character in `revit_type` 731 → 0, each reported |
 
 ## Per finding
@@ -527,4 +528,36 @@ the test module for findings that add a tool or a command.
   | Tool calls for "what changed?" | hand-written SQL with a GlobalId join | **1** |
   | `Pset_WallCommon.FireRating` / `Pset_CurtainWallCommon.FireRating` added | (SQL only) 42 / 9 | **42 / 9** |
   | Openings removed / added (regenerated GlobalIds) | (SQL only) 4 / 4 | **4 / 4** |
+
+### A5: no geometry quantities for files that carry none
+
+- **`ifc-sql ingest --geometry`** ([ADR 10](../adr/0010-geometry-quantities.md)).
+  `ingest/geometry.py` triangulates the shapes with IfcOpenShell, one thread per CPU,
+  and measures them in local coordinates as the audit's harness did. The transform
+  makes the quantities, with source `geometry`, ranked last:
+  - a wall's side area is its `area_m2`;
+  - a slab's and a space's footprint is theirs;
+  - every measured solid gets `volume_m3`.
+
+  A body that cannot be triangulated raises `geometry_not_measured`. Migration 0018
+  records the time in `ingestion_run.geometry_seconds`.
+- **Decisions.**
+  - *Volume only for solids.* The audit's table said volume for "all". Doors, windows
+    and furniture are assemblies of open meshes, whose volume would mean nothing, and a
+    door has its size as attributes (A4). The classes measured are those modelled as
+    solids: walls, slabs, roofs, coverings, columns, beams, members, plates, footings,
+    stair and ramp flights, railings and spaces.
+  - *Openings are cut out.* IfcOpenShell subtracts them from their wall, so the side
+    area is net, like `NetSideArea`. The test model checks it: 5 × 3 m less 1 × 2 m is
+    13 m².
+  - *A separate database in the acceptance suite.* The other acceptance tests keep
+    seeing B as a plain ingest loads it: still no quantities, the A8 case.
+- **Before → after** (`tests/modern`, the `measured` database)
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | B: walls with `area_m2` | 0 of 6,095 | **6,095 of 6,095**, 103,057.7 m² (audit: 103,057.7) |
+  | B: type `1AR_MUR_CV003`, area by type | null | **25,114.3 m²** over 1,165 walls (audit: 25,114.3) |
+  | A: wall area from the shapes | — | **964.6 m²**, 2.0 % above the file's 946.0, which still wins |
+  | B: time to measure 8,285 shapes, 4 cores | — | 54 s, recorded in `ingestion_run` |
 

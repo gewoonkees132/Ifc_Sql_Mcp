@@ -1,6 +1,6 @@
 # ADR 3: Quantity sources and precedence
 
-- Status: accepted; decisions 1 and 2 amended by [ADR 8](0008-ifc-base-quantities.md)
+- Status: accepted; decisions 1 and 2 amended by [ADR 8](0008-ifc-base-quantities.md); decision 8 implemented by [ADR 10](0010-geometry-quantities.md)
 - Date: 2026-11-16
 
 ## Context
@@ -64,7 +64,8 @@ when there are several.
    so a negative mapped value is reported as `negative_quantity` and left out. Negative
    values that are not quantities (`Top Offset`, `Invert Elevation`) are legitimate and
    stay in `property`.
-8. **`geometry` is reserved, not implemented.** The CHECK constraint allows it and
+8. **`geometry` is reserved, not implemented.** (Since implemented, on request:
+   [ADR 10](0010-geometry-quantities.md).) The CHECK constraint allows it and
    `v_quantity` ranks it, but nothing writes it, and the four files load no `geometry`
    rows. Reserving it now means computing quantities later is a new writer, not a
    migration, and its rank is settled before anyone is tempted to let computed values

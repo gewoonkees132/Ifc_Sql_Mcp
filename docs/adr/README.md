@@ -15,3 +15,4 @@ new record supersedes the old one.
 | [7](0007-quantity-set-plausibility.md) | Physical bounds on quantity sets: a duplicated value is settled by the bounds, a value that breaks one is kept but flagged and becomes no quantity |
 | [8](0008-ifc-base-quantities.md) | Reading IFC base quantities: rules per standard set, IFC2X3 `BaseQuantities` read as the class's set, net first with gross as a fallback, a slab's area from `GrossArea` only, and `width_m` |
 | [9](0009-schema-discovery-tool.md) | The schema as a `describe_schema` tool next to the resource, and `run_sql` errors about an unknown relation or column that list what exists |
+| [10](0010-geometry-quantities.md) | Quantities measured from the geometry with IfcOpenShell, on request (`ingest --geometry`): wall side areas, slab and space footprints, solid volumes, ranked last |

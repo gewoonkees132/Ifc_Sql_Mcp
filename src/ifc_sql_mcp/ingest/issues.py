@@ -60,6 +60,8 @@ class IssueCode(StrEnum):
     """Two different values for one quantity and source; the first is kept."""
     IMPLAUSIBLE_QUANTITY = "implausible_quantity"
     """A quantity-set value breaks a physical bound of its set; it makes no quantity."""
+    GEOMETRY_NOT_MEASURED = "geometry_not_measured"
+    """With --geometry: IfcOpenShell could not triangulate or measure an object's body."""
 
     # Classifications
     OMNICLASS_UNPARSED = "omniclass_unparsed"

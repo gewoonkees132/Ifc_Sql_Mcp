@@ -483,6 +483,15 @@ rules:
     scope: model_content
     issue_code: control_character_in_name
 
+  - rule_id: geometry_not_measured
+    description: >-
+      With ifc-sql ingest --geometry: IfcOpenShell could not triangulate or measure an
+      object's body, so it got no geometry quantity. The shape may still be fine in Revit.
+    severity: warning
+    dimension: completeness
+    scope: loader_coverage
+    issue_code: geometry_not_measured
+
   # ---------------------------------------------------------- issues: properties, quantities
 
   - rule_id: unnamed_property

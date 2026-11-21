@@ -17,6 +17,10 @@ values stay in ``property`` as well. The rules come in two families (ADR 3, ADR 
 * **IFC attributes** (source ``ifc_attribute``): a door's and a window's
   ``OverallWidth`` and ``OverallHeight``, which every Revit export writes, even with
   base quantities and Revit property sets switched off (audit finding A4).
+* **Geometry** (source ``geometry``), only with ``ifc-sql ingest --geometry``: the shapes
+  ``geometry.py`` measured. A wall's area is its side area, a slab's and a space's their
+  footprint, and every measured solid gets its volume (:func:`geometry_quantities`,
+  audit finding A5). It ranks last, so it stands in only where the file has nothing.
 
 Within a family, a net value is preferred, and the gross one is a **fallback**: it
 supplies the quantity only when its set has no net value, or only an implausible one
@@ -38,6 +42,7 @@ from dataclasses import dataclass
 
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.properties import TypedValue
+from ifc_sql_mcp.ingest.raw import RawShape
 from ifc_sql_mcp.ingest.records import QuantityName, QuantityRecord, QuantitySource
 
 REVIT_DIMENSION_SETS = ("PSet_Revit_Dimensions", "Dimensions")
@@ -244,3 +249,49 @@ def derive_quantities(
                 issues.append(Issue(IssueCode.CONFLICTING_QUANTITY, global_id, message))
     records = sorted((record for record, _ in kept.values()), key=lambda r: (r.name, r.source))
     return records, issues
+
+
+GEOMETRY_AREAS: Mapping[str, tuple[str, str]] = {
+    "IfcWall": ("side_area_m2", "geometry:side_area"),
+    "IfcSlab": ("footprint_area_m2", "geometry:footprint_area"),
+    "IfcSpace": ("footprint_area_m2", "geometry:footprint_area"),
+}
+"""Which measure is an object's area, by ``ifc_class_base``; other classes get no area."""
+
+
+def geometry_quantities(
+    shapes: Sequence[RawShape], classes: Mapping[str, str]
+) -> list[QuantityRecord]:
+    """The quantities of the measured shapes (source ``geometry``).
+
+    Args:
+        shapes: What ``geometry.measure_shapes`` measured.
+        classes: ``ifc_class_base`` by GlobalId of the objects that are loaded; a shape of
+            any other object is left out.
+
+    A measure that is not positive (an open mesh's volume, a vertical slab's footprint)
+    makes no quantity: zero would claim the element was measured empty.
+    """
+    records: list[QuantityRecord] = []
+    for shape in shapes:
+        ifc_class = classes.get(shape.global_id)
+        if ifc_class is None:
+            continue
+        measures: list[tuple[QuantityName, float, str]] = [
+            ("volume_m3", shape.volume_m3, "geometry:volume")
+        ]
+        if ifc_class in GEOMETRY_AREAS:
+            attribute, ref = GEOMETRY_AREAS[ifc_class]
+            measures.append(("area_m2", getattr(shape, attribute), ref))
+        records.extend(
+            QuantityRecord(
+                global_id=shape.global_id,
+                name=name,
+                source="geometry",
+                value=value,
+                source_ref=ref,
+            )
+            for name, value, ref in measures
+            if value > 0
+        )
+    return records

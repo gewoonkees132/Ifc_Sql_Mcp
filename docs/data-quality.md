@@ -74,7 +74,7 @@ Every rule has a `rule_id`, a `description` (the text an LLM reads in `ifc.dq_ru
 `severity`, a `dimension` and a `scope`, and is evaluated in one of two ways:
 
 - **`issue_code`**: the findings are the model's `ifc.ingest_issue` rows with that code,
-  each with the issue's object and message. All 28 issue codes have exactly one rule,
+  each with the issue's object and message. All 29 issue codes have exactly one rule,
   named after the code. `tests/unit/dq/test_catalogue.py` fails until a new `IssueCode`
   gets one.
 - **`sql`**: a SELECT returning `object_id` (NULL for a finding about the whole model)
@@ -140,9 +140,10 @@ no fire ratings and Revit's default project information. So every rule has a `sc
 | `model_content` | About what the file contains: something its author, or Revit's exporter settings, decided. | The model's author. |
 | `loader_coverage` | Something in the file that this tool does not read, or reads only partly. The model is not at fault. | This project. |
 
-The eight `loader_coverage` rules are `unsupported_property`, `unsupported_property_set`,
+The nine `loader_coverage` rules are `unsupported_property`, `unsupported_property_set`,
 `unsupported_classification`, `unsupported_material`, `unit_not_convertible`,
-`measure_not_converted`, `revit_name_unparsed` and `space_area_not_mapped`. Every other
+`measure_not_converted`, `revit_name_unparsed`, `geometry_not_measured` and
+`space_area_not_mapped`. Every other
 rule is `model_content`. `ifc-sql dq` prints both counts after the total, and
 `data_quality_report` gives `findings_by_scope`, lists `model_content` rules first, and
 filters by `scope`.
@@ -178,15 +179,15 @@ reports them as `implausible_quantity` ([ADR 7](adr/0007-quantity-set-plausibili
 The last six are requirement rules, of the kind an IDS or a BIM execution plan states
 (audit finding A9). Reading a buildingSMART IDS file as the requirements is left for later.
 
-The 28 issue rules, one per `IssueCode` (the issue's meaning is in
+The 29 issue rules, one per `IssueCode` (the issue's meaning is in
 [revit-ifc-quirks.md](revit-ifc-quirks.md) and `ingest/issues.py`):
 
-Seven of them are `loader_coverage` (listed in [Scope](#scope-the-model-or-the-loader)).
+Eight of them are `loader_coverage` (listed in [Scope](#scope-the-model-or-the-loader)).
 
 | Severity | Rules |
 |---|---|
 | error | `invalid_project_global_id`, `unit_not_convertible` (validity); `invalid_global_id`, `invalid_elevation`, `non_finite_value`, `invalid_layer_thickness` (validity); `duplicate_global_id` (uniqueness); `unnamed_property`, `unsupported_property`, `unsupported_property_set`, `unsupported_classification`, `unsupported_material`, `unnamed_material` (completeness) |
-| warning | `unit_assumed_si`, `incomplete_classification_reference` (completeness); `measure_not_converted`, `revit_name_unparsed`, `control_character_in_name`, `quantity_not_a_measure`, `negative_quantity`, `implausible_quantity`, `omniclass_unparsed` (validity); `revit_tag_mismatch`, `conflicting_property`, `conflicting_quantity`, `conflicting_classification` (consistency); `multiple_projects`, `multiple_material_associations` (uniqueness) |
+| warning | `unit_assumed_si`, `incomplete_classification_reference`, `geometry_not_measured` (completeness); `measure_not_converted`, `revit_name_unparsed`, `control_character_in_name`, `quantity_not_a_measure`, `negative_quantity`, `implausible_quantity`, `omniclass_unparsed` (validity); `revit_tag_mismatch`, `conflicting_property`, `conflicting_quantity`, `conflicting_classification` (consistency); `multiple_projects`, `multiple_material_associations` (uniqueness) |
 
 A few of these calls deserve a sentence:
 
@@ -231,7 +232,7 @@ ORDER BY f.severity, f.rule_id;
 (9 rows)
 ```
 
-The other 35 rules find nothing in any of the four files. `tests/samples/test_duplex_dq.py`
+The other 36 rules find nothing in any of the four files. `tests/samples/test_duplex_dq.py`
 pins every count (`make test-samples`), and checks them against two independent sources:
 
 - **The issue rules equal the issue table** in

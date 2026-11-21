@@ -126,6 +126,7 @@ def ingest_file(
     *,
     project_key: str | None = None,
     replaces: int | None = None,
+    geometry: bool = False,
 ) -> IngestResult:
     """Load the IFC file at ``path`` unless the same bytes are already loaded.
 
@@ -136,6 +137,8 @@ def ingest_file(
         project_key: The project the new model belongs to (``model.project_key``). With
             ``replaces`` and no key, the replaced model's key is kept.
         replaces: The model this one is a new version of (``model.replaces_model_id``).
+        geometry: Also measure the shapes, for quantities of source ``geometry``
+            (``ingest/geometry.py``). The time it takes is recorded in the run.
 
     Returns:
         What the run did: loaded the file, or found it already loaded.
@@ -163,18 +166,18 @@ def ingest_file(
         if existing is not None:
             run_id = _insert_run(connection, path.name, sha256, "skipped", existing[0])
             result = _skipped(run_id, path, discipline, existing, concurrent=False)
-            if project_key is None and replaces is None:
+            if project_key is None and replaces is None and not geometry:
                 return result
             unchanged = (
-                f"{path.name} is already loaded as model {result.model_id}, so --project and "
-                "--replaces were not applied: that model is unchanged"
+                f"{path.name} is already loaded as model {result.model_id}, so --project, "
+                "--replaces and --geometry were not applied: that model is unchanged"
             )
             return dataclasses.replace(result, warnings=(unchanged,))
 
     with engine.begin() as connection:
         run_id = _insert_run(connection, path.name, sha256, "running")
     try:
-        records = _extract_and_transform(path, sha256, run_id)
+        records, geometry_seconds = _extract_and_transform(path, sha256, run_id, geometry)
         started = time.perf_counter()
         with engine.begin() as connection:
             loaded = load(
@@ -184,7 +187,14 @@ def ingest_file(
                 project_key=project_key,
                 replaces_model_id=replaces,
             )
-            _finish_run(connection, run_id, "succeeded", loaded.model_id, loaded.row_counts)
+            _finish_run(
+                connection,
+                run_id,
+                "succeeded",
+                loaded.model_id,
+                loaded.row_counts,
+                geometry_seconds=geometry_seconds,
+            )
         logger.info(
             "loaded",
             extra={
@@ -260,10 +270,16 @@ def _placeholder_warning(records: ModelRecords, model_id: int) -> str | None:
     )
 
 
-def _extract_and_transform(path: Path, sha256: str, run_id: int) -> ModelRecords:
-    """Parse the file into records, logging how long each stage took and what it found."""
+def _extract_and_transform(
+    path: Path, sha256: str, run_id: int, geometry: bool
+) -> tuple[ModelRecords, float | None]:
+    """Parse the file into records, logging how long each stage took and what it found.
+
+    Returns the records, and the seconds spent measuring shapes (``None`` without
+    ``geometry``).
+    """
     started = time.perf_counter()
-    raw = read_model(path)
+    raw = read_model(path, geometry=geometry)
     if raw.file.sha256 != sha256:
         raise FileChangedError(f"{path.name} changed while it was being ingested; try again")
     extracted = time.perf_counter()
@@ -286,9 +302,18 @@ def _extract_and_transform(path: Path, sha256: str, run_id: int) -> ModelRecords
             "seconds": round(time.perf_counter() - extracted, 3),
         },
     )
+    if raw.geometry_seconds is not None:
+        logger.info(
+            "measured geometry",
+            extra={
+                "run_id": run_id,
+                "shapes": len(raw.shapes),
+                "seconds": round(raw.geometry_seconds, 3),
+            },
+        )
     for code, count in sorted(Counter(i.code.value for i in records.issues).items()):
         logger.info("transform issues", extra={"run_id": run_id, "code": code, "count": count})
-    return records
+    return records, raw.geometry_seconds
 
 
 def _skipped(
@@ -368,6 +393,8 @@ def _finish_run(
     model_id: int | None = None,
     row_counts: dict[str, int] | None = None,
     error: str | None = None,
+    *,
+    geometry_seconds: float | None = None,
 ) -> None:
     """Close a ``running`` run.
 
@@ -380,6 +407,7 @@ def _finish_run(
         "finished_at": func.clock_timestamp(),
         "model_id": model_id,
         "error": error,
+        "geometry_seconds": geometry_seconds,
     }
     # Only when there are counts: SQLAlchemy writes None into a JSONB column as JSON
     # null, not SQL NULL, and the CHECK on row_counts accepts only a JSON object.

@@ -202,6 +202,51 @@ def test_a4_doors_and_windows_have_their_sizes(modern: Modern) -> None:
     assert modern.findings("b", "unsupported_property_set") == 0
 
 
+CV003 = "Basic Wall:1AR_MUR_CV003 _Interno_Esterno Poroton Ventilata"
+WALL_AREA = (
+    "SELECT round(sum(q.value)::numeric, 1) FROM ifc.quantity AS q "
+    "JOIN ifc.object AS o USING (object_id) WHERE o.model_id = :m "
+    "AND o.ifc_class_base = 'IfcWall' AND q.name = 'area_m2' AND q.source = :source"
+)
+
+
+def test_a5_files_without_quantities_get_them_from_the_geometry(measured: Modern) -> None:
+    """The audit measured the walls with IfcOpenShell (harness/ground_truth.py --geometry):
+    964.6 m2 on A, 103,057.7 m2 on B, where B carries no quantity at all."""
+    house, tower = measured.model("a"), measured.model("b")
+
+    # A: within 2 % of the file's own NetSideArea, which still wins in v_element.
+    measured_house = float(measured.scalar(WALL_AREA, m=house, source="geometry"))  # type: ignore[arg-type]
+    assert measured_house == 964.6
+    assert abs(measured_house - 946.0) / 946.0 < 0.02
+    assert float(measured.scalar(WALL_AREA, m=house, source="ifc_qto")) == 946.0  # type: ignore[arg-type]
+    assert (
+        measured.scalar(
+            "SELECT round(sum(area_m2)::numeric, 1) FROM ifc.v_element "
+            "WHERE model_id = :m AND ifc_class_base = 'IfcWall'",
+            m=house,
+        )
+        == 946
+    )
+    # B: every wall now has an area, from its shape.
+    walls = measured.rows(
+        "SELECT count(*), count(area_m2), round(sum(area_m2)::numeric, 1) FROM ifc.v_element "
+        "WHERE model_id = :m AND ifc_class_base = 'IfcWall'",
+        m=tower,
+    )
+    assert [(n, with_area, float(total)) for n, with_area, total in walls] == [
+        (6_095, 6_095, 103_057.7)
+    ]
+    with measured.engine.connect() as connection:
+        takeoff = tools.quantity_takeoff(connection, tower, "revit_type", "area_m2")
+    cv003 = next(g for g in takeoff.groups if g.group == CV003)
+    assert (cv003.elements, round(cv003.value or 0, 1)) == (1_165, 25_114.3)
+    seconds = measured.scalar(
+        "SELECT geometry_seconds FROM ifc.ingestion_run WHERE model_id = :m", m=tower
+    )
+    assert isinstance(seconds, float)
+
+
 def test_a6_ifc4_doors_and_windows_have_their_materials(modern: Modern) -> None:
     windows = modern.scalar(
         "SELECT count(*) FROM ifc.v_element WHERE model_id = :m "

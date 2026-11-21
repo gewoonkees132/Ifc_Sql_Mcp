@@ -13,7 +13,7 @@ flowchart LR
     extract --> transform["transform<br/>pure: records and issues"]
     transform --> load["load<br/>one transaction, COPY"]
     load --> db[("PostgreSQL 16<br/>schema ifc")]
-    db <--> dq["ifc-sql dq<br/>44 rules, recorded runs"]
+    db <--> dq["ifc-sql dq<br/>45 rules, recorded runs"]
     db --> mcp["ifc-sql serve<br/>MCP over stdio, read-only role"]
     mcp --> llm["MCP client<br/>Claude Desktop, Claude Code"]
 ```
@@ -126,7 +126,7 @@ that were rejected.
   transform could not represent is stored as an issue with a stable code
   ([revit-ifc-quirks.md](docs/revit-ifc-quirks.md) goes through every quirk).
 - **Data quality** ([ADR 5](docs/adr/0005-data-quality-rules.md),
-  [data-quality.md](docs/data-quality.md)): 44 rules in one strictly loaded YAML catalogue,
+  [data-quality.md](docs/data-quality.md)): 45 rules in one strictly loaded YAML catalogue,
   one per issue code plus sixteen SQL rules: placeholders, empty values, elements without
   a storey, quantities that disagree, and handover requirements (quantities, rooms, fire
   ratings, real materials, project information). Each rule's scope says whether a
@@ -189,10 +189,10 @@ src/ifc_sql_mcp/
   cli.py                 ifc-sql: migrate, ingest, dq, serve
   config.py              settings from IFC_SQL_* environment variables
   logging_config.py      key=value logs on stderr (stdout is the MCP protocol)
-  db/                    schema.py, engines, migrations 0001-0016, versioned view SQL
+  db/                    schema.py, engines, migrations 0001-0018, versioned view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   dq/                    rule catalogue, sync, runs
-  rules/dq_rules.yaml    the 44 data quality rules
+  rules/dq_rules.yaml    the 45 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema description
 tests/
   unit/                  no database needed
@@ -212,7 +212,7 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
-| [docs/adr/](docs/adr/README.md) | Nine architecture decision records |
+| [docs/adr/](docs/adr/README.md) | Ten architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog was implemented: per finding, the issue, the commits and the figures before and after |
 | [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials |
@@ -225,10 +225,15 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
   files), and 2019, 2021 and 2022 in IFC2X3 and IFC4 (the audit's five files,
   `make test-modern`). Files from other exporters are untested.
 - Quantities come from the file: IFC base quantities first, then Revit's parameters
-  ([ADR 3](docs/adr/0003-quantity-sources-and-precedence.md),
+  and a door's or window's size ([ADR 3](docs/adr/0003-quantity-sources-and-precedence.md),
   [ADR 8](docs/adr/0008-ifc-base-quantities.md)). A value that breaks a physical bound
   of its set is flagged and not used ([ADR 7](docs/adr/0007-quantity-set-plausibility.md)).
-- A changed file is a new model version; versions are not diffed or merged, and old data
+  A file exported without quantities can be measured instead, with
+  `ifc-sql ingest --geometry` ([ADR 10](docs/adr/0010-geometry-quantities.md)): about a
+  minute for 15,000 objects on 4 cores, and only for walls, slabs, spaces and other
+  solids.
+- A changed file is a new model version. `--replaces` marks the current one, and
+  `compare_models` lists what changed between two; versions are not merged, and old data
   quality runs are kept until deleted.
 - The MCP server is for one local user: stdio only, no authentication
   ([SECURITY.md](SECURITY.md)).
