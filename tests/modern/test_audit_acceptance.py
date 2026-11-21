@@ -446,7 +446,6 @@ def test_a14_every_stair_flight_has_its_revit_type(modern: Modern) -> None:
     assert flights == [("Precast Stair", "Stair", 182)]
 
 
-@_open("A16", 18)
 def test_a16_revit_types_hold_no_control_characters(modern: Modern) -> None:
     with_control = modern.scalar(
         "SELECT count(*) FROM ifc.element AS e JOIN ifc.object AS o USING (object_id) "
@@ -455,3 +454,11 @@ def test_a16_revit_types_hold_no_control_characters(modern: Modern) -> None:
     )
 
     assert with_control == 0
+    # They are reported, one finding per element, and the IFC Name keeps them.
+    assert modern.findings("b", "control_character_in_name") == 731
+    cleaned = modern.scalar(
+        "SELECT count(*) FROM ifc.v_element WHERE model_id = :m "
+        "AND revit_type = '1AR_MUR_PV001 - Interrato_Interrato' AND name ~ '\x1f'",
+        m=modern.model("b"),
+    )
+    assert cleaned > 0

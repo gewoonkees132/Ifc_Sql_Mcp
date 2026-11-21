@@ -175,6 +175,14 @@ words are those the audit's files show (`Run`, `Landing`, `Support`, `Stringer`)
 other is still reported. Before this, the audit's tower reported 278 of these names and
 had no Revit type on any of its 182 stair flights (audit finding A14).
 
+Revit 2022 can leave **control characters** in a type name: two wall types of the
+audit's tower read `1AR_MUR_PV001`, three U+001F, ` - Interrato_Interrato`. The
+characters are invisible, but they travelled into every grouping and answer, and an LLM
+quoted them. They are removed from `revit_family` and
+`revit_type` (and the `host_*` parts of the openings in such walls), and reported once
+per element as `control_character_in_name`: 731 walls on the tower. `object.name` keeps
+the IFC Name as written (audit finding A16).
+
 ## 4. Some elements have no container; furniture sits in rooms
 
 | | ARC | MEP | ELE | PLU |

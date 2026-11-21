@@ -415,9 +415,9 @@ rules:
 
   - rule_id: measure_not_converted
     description: >-
-      A measure other than length, area, volume or plane angle (a power, say) is stored
-      as written and without a unit: in the file's own unit, not in SI like every other
-      number with a unit.
+      A measure is stored as written and without a unit, because the file does not
+      declare its unit in SI (a power in an undeclared unit, a flow in mm3/s): it is in
+      the file's own unit, not in SI like every other number with a unit.
     severity: warning
     dimension: validity
     scope: loader_coverage
@@ -471,6 +471,17 @@ rules:
     dimension: consistency
     scope: model_content
     issue_code: revit_tag_mismatch
+
+  - rule_id: control_character_in_name
+    description: >-
+      A Revit family or type name holds control characters, such as the U+001F that
+      Revit 2022 left in "1AR_MUR_PV001 - Interrato_Interrato". They are removed from
+      revit_family and revit_type, so groupings show the name a person typed; the IFC
+      Name keeps them as written. Rename the type in Revit.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    issue_code: control_character_in_name
 
   # ---------------------------------------------------------- issues: properties, quantities
 

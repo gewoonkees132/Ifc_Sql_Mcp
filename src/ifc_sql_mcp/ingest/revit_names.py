@@ -19,6 +19,11 @@ at the sample files, there are three shapes:
   their Tag is their own id, so it is not compared (audit finding A14: 278 such names on
   the audit's tower, all 182 of its stair flights among them).
 
+Revit 2022 also leaves control characters in some names: on the audit's tower, 731 walls
+are of a type ``1AR_MUR_PV001``, three U+001F, `` - Interrato_Interrato``. They are
+removed from the family and type, which groupings and answers show, and reported;
+``object.name`` keeps the IFC Name as written (audit finding A16).
+
 A parser that takes the last segment as the ElementId gets the third shape wrong. This
 one reads the id from the end, uses the element's Tag (where Revit also writes the
 ElementId) to decide between "last segment" and "segment before a part number", and
@@ -32,6 +37,8 @@ from dataclasses import dataclass
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 
 _DIGITS = re.compile(r"[0-9]+")
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+"""C0 control characters and DEL: invisible, and no part of a name a person typed."""
 _BIGINT_MAX = 2**63 - 1
 
 STAIR_PARTS = ("Run", "Landing", "Support", "Stringer")
@@ -85,7 +92,7 @@ def parse_revit_name(
     part = _STAIR_PART.fullmatch(segments[-1])
     stair_id = _as_id(part.group(1)) if part else None
     if stair_id is not None and len(segments) >= 3:
-        return _parts(global_id, name, stair_id, segments[:-1], [])
+        return _parts(global_id, name, stair_id, segments[:-1], [], own_name=False)
 
     # Each candidate is (ElementId, the segments before it).
     candidates: list[tuple[int, list[str]]] = []
@@ -111,16 +118,34 @@ def parse_revit_name(
         message = f"name {name!r} gives ElementId {element_id}, but Tag is {tag!r}"
         issues.append(Issue(IssueCode.REVIT_TAG_MISMATCH, global_id, message))
 
-    return _parts(global_id, name, element_id, body, issues)
+    return _parts(global_id, name, element_id, body, issues, own_name=not named_after_host)
 
 
 def _parts(
-    global_id: str, name: str, element_id: int, body: list[str], issues: list[Issue]
+    global_id: str,
+    name: str,
+    element_id: int,
+    body: list[str],
+    issues: list[Issue],
+    *,
+    own_name: bool,
 ) -> tuple[RevitName, list[Issue]]:
-    """Family and type from the segments before the ElementId."""
+    """Family and type from the segments before the ElementId.
+
+    Control characters are reported only on an element whose name is its own: an opening
+    or a stair part repeats its host's, which is reported there.
+    """
     # body is [Family, Type] or [Family, Type, Label]; anything else is ambiguous.
-    if len(body) not in (2, 3) or not body[0].strip() or not body[1].strip():
+    family, type_ = (_CONTROL.sub("", part) for part in [*body, "", ""][:2])
+    if len(body) not in (2, 3) or not family.strip() or not type_.strip():
         message = f"name {name!r} has no clear Family:Type before ElementId {element_id}"
         issues.append(Issue(IssueCode.REVIT_NAME_UNPARSED, global_id, message))
         return RevitName(family=None, type=None, element_id=element_id), issues
-    return RevitName(family=body[0], type=body[1], element_id=element_id), issues
+    if own_name and (family, type_) != (body[0], body[1]):
+        found = sorted({f"U+{ord(c):04X}" for c in _CONTROL.findall(body[0] + body[1])})
+        message = (
+            f"name {name!r} holds control characters ({', '.join(found)}); removed from "
+            f"the Revit family and type, {family!r} and {type_!r}"
+        )
+        issues.append(Issue(IssueCode.CONTROL_CHARACTER_IN_NAME, global_id, message))
+    return RevitName(family=family, type=type_, element_id=element_id), issues

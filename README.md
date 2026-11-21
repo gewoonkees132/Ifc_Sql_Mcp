@@ -13,7 +13,7 @@ flowchart LR
     extract --> transform["transform<br/>pure: records and issues"]
     transform --> load["load<br/>one transaction, COPY"]
     load --> db[("PostgreSQL 16<br/>schema ifc")]
-    db <--> dq["ifc-sql dq<br/>43 rules, recorded runs"]
+    db <--> dq["ifc-sql dq<br/>44 rules, recorded runs"]
     db --> mcp["ifc-sql serve<br/>MCP over stdio, read-only role"]
     mcp --> llm["MCP client<br/>Claude Desktop, Claude Code"]
 ```
@@ -126,7 +126,7 @@ that were rejected.
   transform could not represent is stored as an issue with a stable code
   ([revit-ifc-quirks.md](docs/revit-ifc-quirks.md) goes through every quirk).
 - **Data quality** ([ADR 5](docs/adr/0005-data-quality-rules.md),
-  [data-quality.md](docs/data-quality.md)): 43 rules in one strictly loaded YAML catalogue,
+  [data-quality.md](docs/data-quality.md)): 44 rules in one strictly loaded YAML catalogue,
   one per issue code plus sixteen SQL rules: placeholders, empty values, elements without
   a storey, quantities that disagree, and handover requirements (quantities, rooms, fire
   ratings, real materials, project information). Each rule's scope says whether a
@@ -192,7 +192,7 @@ src/ifc_sql_mcp/
   db/                    schema.py, engines, migrations 0001-0016, versioned view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   dq/                    rule catalogue, sync, runs
-  rules/dq_rules.yaml    the 43 data quality rules
+  rules/dq_rules.yaml    the 44 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema description
 tests/
   unit/                  no database needed

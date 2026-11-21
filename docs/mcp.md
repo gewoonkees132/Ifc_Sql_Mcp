@@ -529,7 +529,7 @@ findings is the view `v_dq_finding`, through `run_sql`.
     {"rule_id": "placeholder_project_info", …, "findings": 1, …},
     {"rule_id": "value_is_empty", "severity": "info", …, "findings": 1961, …}
   ],
-  "rules_without_findings": ["conflicting_classification", "conflicting_quantity", …]  // 38 rules
+  "rules_without_findings": ["conflicting_classification", "conflicting_quantity", …]  // 39 rules
 }
 ```
 

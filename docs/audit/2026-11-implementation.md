@@ -81,6 +81,7 @@ the test module for findings that add a tool or a command.
 | A12 | Projects and versions are guessed from the file | [#14](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/14) | done | `test_a12_a_placeholder_project_number_joins_no_project`, `test_a12_a_new_export_replaces_the_old_one_in_project_wide_views`: B aligned with other models 1 → 0; A next to its re-export D 2 models → 1 |
 | A13 | Findings that are noise | [#15](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/15) | done | `test_a13_normal_revit_behaviour_is_not_reported`: B's U-value and opening-tag findings 6,488 → 0; its warnings 6,778 → 290 |
 | A14 | Modern stair part names are not parsed | [#16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/16) | done | `test_a14_every_stair_flight_has_its_revit_type`: B's stair flights with a Revit type 0 → 182 of 182; `revit_name_unparsed` 278 / 3 / 61 → 0 / 0 / 2 on B / A / E |
+| A16 | Control characters in names | [#18](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/18) | done | `test_a16_revit_types_hold_no_control_characters`: B's elements with a control character in `revit_type` 731 → 0, each reported |
 
 ## Per finding
 
@@ -476,4 +477,24 @@ the test module for findings that add a tool or a command.
   | B: stair flights with a Revit type | 0 of 182 | **182 of 182** (`Precast Stair` : `Stair`) |
   | `revit_name_unparsed` on B / A / E | 278 / 3 / 61 | **0 / 0 / 2** |
   | B: warnings left (all scopes) | 290 after A13 | **12**, all model content |
+
+### A16: control characters in names
+
+- **Strip and report.** `revit_names.py` removes C0 control characters and DEL from the
+  family and type it parses. They are invisible, and nobody types them. A new issue,
+  `control_character_in_name` (warning, model content), names the characters and the
+  cleaned parts. `object.name` keeps the IFC Name as written, as the issue asked.
+- **Decisions.**
+  - *Reported once, on the element that owns the name.* An opening or a stair part
+    repeats its host's name, so it is cleaned but not reported again. On B that is
+    731 walls, not 764: 33 openings in those walls repeat their host.
+  - *A family or type of control characters alone is no name.* It is reported as
+    `revit_name_unparsed`, like any other name without a clear `Family:Type`.
+- **Before → after on file B**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | Elements whose `revit_type` holds a control character | 764 (731 after A3 moved the openings' parts to `host_*`) | **0** |
+  | `control_character_in_name` findings | — | **731** |
+  | Wall types whose name carried them into groupings and answers | 2 (`PV001`, 571 walls; `PV007`, 160) | **0** |
 

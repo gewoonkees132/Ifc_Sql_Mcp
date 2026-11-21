@@ -159,6 +159,29 @@ def test_other_names_with_a_trailing_word_stay_reported(name: str) -> None:
     assert parse(name)[1] == [IssueCode.REVIT_NAME_UNPARSED]
 
 
+def test_control_characters_are_removed_from_family_and_type_and_reported() -> None:
+    """Revit 2022 left U+001F in wall type names on the audit's tower (finding A16)."""
+    name = "Basic Wall:1AR_MUR_PV001\x1f\x1f\x1f - Interrato_Interrato:1539717"
+    parsed, issues = parse_revit_name(GID, name, "1539717")
+    assert parsed == RevitName("Basic Wall", "1AR_MUR_PV001 - Interrato_Interrato", 1539717)
+    [issue] = issues
+    assert issue.code == IssueCode.CONTROL_CHARACTER_IN_NAME
+    assert "(U+001F); removed from the Revit family and type" in issue.message
+
+
+def test_an_opening_repeats_its_hosts_name_and_is_not_reported_again() -> None:
+    name = "Basic Wall:1AR_MUR_PV001\x1f - Interrato_Interrato:1539717"
+    parsed, issues = parse_revit_name(GID, name, "1693877", named_after_host=True)
+    assert (parsed.type, issues) == ("1AR_MUR_PV001 - Interrato_Interrato", [])
+
+
+def test_a_family_of_control_characters_alone_is_no_family() -> None:
+    assert parse("\x1f\x07:Generic:138437") == (
+        RevitName(None, None, 138437),
+        [IssueCode.REVIT_NAME_UNPARSED],
+    )
+
+
 @pytest.mark.parametrize("tag", ["", "A-12", "0"])
 def test_a_tag_that_is_not_an_element_id_is_ignored(tag: str) -> None:
     assert parse("Basic Wall:Generic:138437", tag) == (

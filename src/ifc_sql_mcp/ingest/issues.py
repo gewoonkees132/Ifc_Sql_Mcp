@@ -25,7 +25,7 @@ class IssueCode(StrEnum):
     UNIT_NOT_CONVERTIBLE = "unit_not_convertible"
     """A value's unit has no known SI factor; the value is dropped."""
     MEASURE_NOT_CONVERTED = "measure_not_converted"
-    """A measure outside length, area, volume and plane angle is stored as written."""
+    """A measure whose unit the file does not declare in SI is stored as written."""
 
     # Objects
     INVALID_GLOBAL_ID = "invalid_global_id"
@@ -38,6 +38,8 @@ class IssueCode(StrEnum):
     """An element name does not follow Family:Type:ElementId; its parts are left NULL."""
     REVIT_TAG_MISMATCH = "revit_tag_mismatch"
     """The ElementId parsed from the name differs from the element's Tag."""
+    CONTROL_CHARACTER_IN_NAME = "control_character_in_name"
+    """A Revit family or type name holds control characters; they are removed from it."""
 
     # Properties and quantities
     UNNAMED_PROPERTY = "unnamed_property"
