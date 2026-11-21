@@ -74,6 +74,7 @@ the test module for findings that add a tool or a command.
 | A1 | The quantity sets modern Revit writes are ignored | [#3](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/3) | done | `test_a1_modern_quantity_sets_become_quantities`: A wall area null → 946.0 m², C spaces 0 → 163 of 163 |
 | A4 | Door and window sizes are not loaded | [#6](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/6) | done | `test_a4_doors_and_windows_have_their_sizes`: 0 → 1,458 of 1,458 doors, `PI005` 1.697 m wide |
 | A6 | IFC4 material constituent sets are not read | [#8](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/8) | done | `test_a6_ifc4_doors_and_windows_have_their_materials`: A windows 0 → 17 of 17 |
+| A7 | Rooms exported twice are counted twice | [#9](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/9) | done | `test_a7_rooms_exported_twice_are_found`: 0 → 47; 6,124.8 m² without duplicates |
 
 ## Per finding
 
@@ -255,3 +256,24 @@ the test module for findings that add a tool or a command.
   |---|---:|---:|
   | A: windows with a material | 0 of 17 | **17 of 17** |
   | A / C: `unsupported_material` findings | 104 / 295 | **0 / 0** |
+
+### A7: rooms exported twice are counted twice
+
+- **The key** is number, name, storey **and floor area** (to the square centimetre),
+  following the audit's own description of C's pairs. Without the area, the rule found 5
+  "duplicates" in file E that are different spaces sharing a number: two shafts numbered
+  02055 (1.24 and 1.57 m²), and Revit Areas of 67.8 and 3,087.4 m². Leaving those out of a
+  total would lose real area. With the area in the key, E has none.
+- **`v_space_schedule` v2** (migration 0015) adds `duplicate_of`, the first space with
+  the same key. `space_schedule` gives each space's `duplicate_of`, `duplicate_spaces`,
+  and `total_area_without_duplicates_m2` next to the plain total, and its `note` says
+  that a total counts those rooms twice.
+- **Rule** `duplicate_space` (warning, uniqueness) names both spaces. Its description,
+  and `docs/data-quality.md`, tell the architect to export rooms or spaces, not both.
+- **Before → after on file C**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | `duplicate_space` findings | 0 | **47** |
+  | Total area, every space | 8,090.7 m² (after A1) | 8,090.7 m² |
+  | Total area, each room once | — | **6,124.8 m²** (116 rooms) |

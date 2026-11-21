@@ -386,8 +386,12 @@ the elements that lack a value, so `elements_with_value` is null by material. On
 
 Every space with number, name, storey, area, perimeter, volume, height and its OmniClass
 Table 13 code and title, lowest storey first, with `space_count`, `total_area_m2`,
-`spaces_without_area` and `note`. `total_area_m2` is null, not 0, when no space has an
-area, and `note` then warns of it. At most 500 spaces.
+`duplicate_spaces`, `total_area_without_duplicates_m2`, `spaces_without_area` and `note`.
+`total_area_m2` is null, not 0, when no space has an area, and `note` then warns of it.
+A Revit model that exports both its Rooms and its MEP Spaces writes each room twice:
+`duplicate_of` marks the repeat (same number, name, storey and floor area), and the total
+without duplicates counts each room once. On the audit's file C, that is 6,124.8 m²
+against 8,090.7 m² (finding A7). At most 500 spaces.
 
 ```jsonc
 // space_schedule {"model_id": 1}
@@ -400,7 +404,8 @@ area, and `note` then warns of it. At most 500 spaces.
      "omniclass_code": "13-51 24 11", "omniclass_title": "General Residential Space"},
     …  // 21 spaces
   ],
-  "space_count": 21, "total_area_m2": 422.0465663999985, "spaces_without_area": 0, "note": null,
+  "space_count": 21, "total_area_m2": 422.0465663999985, "duplicate_spaces": 0,
+  "total_area_without_duplicates_m2": 422.0465663999985, "spaces_without_area": 0, "note": null,
   "truncated": false
 }
 ```

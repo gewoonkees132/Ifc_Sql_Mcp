@@ -167,7 +167,9 @@ Return the room schedule of one model: every space (IfcSpace) with number (e.g. 
 name (e.g. Kitchen), storey, area_m2, perimeter_m, volume_m3, height_m and its OmniClass \
 Table 13 code and title, lowest storey first; with the number of spaces, their total \
 area and how many have no area. total_area_m2 is null, not 0, when no space has an area; \
-note then says so. At most {tools.MAX_SPACES} spaces. Use get_element with a \
+note then says so. A room exported twice (Revit Rooms and MEP Spaces) has two spaces: \
+duplicate_of marks the repeat, and total_area_without_duplicates_m2 counts each room \
+once. At most {tools.MAX_SPACES} spaces. Use get_element with a \
 space's object_id for its properties. {UNTRUSTED}"""
 
 DATA_QUALITY_REPORT = f"""\

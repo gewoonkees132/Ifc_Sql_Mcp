@@ -59,6 +59,7 @@ def test_the_sql_rules_are_the_documented_ones() -> None:
         "slab_volume_inconsistent",
         "space_volume_inconsistent",
         "space_perimeter_implausible",
+        "duplicate_space",
     ]
 
 

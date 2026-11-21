@@ -125,7 +125,7 @@ later change to the rule does not rewrite earlier runs.
 
 ### The rules
 
-The nine SQL rules check stored values:
+The ten SQL rules check stored values:
 
 | Rule | Severity | Dimension | Finds |
 |---|---|---|---|
@@ -137,6 +137,7 @@ The nine SQL rules check stored values:
 | `wall_area_inconsistent` | warning | consistency | A wall whose `area_m2` is more than 5 % above `length_m` × `height_m`. |
 | `slab_volume_inconsistent` | warning | consistency | A slab whose `volume_m3` is not between 0.75 and 1.1 × `area_m2` × `width_m` (its thickness). Below 0.91 or above 1.0, the audit's files have only defects: a 150 mm foundation slab of `Width` 25.4 m, pile caps of 600 × 600 × 900 mm with a 0.6 m `Width` and a third of their volume. |
 | `space_volume_inconsistent` | warning | consistency | A space whose `volume_m3` is more than 10 % above `area_m2` × `height_m`. Only above: a room's volume follows its ceiling, so 16 of the Duplex's 21 rooms are 7–26 % below their area × unbounded height, correctly. |
+| `duplicate_space` | warning | uniqueness | A space with the same number, name, storey and floor area as an earlier one: a Revit model that exports both Rooms and MEP Spaces writes each room twice (47 of the 163 spaces of the audit's file C). `v_space_schedule.duplicate_of` marks the repeat. Export rooms or spaces, not both. |
 | `space_perimeter_implausible` | warning | validity | A space whose `perimeter_m` is shorter than a circle's of the same area, 2√(π · `area_m2`). |
 
 The last four compare the canonical quantities with each other (audit findings A1, A2).

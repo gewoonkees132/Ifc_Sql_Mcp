@@ -43,6 +43,8 @@ FIXTURE_FINDINGS: dict[str, list[str]] = {
     "slab_volume_inconsistent": [],
     "space_volume_inconsistent": [],
     "space_perimeter_implausible": [],
+    # The fixture's rooms have distinct numbers; test_mcp_tools.py builds a repeat.
+    "duplicate_space": [],
     # The transform's eight issues (tests/unit/ingest/test_fixture_pipeline.py).
     "multiple_projects": [],
     "invalid_project_global_id": [],

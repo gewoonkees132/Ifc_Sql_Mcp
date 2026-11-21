@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 from rows import (
     add_classification,
+    add_dq_run,
     add_element,
     add_layer,
     add_material,
@@ -23,6 +24,10 @@ from rows import (
 from sqlalchemy import Connection, RowMapping, func, insert, text
 
 from ifc_sql_mcp.db import schema
+from ifc_sql_mcp.dq.catalogue import load_catalogue
+from ifc_sql_mcp.dq.run import evaluate
+from ifc_sql_mcp.dq.sync import sync_rules
+from ifc_sql_mcp.server import tools
 
 
 @dataclass(frozen=True)
@@ -228,7 +233,60 @@ def test_v_space_schedule(conn: Connection, building: Building) -> None:
         "height_m": None,
         "omniclass_code": "13-51 24 11",
         "omniclass_title": "General Residential Space",
+        "duplicate_of": None,
     }
+
+
+def test_a_room_exported_twice_is_marked_and_counted_once(
+    conn: Connection, building: Building
+) -> None:
+    """Revit Rooms and MEP Spaces exported together: one room, two IfcSpaces (A7)."""
+    storey = building.level_1
+    room = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor", parent_id=storey
+    )
+    mep_space = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor", parent_id=storey
+    )
+    other_name = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor B", parent_id=storey
+    )
+    # The same number and name but another area: a different space that reuses a number.
+    other_area = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor", parent_id=storey
+    )
+    for space in (room, mep_space, other_name):
+        add_quantity(conn, space, "area_m2", 474.3)
+    add_quantity(conn, other_area, "area_m2", 12.0)
+    sync_rules(conn, load_catalogue())
+    run_id = add_dq_run(conn, building.model_id)
+    evaluate(
+        conn,
+        run_id,
+        building.model_id,
+        [r for r in load_catalogue() if r.rule_id == "duplicate_space"],
+    )
+
+    marks = dict(
+        conn.execute(
+            text("SELECT object_id, duplicate_of FROM ifc.v_space_schedule WHERE number = '49'")
+        ).all()
+    )
+    schedule = tools.space_schedule(conn, building.model_id)
+    [finding] = conn.execute(
+        text("SELECT object_id, message FROM ifc.dq_result WHERE dq_run_id = :r"), {"r": run_id}
+    ).all()
+
+    assert marks == {room: None, mep_space: room, other_name: None, other_area: None}
+    assert (schedule.duplicate_spaces, schedule.total_area_m2) == (
+        1,
+        pytest.approx(14.0 + 3 * 474.3 + 12.0),
+    )
+    assert schedule.total_area_without_duplicates_m2 == pytest.approx(14.0 + 2 * 474.3 + 12.0)
+    assert schedule.note is not None
+    assert "total_area_m2 counts those rooms twice" in schedule.note
+    assert finding.object_id == mep_space
+    assert finding.message.startswith("space 49 'Corridor' on Level 1 repeats space ")
 
 
 def test_v_takeoff_splits_layered_elements_by_material(

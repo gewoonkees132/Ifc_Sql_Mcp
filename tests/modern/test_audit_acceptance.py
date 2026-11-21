@@ -214,9 +214,22 @@ def test_a6_ifc4_doors_and_windows_have_their_materials(modern: Modern) -> None:
     assert modern.findings("c", "unsupported_material") == 0
 
 
-@_open("A7", 9)
 def test_a7_rooms_exported_twice_are_found(modern: Modern) -> None:
+    with modern.engine.connect() as connection:
+        schedule = tools.space_schedule(connection, modern.model("c"))
+
     assert modern.findings("c", "duplicate_space") == 47
+    assert (schedule.space_count, schedule.duplicate_spaces) == (163, 47)
+    assert round(schedule.total_area_m2 or 0, 1) == 8_090.7
+    assert round(schedule.total_area_without_duplicates_m2 or 0, 1) == 6_124.8
+    # The other files hold no room twice.
+    assert [modern.findings(k, "duplicate_space") for k in ("a", "b", "d", "e", "duplex")] == [
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]
 
 
 def test_a8_an_area_nobody_measured_is_not_zero(modern: Modern) -> None:

@@ -883,6 +883,10 @@ class Space(BaseModel):
     height_m: float | None
     omniclass_code: IfcText | None = Field(description="OmniClass Table 13 code.")
     omniclass_title: IfcText | None
+    duplicate_of: int | None = Field(
+        description="object_id of an earlier space with the same number, name, storey and "
+        "area: this one repeats it (Rooms and MEP Spaces both exported). Null for the first."
+    )
 
 
 class SpaceSchedule(ToolResult):
@@ -892,7 +896,12 @@ class SpaceSchedule(ToolResult):
     spaces: list[Space]
     space_count: int
     total_area_m2: float | None = Field(
-        description="Sum of area_m2 over the spaces returned; null, not 0, when none has one."
+        description="Sum of area_m2 over the spaces returned; null, not 0, when none has one. "
+        "Counts a room exported twice twice: see total_area_without_duplicates_m2."
+    )
+    duplicate_spaces: int = Field(description="Spaces that repeat an earlier one (duplicate_of).")
+    total_area_without_duplicates_m2: float | None = Field(
+        description="Sum of area_m2 over the spaces that repeat no other: each room once."
     )
     spaces_without_area: int
     note: str | None = Field(description="A warning when some or all spaces have no area.")
@@ -910,7 +919,8 @@ def space_schedule(connection: Connection, model_id: int) -> SpaceSchedule:
         text(
             """
             SELECT s.object_id, s.global_id, s.number, s.name, s.storey_name, s.area_m2,
-                   s.perimeter_m, s.volume_m3, s.height_m, s.omniclass_code, s.omniclass_title
+                   s.perimeter_m, s.volume_m3, s.height_m, s.omniclass_code, s.omniclass_title,
+                   s.duplicate_of
             FROM ifc.v_space_schedule AS s
             LEFT JOIN ifc.spatial_element AS storey ON s.storey_id = storey.object_id
             WHERE s.model_id = :model_id
@@ -923,6 +933,10 @@ def space_schedule(connection: Connection, model_id: int) -> SpaceSchedule:
     spaces = [Space.model_validate(dict(row)) for row in rows]
     kept = spaces[:MAX_SPACES]
     with_area = [space.area_m2 for space in kept if space.area_m2 is not None]
+    unique_area = [
+        space.area_m2 for space in kept if space.area_m2 is not None and space.duplicate_of is None
+    ]
+    duplicates = sum(space.duplicate_of is not None for space in kept)
     without = len(kept) - len(with_area)
     note = None
     if kept and not with_area:
@@ -932,11 +946,20 @@ def space_schedule(connection: Connection, model_id: int) -> SpaceSchedule:
         )
     elif without:
         note = f"{without:,} of {len(kept):,} spaces have no area; the total covers the others."
+    if duplicates:
+        repeat = (
+            f"{duplicates:,} spaces repeat an earlier one with the same number, name, storey "
+            "and area (Revit Rooms and MEP Spaces both exported): total_area_m2 counts those "
+            "rooms twice, total_area_without_duplicates_m2 once."
+        )
+        note = f"{note} {repeat}" if note else repeat
     return SpaceSchedule(
         model_id=model_id,
         spaces=kept,
         space_count=len(kept),
         total_area_m2=sum(with_area) if with_area else None,
+        duplicate_spaces=duplicates,
+        total_area_without_duplicates_m2=sum(unique_area) if unique_area else None,
         spaces_without_area=without,
         note=note,
         truncated=len(spaces) > MAX_SPACES,
