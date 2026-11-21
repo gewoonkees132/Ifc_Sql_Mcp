@@ -6,11 +6,11 @@ run in this process.
 """
 
 import dataclasses
-import re
 from collections.abc import Callable
 
 import pytest
 from alembic import command
+from cli_output import plain
 from mcp.server.mcpserver import MCPServer
 from sqlalchemy import make_url
 from typer.testing import CliRunner, Result
@@ -19,8 +19,6 @@ from ifc_sql_mcp import cli
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.engine import reader_database_url, redact
 from ifc_sql_mcp.db.migrate import alembic_config, head_revision
-
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 CreateDatabase = Callable[[str], Settings]
 
@@ -98,7 +96,7 @@ def test_serve_reports_a_wrong_reader_password_without_it(
     result = _serve(wrong, monkeypatch)
 
     assert result.exit_code == 1
-    stderr = _ANSI_ESCAPE.sub("", result.stderr)
+    stderr = plain(result.stderr)
     assert stderr.startswith(f"cannot reach the database at {_reader_url(wrong)}: ")
     assert 'password authentication failed for user "ifc_reader"' in stderr
     assert "not-the-password" not in result.output

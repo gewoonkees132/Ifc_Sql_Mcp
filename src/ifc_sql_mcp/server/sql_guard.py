@@ -30,7 +30,8 @@ The rules, in the order they are checked:
    ``ifc://schema`` resource describes the data instead.
 7. Functions come from an allowlist. sqlglot parses the standard SQL functions (count,
    sum, round, lower, date_trunc, string_agg, …) into typed nodes; they are allowed. Of
-   the 2,644 functions in ``pg_catalog`` that ``ifc_reader`` may execute, sqlglot types
+   the 2,600-odd functions in ``pg_catalog`` that ``ifc_reader`` may execute (2,644 on the
+   ``postgres:16-alpine`` image; builds of one major version differ), sqlglot types
    173, all without side effects (``tests/integration/test_run_sql.py`` pins that set).
    Every other function, which sqlglot leaves as an anonymous call, must be in
    ``ALLOWED_UNTYPED_FUNCTIONS``. That keeps out what the role can execute but must not:

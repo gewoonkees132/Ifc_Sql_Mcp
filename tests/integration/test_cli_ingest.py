@@ -1,11 +1,11 @@
 """``ifc-sql ingest`` end to end: exit codes, what goes to stdout and what to stderr."""
 
-import re
 from collections.abc import Callable
 from pathlib import Path
 
 import make_revit_quirks
 import pytest
+from cli_output import plain
 from sqlalchemy import Engine
 from typer.testing import CliRunner, Result
 
@@ -15,15 +15,10 @@ from ifc_sql_mcp.db.migrate import head_revision, upgrade
 from ifc_sql_mcp.ingest.pipeline import IngestResult
 
 FIXTURE = make_revit_quirks.OUTPUT
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
 
 
 def _ingest(path: Path, discipline: str = "ARC") -> Result:
     return CliRunner().invoke(cli.app, ["ingest", str(path), "--discipline", discipline])
-
-
-def _plain(text: str) -> str:
-    return _ANSI_ESCAPE.sub("", text)
 
 
 @pytest.fixture
@@ -87,7 +82,7 @@ def test_ingest_into_a_database_that_is_not_at_the_latest_revision_exits_1(
     assert result.exit_code == 1
     assert (
         f"is {found}, but ingest needs revision {head_revision()}: run `ifc-sql migrate` first"
-        in _plain(result.stderr)
+        in plain(result.stderr)
     )
 
 
@@ -121,4 +116,4 @@ def test_ingest_reports_a_file_it_cannot_read(
     result = _ingest(FIXTURE)
 
     assert result.exit_code == 1
-    assert f"cannot read {FIXTURE}: Permission denied" in _plain(result.stderr)
+    assert f"cannot read {FIXTURE}: Permission denied" in plain(result.stderr)

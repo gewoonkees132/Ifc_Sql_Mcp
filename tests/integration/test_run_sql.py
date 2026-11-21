@@ -503,10 +503,22 @@ def _typed_by_sqlglot(name: str) -> bool:
 
 
 def test_the_functions_sqlglot_types_are_the_reviewed_ones(reader: Connection) -> None:
+    # The size of pg_catalog differs between builds of one major version (2,644 functions
+    # on the postgres:16-alpine image, 2,643 on Ubuntu's PostgreSQL 16), so it is not
+    # pinned. What the review protects is that no function sqlglot lets through is
+    # unreviewed; a reviewed function this build lacks lets nothing through.
     executable = _executable_functions(reader)
+    typed = [name for name in executable if _typed_by_sqlglot(name)]
 
-    assert len(executable) == 2644
-    assert [name for name in executable if _typed_by_sqlglot(name)] == TYPED_FUNCTIONS
+    assert set(typed) <= set(TYPED_FUNCTIONS), sorted(set(typed) - set(TYPED_FUNCTIONS))
+    # Nearly all of them must exist, or the check would pass on a catalogue it never saw.
+    assert len(typed) >= len(TYPED_FUNCTIONS) - 5, sorted(set(TYPED_FUNCTIONS) - set(typed))
+
+
+def test_the_reviewed_function_list_is_unchanged() -> None:
+    # Adding a name is a review decision: change this count in the same commit.
+    assert len(TYPED_FUNCTIONS) == len(set(TYPED_FUNCTIONS)) == 173
+    assert sorted(TYPED_FUNCTIONS) == TYPED_FUNCTIONS
 
 
 def test_every_allowed_untyped_function_exists_and_ifc_reader_may_run_it(

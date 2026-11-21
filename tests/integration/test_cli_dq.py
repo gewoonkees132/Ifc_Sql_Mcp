@@ -1,11 +1,11 @@
 """``ifc-sql dq`` end to end: which models it checks, exit codes, stdout and stderr."""
 
-import re
 from collections.abc import Callable
 from pathlib import Path
 
 import make_revit_quirks
 import pytest
+from cli_output import plain
 from sqlalchemy import Engine, text
 from typer.testing import CliRunner, Result
 
@@ -17,8 +17,6 @@ from ifc_sql_mcp.dq.run import UnknownModelError
 from ifc_sql_mcp.ingest.pipeline import ingest_file
 
 FIXTURE = make_revit_quirks.OUTPUT
-_ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*m")
-
 MODEL_1 = (
     "checked model 1 (ARC, revit_quirks.ifc) in dq run {run}: 0 error, 11 warning, 5 info findings"
 )
@@ -29,10 +27,6 @@ MODEL_2 = (
 
 def _dq(*model_ids: str) -> Result:
     return CliRunner().invoke(cli.app, ["dq", *model_ids])
-
-
-def _plain(output: str) -> str:
-    return _ANSI_ESCAPE.sub("", output)
 
 
 def _count(engine: Engine, table: str) -> int:
@@ -83,7 +77,7 @@ def test_an_unknown_model_id_is_a_usage_error_and_nothing_is_written(two_models:
     result = _dq("1", "7")
 
     assert result.exit_code == 2
-    assert "Invalid value for MODEL_ID: no model with id 7" in _plain(result.output)
+    assert "Invalid value for MODEL_ID: no model with id 7" in plain(result.output)
     # The rules were not synchronised either: that transaction was rolled back.
     assert (_count(two_models, "dq_rule"), _count(two_models, "dq_run")) == (0, 0)
 
@@ -120,7 +114,7 @@ def test_a_failed_run_is_reported_and_the_other_models_are_still_checked(
     assert (
         "dq of model 1 failed (dq run 1): RuleError: rule fails_for_model_1 failed: "
         "DivisionByZero: division by zero"
-    ) in _plain(result.stderr)
+    ) in plain(result.stderr)
     assert result.stdout == f"{MODEL_2.format(run=2)}\n"
     assert "Traceback" not in result.output
 
@@ -141,7 +135,7 @@ def test_an_invalid_catalogue_exits_1_with_the_reason_and_writes_nothing(
     assert (
         "invalid rule catalogue: dq_rules.yaml: rule 2 (value_is_not_applicable): severity must "
         "be one of error, warning, info; got 'notice'"
-    ) in _plain(result.stderr)
+    ) in plain(result.stderr)
     assert (_count(two_models, "dq_rule"), _count(two_models, "dq_run")) == (0, 0)
 
 
@@ -158,7 +152,7 @@ def test_a_model_deleted_before_its_check_is_reported(
     result = _dq("1")
 
     assert result.exit_code == 1
-    assert "model 1 was deleted before it was checked: no model with id 1" in _plain(result.stderr)
+    assert "model 1 was deleted before it was checked: no model with id 1" in plain(result.stderr)
 
 
 @pytest.mark.parametrize(
@@ -180,5 +174,5 @@ def test_dq_on_a_database_that_is_not_at_the_latest_revision_exits_1(
     assert result.exit_code == 1
     assert (
         f"is {found}, but dq needs revision {head_revision()}: run `ifc-sql migrate` first"
-        in _plain(result.stderr)
+        in plain(result.stderr)
     )
