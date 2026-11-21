@@ -202,7 +202,6 @@ def test_a4_doors_and_windows_have_their_sizes(modern: Modern) -> None:
     assert modern.findings("b", "unsupported_property_set") == 0
 
 
-@_open("A6", 8)
 def test_a6_ifc4_doors_and_windows_have_their_materials(modern: Modern) -> None:
     windows = modern.scalar(
         "SELECT count(*) FROM ifc.v_element WHERE model_id = :m "

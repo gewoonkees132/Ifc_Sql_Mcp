@@ -133,6 +133,15 @@ IMPLAUSIBLE_COMMENT = (
 )
 
 
+LAYER_INDEX_COMMENT = (
+    "1-based position in the element's material definition: the layer order of an "
+    "IfcMaterialLayerSet, or the order an IfcMaterialList, an IFC4 IfcMaterialConstituentSet "
+    "(a door's frame and panel) or an IfcMaterialProfileSet lists its materials in."
+)
+THICKNESS_COMMENT = (
+    "Layer thickness in metres; NULL when the material is not part of a layer set (a "
+    "single IfcMaterial, a list, a constituent or a profile set)."
+)
 QUANTITY_SOURCE_COMMENT = (
     "Where the value came from: ifc_qto (IfcElementQuantity), revit_pset (Revit parameter "
     "property set), ifc_attribute (an attribute of the entity, such as a door's "
@@ -605,8 +614,7 @@ element_material_layer = Table(
         "layer_index",
         SmallInteger,
         nullable=False,
-        comment="1-based position in the element's material definition: the layer order of "
-        "an IfcMaterialLayerSet, or the list order of an IfcMaterialList.",
+        comment=LAYER_INDEX_COMMENT,
     ),
     Column(
         "material_id",
@@ -619,8 +627,7 @@ element_material_layer = Table(
     Column(
         "thickness_m",
         Double,
-        comment="Layer thickness in metres; NULL when the material is not part of a layer "
-        "set (a single IfcMaterial or an IfcMaterialList).",
+        comment=THICKNESS_COMMENT,
     ),
     PrimaryKeyConstraint("element_id", "layer_index"),
     CheckConstraint("layer_index >= 1", name="layer_index_positive"),

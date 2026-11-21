@@ -406,12 +406,32 @@ def _two(tiny: Tiny, wall: Any) -> None:
 
 
 def _constituents(tiny: Tiny, wall: Any) -> None:
-    steel = tiny.model.create_entity("IfcMaterial", Name="Steel")
-    constituent = tiny.model.create_entity("IfcMaterialConstituent", Material=steel)
+    # Revit 2021's door: frame and panel, each named after its material.
+    frame = tiny.model.create_entity("IfcMaterial", Name="Door - Frame")
+    panel = tiny.model.create_entity("IfcMaterial", Name="Door - Panel")
     constituents = tiny.model.create_entity(
-        "IfcMaterialConstituentSet", MaterialConstituents=[constituent]
+        "IfcMaterialConstituentSet",
+        MaterialConstituents=[
+            tiny.model.create_entity("IfcMaterialConstituent", Name="Door - Frame", Material=frame),
+            tiny.model.create_entity("IfcMaterialConstituent", Name="Door - Panel", Material=panel),
+        ],
     )
     tiny.root("IfcRelAssociatesMaterial", RelatedObjects=[wall], RelatingMaterial=constituents)
+
+
+def _constituent(tiny: Tiny, wall: Any) -> None:
+    glass = tiny.model.create_entity("IfcMaterial", Name="Glass")
+    constituent = tiny.model.create_entity("IfcMaterialConstituent", Material=glass)
+    tiny.root("IfcRelAssociatesMaterial", RelatedObjects=[wall], RelatingMaterial=constituent)
+
+
+def _profiles(tiny: Tiny, wall: Any) -> None:
+    steel = tiny.model.create_entity("IfcMaterial", Name="Steel")
+    profile = tiny.model.create_entity("IfcMaterialProfile", Name="HEA 200", Material=steel)
+    empty = tiny.model.create_entity("IfcMaterialProfile", Name="unassigned")
+    profiles = tiny.model.create_entity("IfcMaterialProfileSet", MaterialProfiles=[profile, empty])
+    usage = tiny.model.create_entity("IfcMaterialProfileSetUsage", ForProfileSet=profiles)
+    tiny.root("IfcRelAssociatesMaterial", RelatedObjects=[wall], RelatingMaterial=usage)
 
 
 @pytest.mark.parametrize(
@@ -420,7 +440,9 @@ def _constituents(tiny: Tiny, wall: Any) -> None:
         (_layer, [(1, "Brick", 0.1)], []),
         (_inherited, [(1, "Steel", None)], []),
         (_two, [(1, "First", None)], [IssueCode.MULTIPLE_MATERIAL_ASSOCIATIONS]),
-        (_constituents, [], [IssueCode.UNSUPPORTED_MATERIAL]),
+        (_constituents, [(1, "Door - Frame", None), (2, "Door - Panel", None)], []),
+        (_constituent, [(1, "Glass", None)], []),
+        (_profiles, [(1, "Steel", None), (2, None, None)], []),
     ],
 )
 def test_material_definitions(

@@ -73,6 +73,7 @@ the test module for findings that add a tool or a command.
 | A2 | Revit 2021's duplicated, unscaled quantities reach the LLM | [#4](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/4) | done | `test_a2_the_stored_wall_areas_add_up_to_the_real_total`: 1,157,891,673.6 → 946.0 m² |
 | A1 | The quantity sets modern Revit writes are ignored | [#3](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/3) | done | `test_a1_modern_quantity_sets_become_quantities`: A wall area null → 946.0 m², C spaces 0 → 163 of 163 |
 | A4 | Door and window sizes are not loaded | [#6](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/6) | done | `test_a4_doors_and_windows_have_their_sizes`: 0 → 1,458 of 1,458 doors, `PI005` 1.697 m wide |
+| A6 | IFC4 material constituent sets are not read | [#8](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/8) | done | `test_a6_ifc4_doors_and_windows_have_their_materials`: A windows 0 → 17 of 17 |
 
 ## Per finding
 
@@ -233,3 +234,24 @@ the test module for findings that add a tool or a command.
   | Windows with `width_m` and `height_m` | 0 of 1,199 | **1,199 of 1,199** |
   | Width of type `PI005 80x210` (Claude read 0.80 m from the name) | — | **1.697 m** |
   | `unsupported_property_set` findings | 1,458 | **0** |
+
+### A6: IFC4 material constituent sets are not read
+
+- **Read.** `IfcMaterialConstituentSet` (a door's frame and panel, a window's frame and
+  glazing) and `IfcMaterialProfileSet` (with its usage) give one row per material in the
+  order the file lists them, without thickness, like a material list. `v_takeoff`
+  already treats such rows as "the element's whole area to each material".
+- **Scope decision.** The issue asked for the constituent's name and fraction "where
+  given". In all 399 constituent sets of files A and C, Revit names each constituent
+  after its material and gives no fraction. A column of copies would add nothing, so
+  none was added, and the extract docstring records why. With every `IfcMaterialSelect`
+  kind of IFC2X3 and IFC4 now read, the `unsupported_material` branch is defensive only.
+  The rule stays, for models loaded earlier.
+- **Migration 0014** corrects the two `element_material_layer` column comments that the
+  LLM reads.
+- **Before → after**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | A: windows with a material | 0 of 17 | **17 of 17** |
+  | A / C: `unsupported_material` findings | 104 / 295 | **0 / 0** |

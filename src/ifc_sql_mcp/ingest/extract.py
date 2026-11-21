@@ -30,7 +30,11 @@ What it reads, and from where:
   applies IFC's inheritance rule: an occurrence inherits its type's references, and its
   own reference in a system replaces the type's.
 * **Materials** from ``IfcRelAssociatesMaterial`` on the element, or on its type if the
-  element has none (IFC's inheritance rule again).
+  element has none (IFC's inheritance rule again): a single material, a list, a layer set
+  (with thicknesses), and IFC4's constituent sets (a door's frame and panel) and profile
+  sets (a member's section), in the order the file lists them. Revit 2021 names every
+  constituent after its material and gives no fraction, in all 399 sets of the audit's
+  files A and C, so neither is kept.
 """
 
 import hashlib
@@ -176,6 +180,17 @@ def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
+
+
+def _entries(materials: Any) -> tuple[RawMaterialEntry, ...]:
+    """Materials in file order, without thickness: a list, constituents or profiles.
+
+    A position without a material keeps its number, as an air gap in a layer set does.
+    """
+    return tuple(
+        RawMaterialEntry(position, _text(material.Name) if material is not None else None, None)
+        for position, material in enumerate(materials or (), start=1)
+    )
 
 
 def _is_predefined(definition: Entity) -> bool:
@@ -573,17 +588,23 @@ class _Extractor:
         if definition.is_a("IfcMaterial"):
             return (RawMaterialEntry(1, _text(definition.Name), None),)
         if definition.is_a("IfcMaterialList"):
-            return tuple(
-                RawMaterialEntry(position, _text(material.Name), None)
-                for position, material in enumerate(definition.Materials or (), start=1)
-            )
+            return _entries(definition.Materials)
+        # IFC4: a door's or window's parts (frame, panel, glazing), and a profile's.
+        if definition.is_a("IfcMaterialConstituentSet"):
+            return _entries(c.Material for c in definition.MaterialConstituents or ())
+        if definition.is_a("IfcMaterialProfileSetUsage"):
+            definition = definition.ForProfileSet
+        if definition.is_a("IfcMaterialProfileSet"):
+            return _entries(p.Material for p in definition.MaterialProfiles or ())
+        if definition.is_a("IfcMaterialConstituent") or definition.is_a("IfcMaterialProfile"):
+            return _entries([definition.Material])
         if definition.is_a("IfcMaterialLayerSetUsage"):
             definition = definition.ForLayerSet
         if definition.is_a("IfcMaterialLayerSet"):
             layers = list(definition.MaterialLayers or ())
         elif definition.is_a("IfcMaterialLayer"):
             layers = [definition]
-        else:
+        else:  # pragma: no cover - every IfcMaterialSelect of IFC2X3 and IFC4 is read above
             message = f"{definition.is_a()} is not read; the element gets no materials"
             self.issues.append(Issue(IssueCode.UNSUPPORTED_MATERIAL, global_id, message))
             return ()
