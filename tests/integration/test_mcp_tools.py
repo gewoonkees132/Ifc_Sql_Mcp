@@ -904,3 +904,18 @@ def test_takeoff_looks_up_group_by_and_metric_before_it_builds_any_sql(
     """The schema stops these at the protocol; the lookups stop them for a Python caller."""
     with mcp_engine.connect() as connection, pytest.raises(KeyError):
         tools.quantity_takeoff(connection, 1, group_by, metric)  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- compare_models
+
+
+async def test_compare_models_finds_nothing_between_two_loads_of_one_file(
+    server: MCPServer,
+) -> None:
+    async with connect(server) as client:
+        same = await call(client, "compare_models", new_model_id=2, old_model_id=1)
+        no_old = await call_error(client, "compare_models", new_model_id=2)
+
+    assert (same["objects_in_both"], same["objects_added"], same["objects_removed"]) == (20, 0, 0)
+    assert (same["property_changes"], same["note"]) == ([], None)
+    assert no_old.startswith("model 2 replaces no model; give old_model_id")

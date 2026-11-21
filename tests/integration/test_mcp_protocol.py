@@ -32,6 +32,7 @@ TOOLS = [
     "space_schedule",
     "schedule",
     "data_quality_report",
+    "compare_models",
     "describe_schema",
     "run_sql",
 ]

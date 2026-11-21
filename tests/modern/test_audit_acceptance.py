@@ -19,7 +19,7 @@ history.
 import pytest
 from audit_files import Modern
 
-from ifc_sql_mcp.server import tools
+from ifc_sql_mcp.server import compare, tools
 
 pytestmark = pytest.mark.modern
 
@@ -444,6 +444,26 @@ def test_a14_every_stair_flight_has_its_revit_type(modern: Modern) -> None:
         m=modern.model("b"),
     )
     assert flights == [("Precast Stair", "Stair", 182)]
+
+
+def test_a15_what_changed_between_two_exports(modern: Modern) -> None:
+    """D is A with fire ratings added, and loaded as its replacement (A12)."""
+    with modern.engine.connect() as connection:
+        result = compare.compare_models(connection, modern.model("d"))
+
+    assert result.old_model_id == modern.model("a")
+    changes = {
+        (c.pset_name, c.prop_name): (c.added, c.removed, c.changed) for c in result.property_changes
+    }
+    assert changes == {
+        ("Pset_WallCommon", "FireRating"): (42, 0, 0),
+        ("Pset_CurtainWallCommon", "FireRating"): (9, 0, 0),
+    }
+    assert {s.new for c in result.property_changes for s in c.samples} == {"M2"}
+    # Four openings were regenerated with new GlobalIds: removed and added again.
+    assert [(c.ifc_class, c.objects) for c in result.added_by_class] == [("IfcOpeningElement", 4)]
+    assert [(c.ifc_class, c.objects) for c in result.removed_by_class] == [("IfcOpeningElement", 4)]
+    assert result.objects_in_both == 496
 
 
 def test_a16_revit_types_hold_no_control_characters(modern: Modern) -> None:

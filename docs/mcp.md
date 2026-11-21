@@ -1,7 +1,7 @@
 # The MCP server
 
 `ifc-sql serve` serves the loaded models to an LLM over the
-[Model Context Protocol](https://modelcontextprotocol.io): ten read-only tools, two
+[Model Context Protocol](https://modelcontextprotocol.io): eleven read-only tools, two
 resources and a prompt. An MCP client (Claude Desktop, Claude Code, …) starts it and
 talks to it over stdin and stdout. It connects to PostgreSQL only as the read-only role
 `ifc_reader`. The design, and the alternatives that were rejected, are in
@@ -21,7 +21,8 @@ uv run ifc-sql serve
   [find_elements](#find_elements), [get_element](#get_element),
   [quantity_takeoff](#quantity_takeoff), [space_schedule](#space_schedule),
   [schedule](#schedule),
-  [data_quality_report](#data_quality_report), [describe_schema](#describe_schema),
+  [data_quality_report](#data_quality_report), [compare_models](#compare_models),
+  [describe_schema](#describe_schema),
   [run_sql](#run_sql)
 - [Resources](#resources) and [the prompt](#the-model_briefing-prompt)
 - [Errors](#errors), [limits](#limits), [logging](#logging) and [tests](#tests)
@@ -57,7 +58,7 @@ Register the `uv` command below with a client, not `make`.
 client, as an MCP client would, and checks every model. On the four Duplex files:
 
 ```
-connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 10 tools, 1 resource, 1 resource template, 1 prompt
+connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 11 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
   model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
   model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
@@ -537,6 +538,51 @@ The counts on all four files are the table in
 [data-quality.md](data-quality.md#findings-on-the-four-duplex-files);
 `tests/samples/test_duplex_mcp.py` checks that the report agrees with it.
 
+### compare_models
+
+| Parameter | Type | |
+|---|---|---|
+| `new_model_id` | integer ≥ 1 | required: the newer export |
+| `old_model_id` | integer ≥ 1 | the older export; by default the one `new_model_id` replaces |
+| `samples_per_change` | 0–10, default 3 | examples per class and per property |
+
+What changed between two exports of a model. Objects are matched by GlobalId, which
+Revit keeps from one export to the next. Objects only in the new model are added and
+objects only in the old one removed, per class. On the objects in both, property values
+are added, removed or changed per property set and name. A value is changed when its
+text, number, boolean or unit differs. Numbers are compared exactly: a re-export of the
+same Revit model writes the same digits. Each class and property comes with its first
+examples by GlobalId, most changes first. A `note` says when the two models share no
+GlobalId, so they are not versions of one model.
+
+On the audit's files, D is A with fire ratings added (audit finding A15). Loaded as A's
+replacement (`ifc-sql ingest … --replaces 1`), the comparison takes 0.02 s:
+
+```jsonc
+// compare_models {"new_model_id": 4, "samples_per_change": 1}
+{
+  "old_model_id": 1, "new_model_id": 4,
+  "objects_in_both": 496, "objects_added": 4, "objects_removed": 4,
+  "added_by_class": [{"ifc_class": "IfcOpeningElement", "objects": 4,
+    "samples": [{"global_id": "0XCXgEAd58BP76Z_dV0rf5", "ifc_class": "IfcOpeningElement",
+                 "name": "Basic Wall:SIP 202mm Wall - conc clad:198694"}]}],
+  "removed_by_class": [{"ifc_class": "IfcOpeningElement", "objects": 4, "samples": […]}],
+  "property_changes": [
+    {"pset_name": "Pset_WallCommon", "prop_name": "FireRating",
+     "added": 42, "removed": 0, "changed": 0,
+     "samples": [{"global_id": "0NWseyvsH7_gBW225aGtuD", "object_name": "Basic Wall:CL_W1:493612",
+                  "old": null, "new": "M2", "old_unit": null, "new_unit": null}]},
+    {"pset_name": "Pset_CurtainWallCommon", "prop_name": "FireRating",
+     "added": 9, "removed": 0, "changed": 0, "samples": […]}
+  ],
+  "truncated": false, "note": null
+}
+```
+
+Revit regenerated the four openings with new GlobalIds, so they show as removed and
+added. The `data_quality_report` of the two versions differs only in
+`missing_fire_rating`: 107 elements in A, 56 in D.
+
 ### describe_schema
 
 | Parameter | Type | |
@@ -769,6 +815,7 @@ from Alembic (`Context impl PostgresqlImpl.`), as ingest and dq do.
 | `tests/unit/server/test_unreachable_database.py` | Tools and resources on a database that does not answer; a refused query needs none. |
 | `tests/integration/test_mcp_protocol.py` | What a client sees, in both protocol eras: tools with input and output schemas and annotations, resources, the prompt, the schema resource against the catalogue. |
 | `tests/integration/test_mcp_tools.py` | Each tool's exact output on the synthetic fixture, pagination and limits, unknown ids, invalid `group_by` and `metric`, a checked and a never-checked model. |
+| `tests/integration/test_compare_models.py` | `compare_models` on two versions built row by row: objects added and removed per class, values added, removed and changed (text, number, unit), the replaced model as default, unrelated models, limits and refused comparisons. |
 | `tests/integration/test_schedule.py` | `schedule` by type and by storey, numbers that differ only in float noise, a field no element has, a schedule cut by groups and by size, refused arguments; `space_schedule`'s pages and their totals. |
 | `tests/integration/test_schema_discovery.py` | `describe_schema` in brief and in full; the names added to an unknown relation's or column's error; the 20 failed calls of the audit's sessions, replayed, each now answered with the name to use. |
 | `tests/integration/test_run_sql.py` | Every `run_sql` layer on its own: validator, executor, transaction (timeouts, `set_config`, a session per call), privileges; results, cuts and logging; the pinned list of functions sqlglot types. |

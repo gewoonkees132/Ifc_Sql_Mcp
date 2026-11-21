@@ -81,6 +81,7 @@ the test module for findings that add a tool or a command.
 | A12 | Projects and versions are guessed from the file | [#14](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/14) | done | `test_a12_a_placeholder_project_number_joins_no_project`, `test_a12_a_new_export_replaces_the_old_one_in_project_wide_views`: B aligned with other models 1 → 0; A next to its re-export D 2 models → 1 |
 | A13 | Findings that are noise | [#15](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/15) | done | `test_a13_normal_revit_behaviour_is_not_reported`: B's U-value and opening-tag findings 6,488 → 0; its warnings 6,778 → 290 |
 | A14 | Modern stair part names are not parsed | [#16](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/16) | done | `test_a14_every_stair_flight_has_its_revit_type`: B's stair flights with a Revit type 0 → 182 of 182; `revit_name_unparsed` 278 / 3 / 61 → 0 / 0 / 2 on B / A / E |
+| A15 | No way to compare two exports | [#17](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/17) | done | `test_a15_what_changed_between_two_exports`: A → D gives FireRating added on 42 walls and 9 curtain walls, 4 openings removed and 4 added, in one call |
 | A16 | Control characters in names | [#18](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/18) | done | `test_a16_revit_types_hold_no_control_characters`: B's elements with a control character in `revit_type` 731 → 0, each reported |
 
 ## Per finding
@@ -497,4 +498,33 @@ the test module for findings that add a tool or a command.
   | Elements whose `revit_type` holds a control character | 764 (731 after A3 moved the openings' parts to `host_*`) | **0** |
   | `control_character_in_name` findings | — | **731** |
   | Wall types whose name carried them into groupings and answers | 2 (`PV001`, 571 walls; `PV007`, 160) | **0** |
+
+### A15: no way to compare two exports
+
+- **`compare_models(new_model_id, old_model_id?)`** is the eleventh tool
+  (`server/compare.py`). It matches objects by GlobalId and returns:
+  - the objects added and removed, per class;
+  - for the objects in both, the property values added, removed and changed per set and
+    name, with old and new value and unit;
+  - counts plus the first examples of each (0 to 10) by GlobalId.
+
+  Everything is counted in SQL. A → D takes 0.02 s and 2,084 characters.
+- **Decisions.**
+  - *The old model defaults to the one the new one replaces* (A12), so "what changed
+    since my last export?" is one argument.
+  - *Numbers are compared exactly.* A re-export of the same Revit model writes the same
+    digits, so a difference is a change. A unit is part of the value: a U-value that
+    gained `W/(m2*K)` (A13) shows as changed.
+  - *Quantities are not compared separately.* Every quantity comes from a property
+    value, which the comparison already covers. The audit asked for objects and
+    properties.
+  - *Unrelated models are not refused.* They give a note: no GlobalId in common means
+    they are not versions of one model.
+- **Before → after (A → D)**
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | Tool calls for "what changed?" | hand-written SQL with a GlobalId join | **1** |
+  | `Pset_WallCommon.FireRating` / `Pset_CurtainWallCommon.FireRating` added | (SQL only) 42 / 9 | **42 / 9** |
+  | Openings removed / added (regenerated GlobalIds) | (SQL only) 4 / 4 | **4 / 4** |
 

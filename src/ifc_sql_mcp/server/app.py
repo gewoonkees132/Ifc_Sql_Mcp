@@ -1,4 +1,4 @@
-"""Build the MCP server: ten read-only tools, two resources and a prompt (ADR 6).
+"""Build the MCP server: eleven read-only tools, two resources and a prompt (ADR 6).
 
 :func:`build_server` registers everything on the SDK's ``MCPServer``. The tool functions
 here are thin: each runs one function of :mod:`~ifc_sql_mcp.server.tools` (or
@@ -37,7 +37,7 @@ from sqlalchemy.exc import DBAPIError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.db.engine import reader_transaction
-from ifc_sql_mcp.server import catalogue, tools
+from ifc_sql_mcp.server import catalogue, compare, tools
 from ifc_sql_mcp.server.catalogue import describe_schema
 from ifc_sql_mcp.server.run_sql import (
     DEFAULT_MAX_ROWS,
@@ -76,7 +76,8 @@ checked for data quality. Everything is read-only.
 Start with list_models: every other tool takes a model_id from it. Then list_storeys, \
 find_elements and get_element for elements, quantity_takeoff for totals, schedule for \
 door, window or wall schedules (grouped, with chosen properties), space_schedule for \
-rooms and data_quality_report for findings. For questions those tools do not answer, \
+rooms, data_quality_report for findings and compare_models for what changed between two \
+exports. For questions those tools do not answer, \
 call describe_schema for the tables, views and columns, then run_sql; the ifc://schema \
 resource holds the same description in one document. The model_briefing prompt outlines \
 a briefing on one model.
@@ -207,6 +208,17 @@ quantities, no rooms, placeholder materials, missing fire ratings): judge the mo
 it. loader_coverage is what this tool cannot read: report it as the tool's limit, not the \
 model's fault. Filter with severity, scope or rule_id. rules_without_findings lists the \
 rules that found nothing. For every finding, query the view v_dq_finding with run_sql. \
+{UNTRUSTED}"""
+
+COMPARE_MODELS = f"""\
+Compare two exports of one model: what changed since the last export. Objects are \
+matched by GlobalId, which Revit keeps from one export to the next. Returns the objects \
+only in the new model (added) and only in the old one (removed), per IFC class, and, for \
+the objects in both, the property values added, removed and changed per property set \
+and name, most changes first, with the first samples_per_change examples of each \
+(0 to {compare.MAX_COMPARE_SAMPLES}): old and new value and unit. Without old_model_id, \
+the model new_model_id replaces is used (list_models: replaces_model_id). A note says \
+when the two share no GlobalId, which means they are not versions of one model. \
 {UNTRUSTED}"""
 
 DESCRIBE_SCHEMA = """\
@@ -577,6 +589,31 @@ def build_server(engine: Engine, limits: Limits | None = None) -> MCPServer:
                 rule_id=rule_id,
                 samples_per_rule=samples_per_rule,
                 scope=scope,
+            ),
+        )
+
+    @server.tool(title="Compare models", description=COMPARE_MODELS, annotations=READ_ONLY)
+    def compare_models(
+        new_model_id: Annotated[
+            int, Field(description="The newer export, a model_id from list_models.", ge=1)
+        ],
+        old_model_id: Annotated[
+            int | None,
+            Field(description="The older export; by default the one new_model_id replaces.", ge=1),
+        ] = None,
+        samples_per_change: Annotated[
+            int,
+            Field(
+                description="Examples per class or property.",
+                ge=0,
+                le=compare.MAX_COMPARE_SAMPLES,
+            ),
+        ] = compare.DEFAULT_COMPARE_SAMPLES,
+    ) -> Annotated[CallToolResult, compare.ModelComparison]:
+        return calls.tool(
+            "compare_models",
+            lambda connection: compare.compare_models(
+                connection, new_model_id, old_model_id, samples=samples_per_change
             ),
         )
 
