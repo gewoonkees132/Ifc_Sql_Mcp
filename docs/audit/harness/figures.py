@@ -72,6 +72,31 @@ def severities(c: Connection, m: dict[str, int]) -> Any:
     return f"{row[0]:,} / {row[1]:,} / {row[2]:,}"
 
 
+def scopes(c: Connection, m: dict[str, int]) -> Any:
+    """File B's findings per severity, split into model content and loader coverage (A9)."""
+    counts = dict.fromkeys(
+        (
+            (scope, severity)
+            for scope in ("model_content", "loader_coverage")
+            for severity in ("error", "warning", "info")
+        ),
+        0,
+    )
+    for scope, severity, n in c.execute(
+        text(
+            "SELECT scope, severity, count(*) FROM ifc.v_dq_finding WHERE model_id = :m "
+            "GROUP BY scope, severity"
+        ),
+        {"m": m["b"]},
+    ):
+        counts[(scope, severity)] = n
+    return "; ".join(
+        f"{scope.replace('_', ' ')} "
+        + " / ".join(f"{counts[(scope, s)]:,}" for s in ("error", "warning", "info"))
+        for scope in ("model_content", "loader_coverage")
+    )
+
+
 WITH_WIDTH = """
 SELECT count(DISTINCT q.object_id) FROM ifc.quantity AS q JOIN ifc.object AS o USING (object_id)
 WHERE o.model_id = :m AND o.ifc_class_base = :class AND q.name = 'width_m'
@@ -132,7 +157,9 @@ FIGURES: list[tuple[str, str, str, Measure]] = [
     ("A7", "C: duplicate_space findings", "47", findings("duplicate_space", "c")),
     ("A8", "B: area takeoff by Revit type, total", "null", takeoff_total),
     ("A9", "B: findings error / warning / info", "(model gaps, not loader gaps)", severities),
+    ("A9", "B: the same, by scope", "(model gaps apart from loader gaps)", scopes),
     ("A9", "B: model_without_quantities findings", "1", findings("model_without_quantities", "b")),
+    ("A9", "B: placeholder_project_info findings", "1", findings("placeholder_project_info", "b")),
     ("A9", "C: space_without_area findings", "0", findings("space_without_area", "c")),
     (
         "A12",

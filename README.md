@@ -13,7 +13,7 @@ flowchart LR
     extract --> transform["transform<br/>pure: records and issues"]
     transform --> load["load<br/>one transaction, COPY"]
     load --> db[("PostgreSQL 16<br/>schema ifc")]
-    db <--> dq["ifc-sql dq<br/>31 rules, recorded runs"]
+    db <--> dq["ifc-sql dq<br/>43 rules, recorded runs"]
     db --> mcp["ifc-sql serve<br/>MCP over stdio, read-only role"]
     mcp --> llm["MCP client<br/>Claude Desktop, Claude Code"]
 ```
@@ -45,10 +45,10 @@ loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,545 property valu
 loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property values, 46 issues (run 2)
 loaded Duplex_Electrical_20121207.ifc as model 3 (ELE): 109 objects, 6,862 property values, 88 issues (run 3)
 loaded Duplex_Plumbing_20121113.ifc as model 4 (PLU): 504 objects, 41,649 property values, 550 issues (run 4)
-checked model 1 (ARC, Duplex_A_20110907.ifc) in dq run 1: 0 error, 7,650 warning, 473 info findings
-checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,013 warning, 1,961 info findings
-checked model 3 (ELE, Duplex_Electrical_20121207.ifc) in dq run 3: 0 error, 89 warning, 3,291 info findings
-checked model 4 (PLU, Duplex_Plumbing_20121113.ifc) in dq run 4: 0 error, 1,471 warning, 13,223 info findings
+checked model 1 (ARC, Duplex_A_20110907.ifc) in dq run 1: 0 error, 7,651 warning, 551 info findings (model content 0 / 7,651 / 551, loader coverage 0 / 0 / 0)
+checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,014 warning, 1,961 info findings (model content 0 / 30,014 / 1,961, loader coverage 0 / 0 / 0)
+checked model 3 (ELE, Duplex_Electrical_20121207.ifc) in dq run 3: 0 error, 90 warning, 3,291 info findings (model content 0 / 90 / 3,291, loader coverage 0 / 0 / 0)
+checked model 4 (PLU, Duplex_Plumbing_20121113.ifc) in dq run 4: 0 error, 1,472 warning, 13,223 info findings (model content 0 / 1,472 / 13,223, loader coverage 0 / 0 / 0)
 ```
 
 Running it again loads nothing more: each file is identified by its SHA-256, and a
@@ -58,8 +58,8 @@ repeat is recorded as a skipped run (the check runs again, as a new recorded run
 ```
 connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 8 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
-  model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,650 warning, 473 info
-  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,013 warning, 1,961 info
+  model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
+  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
   …
 ```
 
@@ -80,18 +80,18 @@ PostgreSQL listens on loopback. Anywhere else, set your own (`.env.example`,
 
 | File | Discipline | Unit declared | Elements | Spaces | Property values | Transform issues | Findings (warning / info) |
 |---|---|---|---:|---:|---:|---:|---:|
-| `Duplex_A_20110907.ifc` | ARC | m | 268 | 21 | 13,545 | 0 | 7,650 / 473 |
-| `Duplex_MEP_20110907.ifc` | MEP | m | 926 | 42 | 63,683 | 46 | 30,013 / 1,961 |
-| `Duplex_Electrical_20121207.ifc` | ELE | ft | 103 | 1 | 6,862 | 88 | 89 / 3,291 |
-| `Duplex_Plumbing_20121113.ifc` | PLU | mm | 498 | 1 | 41,649 | 550 | 1,471 / 13,223 |
+| `Duplex_A_20110907.ifc` | ARC | m | 268 | 21 | 13,545 | 0 | 7,651 / 551 |
+| `Duplex_MEP_20110907.ifc` | MEP | m | 926 | 42 | 63,683 | 46 | 30,014 / 1,961 |
+| `Duplex_Electrical_20121207.ifc` | ELE | ft | 103 | 1 | 6,862 | 88 | 90 / 3,291 |
+| `Duplex_Plumbing_20121113.ifc` | PLU | mm | 498 | 1 | 41,649 | 550 | 1,472 / 13,223 |
 
 - **No errors.** The rules keep the error severity for something in the file that did
-  not reach the database, such as a skipped object; none of the 58,171 findings is one.
+  not reach the database, such as a skipped object; none of the 58,253 findings is one, and none is a gap in the loader's coverage.
 - **Units are normalised.** The four files declare metres, feet and millimetres; every
   length, area and volume is stored in m, m² and m³, and Level 2 sits at 3.100 m in all
   four ([data-model.md](docs/data-model.md#storeys-across-disciplines)).
 - **Placeholders dominate the findings.** Revit 2011 fills unset text parameters with
-  their own name (`BarCode = 'BarCode'`): 29,967 of MEP's 31,974 findings. Revit 2013
+  their own name (`BarCode = 'BarCode'`): 29,967 of MEP's 31,975 findings. Revit 2013
   writes `'N/A'` instead.
 - **Material totals are not element totals.** By element, the architectural model's
   area is 1,505.0 m²; by material it is 4,797.5 m², because a layered material covers the
@@ -126,9 +126,11 @@ that were rejected.
   transform could not represent is stored as an issue with a stable code
   ([revit-ifc-quirks.md](docs/revit-ifc-quirks.md) goes through every quirk).
 - **Data quality** ([ADR 5](docs/adr/0005-data-quality-rules.md),
-  [data-quality.md](docs/data-quality.md)): 31 rules in one strictly loaded YAML catalogue,
-  one per issue code plus five SQL rules for placeholders, empty values, elements without
-  a storey and spaces without an area. Each run is recorded and evaluated set-based, so
+  [data-quality.md](docs/data-quality.md)): 43 rules in one strictly loaded YAML catalogue,
+  one per issue code plus sixteen SQL rules: placeholders, empty values, elements without
+  a storey, quantities that disagree, and handover requirements (quantities, rooms, fire
+  ratings, real materials, project information). Each rule's scope says whether a
+  finding is the model's gap or the loader's. Each run is recorded and evaluated set-based, so
   quality can be compared over time; a removed rule is retired, not deleted, while
   findings cite it.
 - **MCP server** ([ADR 6](docs/adr/0006-mcp-server.md), [docs/mcp.md](docs/mcp.md)): seven
@@ -187,7 +189,7 @@ src/ifc_sql_mcp/
   db/                    schema.py, engines, migrations 0001-0009, versioned view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   dq/                    rule catalogue, sync, runs
-  rules/dq_rules.yaml    the 31 data quality rules
+  rules/dq_rules.yaml    the 43 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema resource
 tests/
   unit/                  no database needed

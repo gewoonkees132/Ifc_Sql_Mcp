@@ -76,6 +76,7 @@ QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m",
 QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "ifc_attribute", "geometry")
 SEVERITIES = ("error", "warning", "info")
 DIMENSIONS = ("completeness", "validity", "consistency", "uniqueness")
+SCOPES = ("model_content", "loader_coverage")
 OBJECT_KINDS = ("spatial_element", "element")
 
 
@@ -133,6 +134,11 @@ IMPLAUSIBLE_COMMENT = (
 )
 
 
+SCOPE_COMMENT = (
+    "model_content: the finding is about what the file contains, which its author or "
+    "Revit's exporter decided, so a re-export can change it. loader_coverage: something "
+    "in the file that this tool does not read or convert; the model is not at fault."
+)
 LAYER_INDEX_COMMENT = (
     "1-based position in the element's material definition: the layer order of an "
     "IfcMaterialLayerSet, or the order an IfcMaterialList, an IFC4 IfcMaterialConstituentSet "
@@ -737,6 +743,12 @@ dq_rule = Table(
         comment="Data quality dimension: completeness | validity | consistency | uniqueness.",
     ),
     Column(
+        "scope",
+        Text,
+        nullable=False,
+        comment=SCOPE_COMMENT,
+    ),
+    Column(
         "retired_at",
         DateTime(timezone=True),
         comment="When the rule was removed from the catalogue; NULL while it is in it and "
@@ -747,6 +759,7 @@ dq_rule = Table(
     _not_blank("description"),
     CheckConstraint(_in("severity", SEVERITIES), name="severity_valid"),
     CheckConstraint(_in("dimension", DIMENSIONS), name="dimension_valid"),
+    CheckConstraint(_in("scope", SCOPES), name="scope_valid"),
     comment="Catalogue of data quality rules, synchronised from the package file "
     "rules/dq_rules.yaml at the start of every `ifc-sql dq`. Rules removed from the file "
     "are kept, with retired_at set, while findings refer to them.",

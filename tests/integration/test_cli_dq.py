@@ -18,10 +18,12 @@ from ifc_sql_mcp.ingest.pipeline import ingest_file
 
 FIXTURE = make_revit_quirks.OUTPUT
 MODEL_1 = (
-    "checked model 1 (ARC, revit_quirks.ifc) in dq run {run}: 0 error, 11 warning, 5 info findings"
+    "checked model 1 (ARC, revit_quirks.ifc) in dq run {run}: 0 error, 11 warning, 7 info findings"
+    " (model content 0 / 10 / 7, loader coverage 0 / 1 / 0)"
 )
 MODEL_2 = (
-    "checked model 2 (MEP, revit_quirks.ifc) in dq run {run}: 0 error, 11 warning, 5 info findings"
+    "checked model 2 (MEP, revit_quirks.ifc) in dq run {run}: 0 error, 11 warning, 7 info findings"
+    " (model content 0 / 10 / 7, loader coverage 0 / 1 / 0)"
 )
 
 
@@ -69,7 +71,7 @@ def test_dq_checks_every_loaded_model_and_exits_0(two_models: Engine) -> None:
         "deleted=0"
     ) in stderr
     assert "msg=findings dq_run_id=1 rule_id=value_is_empty severity=info count=3" in stderr
-    assert f"msg=checked dq_run_id=2 model_id=2 rules={RULE_COUNT} findings=16" in stderr
+    assert f"msg=checked dq_run_id=2 model_id=2 rules={RULE_COUNT} findings=18" in stderr
 
 
 def test_dq_checks_only_the_given_models_once_each(two_models: Engine) -> None:
@@ -109,6 +111,7 @@ def test_a_failed_run_is_reported_and_the_other_models_are_still_checked(
     description: Divides by zero when :model_id is 1.
     severity: error
     dimension: validity
+    scope: model_content
     sql: SELECT NULL::bigint AS object_id, 'x' AS message WHERE 1 / (:model_id - 1) < 0
 """,
         encoding="utf-8",

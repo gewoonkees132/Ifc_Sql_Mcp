@@ -45,6 +45,14 @@ FIXTURE_FINDINGS: dict[str, list[str]] = {
     "space_perimeter_implausible": [],
     # The fixture's rooms have distinct numbers; test_mcp_tools.py builds a repeat.
     "duplicate_space": [],
+    # The fixture has quantities, rooms, named materials and a real project number. Its
+    # wall and slab have no FireRating (the door has one).
+    "model_without_quantities": [],
+    "model_without_spaces": [],
+    "missing_fire_rating": sorted([fx.SLAB, fx.WALL]),
+    "placeholder_material": [],
+    "placeholder_project_info": [],
+    "space_area_not_mapped": [],
     # The transform's eight issues (tests/unit/ingest/test_fixture_pipeline.py).
     "multiple_projects": [],
     "invalid_project_global_id": [],
@@ -131,8 +139,8 @@ def test_each_rule_finds_exactly_the_expected_objects(
     assert {f["severity"] for f in found} <= {rule.severity}
 
 
-def test_the_fixture_has_sixteen_findings(findings: list[RowMapping]) -> None:
-    assert Counter(f["severity"] for f in findings) == {"warning": 11, "info": 5}
+def test_the_fixture_has_eighteen_findings(findings: list[RowMapping]) -> None:
+    assert Counter(f["severity"] for f in findings) == {"warning": 11, "info": 7}
 
 
 def test_findings_say_what_is_wrong_and_with_which_value(findings: list[RowMapping]) -> None:
@@ -225,7 +233,7 @@ def test_an_issue_about_an_object_that_was_never_loaded_names_its_global_id(
 def test_a_run_reports_only_the_objects_of_its_own_model(
     conn: Connection, model_id: int, fixture_records: ModelRecords
 ) -> None:
-    """The same file loaded twice: each model's run finds its own sixteen, never the other's."""
+    """The same file loaded twice: each model's run finds its own eighteen, never the other's."""
     second = dataclasses.replace(
         fixture_records,
         model=dataclasses.replace(fixture_records.model, file_sha256=new_sha256()),
@@ -237,7 +245,7 @@ def test_a_run_reports_only_the_objects_of_its_own_model(
 
     assert {f["model_id"] for f in first_findings} == {model_id}
     assert {f["model_id"] for f in other_findings} == {other_id}
-    assert len(first_findings) == len(other_findings) == 16
+    assert len(first_findings) == len(other_findings) == 18
 
 
 # --------------------------------------------------------------------------- SQL rules, edge cases

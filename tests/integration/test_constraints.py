@@ -370,6 +370,7 @@ def test_ingestion_run_valid_lifecycle(conn: Connection) -> None:
         ({"rule_id": "Placeholder-Value"}, "ck_dq_rule_rule_id_format"),
         ({"severity": "critical"}, "ck_dq_rule_severity_valid"),
         ({"dimension": "timeliness"}, "ck_dq_rule_dimension_valid"),
+        ({"scope": "the_exporter"}, "ck_dq_rule_scope_valid"),
     ],
 )
 def test_dq_rule_rejects_bad_values(
@@ -380,6 +381,7 @@ def test_dq_rule_rejects_bad_values(
         "description": "Value equals the property name.",
         "severity": "warning",
         "dimension": "validity",
+        "scope": "model_content",
     } | values
 
     with violates(conn, constraint):
@@ -411,7 +413,11 @@ def test_deleting_a_model_removes_everything_loaded_from_it(conn: Connection) ->
     ).scalar_one()
     conn.execute(
         insert(schema.dq_rule).values(
-            rule_id="test_rule", description="Test.", severity="info", dimension="validity"
+            rule_id="test_rule",
+            description="Test.",
+            severity="info",
+            dimension="validity",
+            scope="model_content",
         )
     )
     dq_run_id = conn.execute(

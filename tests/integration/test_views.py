@@ -345,6 +345,7 @@ def test_v_model_summary_counts_and_latest_dq_run(conn: Connection, building: Bu
             description="Value equals the property name.",
             severity="warning",
             dimension="validity",
+            scope="model_content",
         )
     )
     older = _add_dq_run(conn, building.model_id, "succeeded", minutes_ago=60)

@@ -22,7 +22,7 @@ def test_the_smoke_session_calls_every_kind_of_thing_and_exits_0(
     assert lines[1:4] == [
         "list_models: 2 models",
         "  model 1 ARC revit_quirks.ifc: elements 13, spaces 2; dq run 1: 0 error, 11 warning, "
-        "5 info",
+        "7 info",
         "  model 2 MEP revit_quirks.ifc: elements 13, spaces 2; never checked",
     ]
     assert lines[5:7] == ["  ['ARC', 13]", "  ['MEP', 13]"]

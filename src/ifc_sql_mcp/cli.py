@@ -201,12 +201,18 @@ def ingest(
 
 
 def _dq_summary(result: DqResult) -> str:
-    """One line for stdout saying what a run found."""
+    """One line for stdout saying what a run found, the model's gaps apart from the tool's."""
     counts = result.severity_counts
+
+    def triple(scope: str) -> str:
+        c = result.scope_counts[scope]
+        return f"{c['error']:,} / {c['warning']:,} / {c['info']:,}"
+
     return (
         f"checked model {result.model_id} ({result.discipline}, {result.file_name}) in dq run "
         f"{result.run_id}: {counts['error']:,} error, {counts['warning']:,} warning, "
-        f"{counts['info']:,} info findings"
+        f"{counts['info']:,} info findings (model content {triple('model_content')}, "
+        f"loader coverage {triple('loader_coverage')})"
     )
 
 

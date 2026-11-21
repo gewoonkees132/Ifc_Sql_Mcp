@@ -8,7 +8,7 @@ rule that silently finds nothing. So this module refuses, with the rule and the 
   last one without a word);
 * unknown or missing keys, values that are not text, and blank descriptions;
 * a ``rule_id`` that the CHECK on ``dq_rule.rule_id`` would reject, or one used twice;
-* a severity or dimension outside the CHECKs on ``dq_rule``;
+* a severity, dimension or scope outside the CHECKs on ``dq_rule``;
 * a rule with both or neither of ``issue_code`` and ``sql``;
 * an ``issue_code`` that is not an :class:`IssueCode`, or one mapped by two rules;
 * SQL that does not use ``:model_id``, which would let a rule report other models'
@@ -29,13 +29,13 @@ from typing import Any
 import yaml
 from sqlalchemy import text
 
-from ifc_sql_mcp.db.schema import DIMENSIONS, SEVERITIES
+from ifc_sql_mcp.db.schema import DIMENSIONS, SCOPES, SEVERITIES
 from ifc_sql_mcp.ingest.issues import IssueCode
 
 CATALOGUE = Path(__file__).parents[1] / "rules" / "dq_rules.yaml"
 """The catalogue shipped with the package, which ``ifc-sql dq`` evaluates."""
 
-REQUIRED_KEYS = ("rule_id", "description", "severity", "dimension")
+REQUIRED_KEYS = ("rule_id", "description", "severity", "dimension", "scope")
 EVALUATION_KEYS = ("issue_code", "sql")
 MODEL_PARAMETER = "model_id"
 """The one bind parameter a SQL rule may use: the id of the model being checked."""
@@ -58,6 +58,9 @@ class Rule:
         description: What the rule checks and what a finding means.
         severity: ``error``, ``warning`` or ``info``; copied onto each finding.
         dimension: ``completeness``, ``validity``, ``consistency`` or ``uniqueness``.
+        scope: ``model_content`` for a finding about what the file contains, or
+            ``loader_coverage`` for something in it this tool does not read (audit
+            finding A9). The catalogue must state it for every rule.
         issue_code: For a rule evaluated from ``ifc.ingest_issue``: the issue code whose
             rows are its findings. ``None`` for a SQL rule.
         sql: For a SQL rule: a SELECT of ``object_id`` and ``message`` for the model in
@@ -70,6 +73,7 @@ class Rule:
     dimension: str
     issue_code: IssueCode | None = None
     sql: str | None = None
+    scope: str = "model_content"
 
 
 def load_catalogue(path: Path = CATALOGUE) -> tuple[Rule, ...]:
@@ -143,6 +147,7 @@ def _rule(entry: object, where: str) -> Rule:
         raise CatalogueError(f"{where}: description must not be blank")
     _check_choice(values["severity"], "severity", SEVERITIES, where)
     _check_choice(values["dimension"], "dimension", DIMENSIONS, where)
+    _check_choice(values["scope"], "scope", SCOPES, where)
 
     evaluations = [key for key in EVALUATION_KEYS if key in values]
     if len(evaluations) != 1:
@@ -157,6 +162,7 @@ def _rule(entry: object, where: str) -> Rule:
         dimension=values["dimension"],
         issue_code=_issue_code(values["issue_code"], where) if "issue_code" in values else None,
         sql=_sql(values["sql"], where) if "sql" in values else None,
+        scope=values["scope"],
     )
 
 

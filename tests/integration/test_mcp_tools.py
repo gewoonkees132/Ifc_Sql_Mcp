@@ -72,7 +72,7 @@ async def test_list_models_describes_each_model_and_its_data_quality(server: MCP
         "dq_run_id": 1,
         "errors": 0,
         "warnings": 11,
-        "info": 5,
+        "info": 7,
     }
     assert _is_timestamp(first["ingested_at"])
     assert _is_timestamp(first["data_quality"]["finished_at"])
@@ -340,6 +340,8 @@ async def test_get_element_returns_everything_about_an_element(server: MCPServer
              "dimension": "validity",
              "message": "PSet_Revit_Other.BarCode = 'BarCode', the parameter's own name: a "
              "placeholder, not a value"},
+            {"rule_id": "missing_fire_rating", "severity": "info", "dimension": "completeness",
+             "message": "no FireRating in Pset_WallCommon"},
             {"rule_id": "value_is_empty", "severity": "info", "dimension": "completeness",
              "message": "PSet_Revit_Other.Manufacturer = '': no value"},
             {"rule_id": "value_is_empty", "severity": "info", "dimension": "completeness",
@@ -709,16 +711,19 @@ async def test_space_schedule_stops_at_its_limit_and_says_so(
 # --------------------------------------------------------------------------- data_quality_report
 
 FIXTURE_RULES = [
-    ("conflicting_property", "warning", "consistency", 2),
-    ("quantity_not_a_measure", "warning", "validity", 2),
-    ("value_is_property_name", "warning", "validity", 2),
-    ("incomplete_classification_reference", "warning", "completeness", 1),
-    ("negative_quantity", "warning", "validity", 1),
-    ("omniclass_unparsed", "warning", "validity", 1),
-    ("revit_name_unparsed", "warning", "validity", 1),
-    ("space_without_area", "warning", "completeness", 1),
-    ("value_is_empty", "info", "completeness", 3),
-    ("value_is_not_applicable", "info", "completeness", 2),
+    # The model's own gaps first (audit finding A9)...
+    ("conflicting_property", "warning", "consistency", "model_content", 2),
+    ("quantity_not_a_measure", "warning", "validity", "model_content", 2),
+    ("value_is_property_name", "warning", "validity", "model_content", 2),
+    ("incomplete_classification_reference", "warning", "completeness", "model_content", 1),
+    ("negative_quantity", "warning", "validity", "model_content", 1),
+    ("omniclass_unparsed", "warning", "validity", "model_content", 1),
+    ("space_without_area", "warning", "completeness", "model_content", 1),
+    ("value_is_empty", "info", "completeness", "model_content", 3),
+    ("missing_fire_rating", "info", "completeness", "model_content", 2),
+    ("value_is_not_applicable", "info", "completeness", "model_content", 2),
+    # ...then what the loader did not read.
+    ("revit_name_unparsed", "warning", "validity", "loader_coverage", 1),
 ]
 
 
@@ -730,11 +735,16 @@ async def test_report_on_a_checked_model_counts_every_rule(
 
     assert (report["status"], report["dq_run_id"]) == ("checked", 1)
     assert _is_timestamp(report["finished_at"])
-    assert report["findings"] == {"error": 0, "warning": 11, "info": 5}
+    assert report["findings"] == {"error": 0, "warning": 11, "info": 7}
+    assert report["findings_by_scope"] == {
+        "model_content": {"error": 0, "warning": 10, "info": 7},
+        "loader_coverage": {"error": 0, "warning": 1, "info": 0},
+    }
     assert [
-        (r["rule_id"], r["severity"], r["dimension"], r["findings"]) for r in report["rules"]
+        (r["rule_id"], r["severity"], r["dimension"], r["scope"], r["findings"])
+        for r in report["rules"]
     ] == FIXTURE_RULES
-    assert sum(len(r["samples"]) for r in report["rules"]) == 16  # all of them, at 3 per rule
+    assert sum(len(r["samples"]) for r in report["rules"]) == 18  # all of them, at 3 per rule
     with mcp_engine.connect() as connection:
         descriptions = dict(
             connection.execute(text("SELECT rule_id, description FROM ifc.dq_rule")).all()
@@ -755,7 +765,7 @@ async def test_report_on_a_checked_model_counts_every_rule(
          "message": "Pset_WallCommon.Reference = '': no value"},
     ]  # fmt: skip
     # The other rules of the catalogue found nothing.
-    assert len(report["rules_without_findings"]) == len(load_catalogue()) - 10
+    assert len(report["rules_without_findings"]) == len(load_catalogue()) - len(FIXTURE_RULES)
     assert "element_without_storey" in report["rules_without_findings"]
 
 
@@ -771,6 +781,7 @@ async def test_report_on_a_model_never_checked_says_so_instead_of_reporting_noth
         "dq_run_id": None,
         "finished_at": None,
         "findings": None,
+        "findings_by_scope": None,
         "rules": [],
         "rules_without_findings": [],
     }
@@ -779,14 +790,20 @@ async def test_report_on_a_model_never_checked_says_so_instead_of_reporting_noth
 async def test_report_filters_by_severity_and_rule(server: MCPServer) -> None:
     async with connect(server) as client:
         info = await call(client, "data_quality_report", model_id=1, severity="info")
+        loader = await call(client, "data_quality_report", model_id=1, scope="loader_coverage")
         one_rule = await call(
             client, "data_quality_report", model_id=1, rule_id="value_is_empty", samples_per_rule=1
         )
         counts_only = await call(client, "data_quality_report", model_id=1, samples_per_rule=0)
 
-    assert [r["rule_id"] for r in info["rules"]] == ["value_is_empty", "value_is_not_applicable"]
+    assert [r["rule_id"] for r in info["rules"]] == [
+        "value_is_empty",
+        "missing_fire_rating",
+        "value_is_not_applicable",
+    ]
+    assert [r["rule_id"] for r in loader["rules"]] == ["revit_name_unparsed"]
     # The severity counts always cover the whole run.
-    assert info["findings"] == {"error": 0, "warning": 11, "info": 5}
+    assert info["findings"] == loader["findings"] == {"error": 0, "warning": 11, "info": 7}
     [rule] = one_rule["rules"]
     assert (rule["rule_id"], rule["findings"], len(rule["samples"])) == ("value_is_empty", 3, 1)
     assert all(r["samples"] == [] for r in counts_only["rules"])

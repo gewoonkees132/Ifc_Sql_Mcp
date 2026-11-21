@@ -38,6 +38,7 @@ MAX_SAMPLES = 20
 GroupBy = Literal["storey", "ifc_class", "material", "revit_type"]
 Metric = Literal["count", "length_m", "area_m2", "volume_m3"]
 Severity = Literal["error", "warning", "info"]
+Scope = Literal["model_content", "loader_coverage"]
 
 
 def _severity_order(column: str) -> str:
@@ -985,6 +986,11 @@ class RuleFindings(BaseModel):
     rule_id: str
     severity: Severity = Field(description="As it was when the run found it.")
     dimension: str = Field(description="completeness, validity, consistency or uniqueness.")
+    scope: Scope = Field(
+        description="model_content: about what the file contains, for the model's author to "
+        "act on. loader_coverage: something this tool does not read; the model is not at "
+        "fault."
+    )
     description: str = Field(description="What the rule checks, from ifc.dq_rule.")
     findings: int
     samples: list[SampleFinding] = Field(description="The first findings, by object id.")
@@ -1008,8 +1014,13 @@ class DataQualityReport(ToolResult):
     dq_run_id: int | None
     finished_at: datetime | None
     findings: SeverityCounts | None = Field(description="All findings, whatever the filters.")
+    findings_by_scope: dict[Scope, SeverityCounts] | None = Field(
+        description="The same, split into model_content (the model's gaps) and "
+        "loader_coverage (the tool's): judge a model on the first."
+    )
     rules: list[RuleFindings] = Field(
-        description="Rules with findings that pass the filters, errors first, then most found."
+        description="Rules with findings that pass the filters: model_content first, then "
+        "errors first, then most found."
     )
     rules_without_findings: list[str] = Field(
         description="Rules in the current catalogue that found nothing in this run. A rule "
@@ -1028,6 +1039,7 @@ def data_quality_report(
     severity: Severity | None,
     rule_id: str | None,
     samples_per_rule: int,
+    scope: Scope | None = None,
 ) -> DataQualityReport:
     """Counts per rule, and the first findings of each, for the model's latest run."""
     _require_model(connection, model_id)
@@ -1058,6 +1070,7 @@ def data_quality_report(
             dq_run_id=None,
             finished_at=None,
             findings=None,
+            findings_by_scope=None,
             rules=[],
             rules_without_findings=[],
         )
@@ -1069,15 +1082,19 @@ def data_quality_report(
     if rule_id is not None:
         conditions.append("f.rule_id = :rule_id")
         params["rule_id"] = rule_id
+    if scope is not None:
+        conditions.append("f.scope = :scope")
+        params["scope"] = scope
     where = " AND ".join(conditions)
     # Put together from the constant conditions above; values are parameters.
     counts = connection.execute(
         text(
-            "SELECT f.rule_id, f.severity, f.dimension, r.description, count(*) AS findings "  # noqa: S608
+            "SELECT f.rule_id, f.severity, f.dimension, f.scope, r.description, "  # noqa: S608
+            "count(*) AS findings "
             "FROM ifc.v_dq_finding AS f JOIN ifc.dq_rule AS r ON f.rule_id = r.rule_id "
-            f"WHERE {where} GROUP BY f.rule_id, f.severity, f.dimension, r.description "
-            f"ORDER BY {_severity_order('f.severity')}, findings DESC, "
-            "f.rule_id"
+            f"WHERE {where} GROUP BY f.rule_id, f.severity, f.dimension, f.scope, r.description "
+            "ORDER BY CASE f.scope WHEN 'model_content' THEN 1 ELSE 2 END, "
+            f"{_severity_order('f.severity')}, findings DESC, f.rule_id"
         ),
         params,
     ).mappings()
@@ -1103,6 +1120,18 @@ def data_quality_report(
         ),
         {"model_id": model_id},
     ).scalars()
+    by_scope: dict[Scope, SeverityCounts] = {
+        name: SeverityCounts(error=0, warning=0, info=0)
+        for name in ("model_content", "loader_coverage")
+    }
+    for row in connection.execute(
+        text(
+            "SELECT scope, severity, count(*) AS findings FROM ifc.v_dq_finding "
+            "WHERE model_id = :model_id GROUP BY scope, severity"
+        ),
+        {"model_id": model_id},
+    ).mappings():
+        setattr(by_scope[row["scope"]], row["severity"], row["findings"])
     return DataQualityReport(
         model_id=model_id,
         status="checked",
@@ -1113,6 +1142,7 @@ def data_quality_report(
             warning=run["dq_warning_count"],
             info=run["dq_info_count"],
         ),
+        findings_by_scope=by_scope,
         rules=rules,
         rules_without_findings=list(quiet),
     )

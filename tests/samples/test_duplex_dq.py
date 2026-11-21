@@ -28,12 +28,16 @@ EXPECTED_FINDINGS = {
     "arc": {
         "value_is_property_name": 7_650,
         "value_is_empty": 473,
+        # 78 of the 92 walls, doors and slabs; IfcOpenShell's get_psets agrees.
+        "missing_fire_rating": 78,
+        "placeholder_project_info": 1,
     },
     "mep": {
         "value_is_property_name": 29_967,
         "value_is_empty": 1_961,
         "conflicting_property": 2,
         "quantity_not_a_measure": 44,
+        "placeholder_project_info": 1,
     },
     "ele": {
         "value_is_property_name": 1,
@@ -42,6 +46,7 @@ EXPECTED_FINDINGS = {
         "conflicting_property": 2,
         "omniclass_unparsed": 1,
         "incomplete_classification_reference": 85,
+        "placeholder_project_info": 1,
     },
     "plu": {
         "value_is_property_name": 921,
@@ -51,13 +56,14 @@ EXPECTED_FINDINGS = {
         "quantity_not_a_measure": 61,
         "omniclass_unparsed": 1,
         "incomplete_classification_reference": 263,
+        "placeholder_project_info": 1,
     },
 }
 EXPECTED_SEVERITIES = {
-    "arc": {"error": 0, "warning": 7_650, "info": 473},
-    "mep": {"error": 0, "warning": 30_013, "info": 1_961},
-    "ele": {"error": 0, "warning": 89, "info": 3_291},
-    "plu": {"error": 0, "warning": 1_471, "info": 13_223},
+    "arc": {"error": 0, "warning": 7_651, "info": 551},
+    "mep": {"error": 0, "warning": 30_014, "info": 1_961},
+    "ele": {"error": 0, "warning": 90, "info": 3_291},
+    "plu": {"error": 0, "warning": 1_472, "info": 13_223},
 }
 
 
@@ -83,6 +89,11 @@ def test_every_rule_finds_the_pinned_number(
 
     assert stored == _nonzero(checked[key]) == EXPECTED_FINDINGS[key]
     assert checked[key].severity_counts == EXPECTED_SEVERITIES[key]
+    # Every Duplex finding is about the model; the loader reads all of the files (A9).
+    assert checked[key].scope_counts == {
+        "model_content": EXPECTED_SEVERITIES[key],
+        "loader_coverage": {"error": 0, "warning": 0, "info": 0},
+    }
 
 
 @pytest.mark.parametrize("key", report.FILES)

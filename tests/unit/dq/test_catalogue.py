@@ -26,6 +26,7 @@ def _rule_yaml(**changes: object) -> str:
         "description": "A quantity is negative.",
         "severity": "warning",
         "dimension": "validity",
+        "scope": "model_content",
         "issue_code": "negative_quantity",
     } | changes
     kept = {key: value for key, value in rule.items() if value is not REMOVE}
@@ -60,6 +61,12 @@ def test_the_sql_rules_are_the_documented_ones() -> None:
         "space_volume_inconsistent",
         "space_perimeter_implausible",
         "duplicate_space",
+        "model_without_quantities",
+        "model_without_spaces",
+        "missing_fire_rating",
+        "placeholder_material",
+        "placeholder_project_info",
+        "space_area_not_mapped",
     ]
 
 
@@ -86,12 +93,14 @@ rules:
       is empty.
     severity: info
     dimension: completeness
+    scope: model_content
     sql: |
       {MODEL_SQL}
   - rule_id: negative_quantity
     description: A quantity is negative.
     severity: warning
     dimension: validity
+    scope: loader_coverage
     issue_code: negative_quantity
 """
 
@@ -108,6 +117,7 @@ rules:
             description="A quantity is negative.",
             severity="warning",
             dimension="validity",
+            scope="loader_coverage",
             issue_code=IssueCode.NEGATIVE_QUANTITY,
         ),
     )
@@ -122,7 +132,8 @@ rules:
   - {second}
 """
 ISSUE_RULE = (
-    "{{rule_id: {id}, description: d, severity: info, dimension: validity, issue_code: {code}}}"
+    "{{rule_id: {id}, description: d, severity: info, dimension: validity, "
+    "scope: model_content, issue_code: {code}}}"
 )
 
 
@@ -160,7 +171,7 @@ ISSUE_RULE = (
         pytest.param(
             _rule_yaml(severty="info"),
             "rule 1 (negative_quantity): unknown key 'severty'; the keys are rule_id, "
-            "description, severity, dimension, issue_code, sql",
+            "description, severity, dimension, scope, issue_code, sql",
             id="unknown key",
         ),
         pytest.param(

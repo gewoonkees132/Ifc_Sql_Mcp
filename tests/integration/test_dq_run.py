@@ -2,7 +2,7 @@
 
 These tests commit, so they use ``ingest_engine`` (a separate database, emptied after
 each test) rather than the rolled-back ``conn``. The fixture file is ingested first; its
-16 findings per rule are checked in ``test_dq_rules.py``.
+18 findings per rule are checked in ``test_dq_rules.py``.
 """
 
 import logging
@@ -97,7 +97,12 @@ def test_a_run_writes_its_findings_and_succeeds(ingest_engine: Engine, model_id:
         "revit_quirks.ifc",
     )
     assert list(result.finding_counts) == [rule.rule_id for rule in RULES]
-    assert result.severity_counts == {"error": 0, "warning": 11, "info": 5}
+    assert result.severity_counts == {"error": 0, "warning": 11, "info": 7}
+    # The one loader-coverage finding is the fixture's unsupported property set (A9).
+    assert result.scope_counts == {
+        "model_content": {"error": 0, "warning": 10, "info": 7},
+        "loader_coverage": {"error": 0, "warning": 1, "info": 0},
+    }
     stored = Counter(rule for rule, *_ in _findings(ingest_engine, result.run_id).elements())
     assert stored == {rule: n for rule, n in result.finding_counts.items() if n}
     (run,) = _runs(ingest_engine)
@@ -118,7 +123,7 @@ def test_running_again_records_a_second_run_with_the_same_findings(
 
     assert second.run_id == first.run_id + 1
     assert _findings(ingest_engine, second.run_id) == _findings(ingest_engine, first.run_id)
-    assert sum(_findings(ingest_engine, first.run_id).values()) == 16
+    assert sum(_findings(ingest_engine, first.run_id).values()) == 18
     assert [run["status"] for run in _runs(ingest_engine)] == ["succeeded", "succeeded"]
 
 
@@ -134,15 +139,15 @@ def test_findings_and_a_summary_are_logged(
         for record in caplog.records
         if record.getMessage() == "findings"
     }
-    # One line per rule that found something, none for the 21 that found nothing.
+    # One line per rule that found something, none for the rest.
     assert logged == {
         rule.rule_id: (rule.severity, result.finding_counts[rule.rule_id])
         for rule in RULES
         if result.finding_counts[rule.rule_id]
     }
-    assert len(logged) == 10
+    assert len(logged) == 11
     (checked,) = [record for record in caplog.records if record.getMessage() == "checked"]
-    assert (checked.dq_run_id, checked.rules, checked.findings) == (result.run_id, len(RULES), 16)
+    assert (checked.dq_run_id, checked.rules, checked.findings) == (result.run_id, len(RULES), 18)
 
 
 # --------------------------------------------------------------------------- failures
@@ -212,7 +217,7 @@ def test_the_model_summary_counts_the_latest_successful_run(
     result = check_model(ingest_engine, model_id, RULES)
     checked = _summary(ingest_engine, model_id)
     assert (checked["dq_run_id"], checked["dq_error_count"]) == (result.run_id, 0)
-    assert (checked["dq_warning_count"], checked["dq_info_count"]) == (11, 5)
+    assert (checked["dq_warning_count"], checked["dq_info_count"]) == (11, 7)
 
     # A later failed run changes nothing: the summary still shows the last good one.
     rules = (*RULES, DIVIDES_BY_ZERO)
@@ -239,7 +244,7 @@ def test_v_dq_finding_lists_the_latest_run_with_rule_and_object(
         summary = _summary(ingest_engine, model_id)
 
     assert {row["dq_run_id"] for row in rows} == {latest.run_id}
-    assert len(rows) == 16
+    assert len(rows) == 18
     severities = Counter(row["severity"] for row in rows)
     assert (severities["error"], severities["warning"], severities["info"]) == (
         summary["dq_error_count"],

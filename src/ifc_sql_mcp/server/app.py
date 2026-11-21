@@ -178,11 +178,15 @@ Report the findings of one model's latest successful data quality check (`ifc-sq
 status never_checked means no check has run: there is nothing to report, which is not \
 the same as no findings. Otherwise: the run and when it finished; the findings per \
 severity (error: something in the file is not in the database; warning: a stored value \
-may mislead; info: plainly not a value, such as 'N/A' or an empty string); and per rule \
-with findings: severity, dimension, what the rule checks, how many findings, and the \
-first samples_per_rule of them (0 to {tools.MAX_SAMPLES}) with the object each is about. \
-Filter with severity or rule_id. rules_without_findings lists the rules that found \
-nothing. For every finding, query the view v_dq_finding with run_sql. {UNTRUSTED}"""
+may mislead; info: plainly not a value, such as 'N/A' or an empty string), in all and per \
+scope; and per rule with findings: severity, dimension, scope, what the rule checks, how \
+many findings, and the first samples_per_rule of them (0 to {tools.MAX_SAMPLES}) with the \
+object each is about. Scope model_content is what the model lacks or gets wrong (no \
+quantities, no rooms, placeholder materials, missing fire ratings): judge the model on \
+it. loader_coverage is what this tool cannot read: report it as the tool's limit, not the \
+model's fault. Filter with severity, scope or rule_id. rules_without_findings lists the \
+rules that found nothing. For every finding, query the view v_dq_finding with run_sql. \
+{UNTRUSTED}"""
 
 RUN_SQL = """\
 Run one read-only SQL query (PostgreSQL) on the ifc schema, for questions the other \
@@ -470,6 +474,10 @@ def build_server(engine: Engine, limits: Limits | None = None) -> MCPServer:
         rule_id: Annotated[
             str | None, Field(description="Only this rule.", min_length=1, max_length=100)
         ] = None,
+        scope: Annotated[
+            tools.Scope | None,
+            Field(description="Only model_content (the model's gaps) or loader_coverage."),
+        ] = None,
         samples_per_rule: Annotated[
             int, Field(description="Findings shown per rule.", ge=0, le=tools.MAX_SAMPLES)
         ] = tools.DEFAULT_SAMPLES,
@@ -482,6 +490,7 @@ def build_server(engine: Engine, limits: Limits | None = None) -> MCPServer:
                 severity=severity,
                 rule_id=rule_id,
                 samples_per_rule=samples_per_rule,
+                scope=scope,
             ),
         )
 

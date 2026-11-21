@@ -75,6 +75,7 @@ the test module for findings that add a tool or a command.
 | A4 | Door and window sizes are not loaded | [#6](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/6) | done | `test_a4_doors_and_windows_have_their_sizes`: 0 → 1,458 of 1,458 doors, `PI005` 1.697 m wide |
 | A6 | IFC4 material constituent sets are not read | [#8](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/8) | done | `test_a6_ifc4_doors_and_windows_have_their_materials`: A windows 0 → 17 of 17 |
 | A7 | Rooms exported twice are counted twice | [#9](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/9) | done | `test_a7_rooms_exported_twice_are_found`: 0 → 47; 6,124.8 m² without duplicates |
+| A9 | Data quality measures the loader, not the model | [#11](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/11) | done | `test_a9_data_quality_reports_what_the_model_lacks`, `test_a9_the_loaders_gaps_are_reported_apart_from_the_models`: B: errors that are loader gaps 1,458 → 0; no quantities, no rooms, placeholder project and materials, 8,079 missing fire ratings: none reported → all reported |
 
 ## Per finding
 
@@ -277,3 +278,50 @@ the test module for findings that add a tool or a command.
   | `duplicate_space` findings | 0 | **47** |
   | Total area, every space | 8,090.7 m² (after A1) | 8,090.7 m² |
   | Total area, each room once | — | **6,124.8 m²** (116 rooms) |
+
+### A9: data quality measures the loader, not the model
+
+- **Scope** (migration 0016): `dq_rule.scope` is `model_content` or `loader_coverage`,
+  NOT NULL and checked, so the catalogue must state it for every rule, and the loader
+  refuses a rule without one. Eight rules are loader coverage: the five
+  `unsupported_*` and `unit_not_convertible`, `measure_not_converted`,
+  `revit_name_unparsed`, plus the new `space_area_not_mapped`. `v_dq_finding` v2 shows the
+  scope, `ifc-sql dq` prints both counts after the total, and `data_quality_report`
+  gains `findings_by_scope`, a `scope` filter, and lists model-content rules first.
+- **Six requirement rules**, as the audit listed them: `model_without_quantities`,
+  `model_without_spaces` (architectural models only), `missing_fire_rating` (info),
+  `placeholder_material` (one finding per material, with how many elements use it),
+  `placeholder_project_info` and `space_area_not_mapped`.
+- **Decisions.**
+  - `model_without_quantities` ignores a door's or window's overall size (A4's
+    `ifc_attribute` quantities): every Revit export writes those, so they say nothing
+    about "Export base quantities".
+  - `missing_fire_rating` reads only the class's own `Pset_*Common`. That is where IFC
+    puts `FireRating`, and IfcOpenShell's `get_psets` counts exactly the same
+    elements (below). A rating only in a Revit parameter set is not one a handover
+    checker reads.
+  - Reading a buildingSMART IDS file as the requirements is left for later, as the
+    audit says.
+- **Checked against IfcOpenShell.** Elements without `FireRating`: B 8,079 of 8,079, A
+  107 of 107, D 56 of 107 (D is A with ratings added), Duplex ARC 78 of 92. Every one
+  equals the rule's count. On B, `placeholder_material` finds "Default Wall" on 6,024
+  elements and "Materiale per il rendering 0-127-255" on 1,199, the audit's figures.
+- **Duplex.** All four files keep project number `0001`, so `placeholder_project_info`
+  adds one warning to each. Their loader-coverage count is 0 in every file.
+- **Before → after on file B** (`harness/figures.py`, with the Duplex ARC model loaded
+  as in the before database)
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | Errors / warnings / info | 1,458 / 6,766 / 0 | **0** / 6,778 / 8,079 |
+  | Model content (e / w / i) | — | **0 / 2,084 / 8,079** |
+  | Loader coverage (e / w / i) | — | **0 / 4,694 / 0** (4,416 U-values not converted, 278 stair names: A13, A14) |
+  | `model_without_quantities` / `model_without_spaces` | 0 / 0 | **1 / 1** |
+  | `placeholder_project_info` | 0 | **1** (`0001` / `Project Name`) |
+  | `placeholder_material` | 0 | **9** materials (6,024 walls use "Default Wall") |
+  | `missing_fire_rating` | 0 | **8,079** (info) |
+  | C: `space_without_area` | 163 | **0** (A1) |
+
+  The 1,458 errors were door panel sets, gone with A4. The remaining loader-coverage
+  warnings are what A13 and A14 fix.
+

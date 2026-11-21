@@ -242,11 +242,60 @@ def test_a8_an_area_nobody_measured_is_not_zero(modern: Modern) -> None:
     assert "Export base quantities" in takeoff.note
 
 
-@_open("A9", 11)
 def test_a9_data_quality_reports_what_the_model_lacks(modern: Modern) -> None:
     assert modern.findings("b", "model_without_quantities") == 1
+    assert modern.findings("b", "model_without_spaces") == 1
     assert modern.findings("b", "placeholder_project_info") == 1
     assert modern.findings("c", "space_without_area") == 0
+    # Fire ratings: none on B's 8,079 walls, doors and slabs; D is A with 51 of its 107
+    # given one. IfcOpenShell's get_psets counts the same.
+    assert modern.findings("b", "missing_fire_rating") == 8_079
+    assert (
+        modern.findings("a", "missing_fire_rating"),
+        modern.findings("d", "missing_fire_rating"),
+    ) == (107, 56)
+    placeholders = dict(
+        modern.rows(
+            "SELECT substring(message FROM '^material ''(.*)'', used'), "
+            "substring(message FROM 'used by ([0-9]+) elements')::int "
+            "FROM ifc.v_dq_finding WHERE model_id = :m AND rule_id = 'placeholder_material'",
+            m=modern.model("b"),
+        )
+    )
+    assert placeholders["Default Wall"] == 6_024
+    assert placeholders["Materiale per il rendering 0-127-255"] == 1_199
+
+
+def test_a9_the_loaders_gaps_are_reported_apart_from_the_models(modern: Modern) -> None:
+    by_scope = dict(
+        modern.rows(
+            "SELECT scope, array_agg(DISTINCT rule_id ORDER BY rule_id) FROM ifc.v_dq_finding "
+            "WHERE model_id = :m GROUP BY scope",
+            m=modern.model("b"),
+        )
+    )
+
+    # What the architect can fix in Revit...
+    assert "model_without_quantities" in by_scope["model_content"]
+    # ...and what this tool does not read yet, which no longer counts against the model.
+    assert set(by_scope["loader_coverage"]) <= {
+        "measure_not_converted",
+        "revit_name_unparsed",
+        "unsupported_property",
+        "unsupported_property_set",
+    }
+    with modern.engine.connect() as connection:
+        report = tools.data_quality_report(
+            connection,
+            modern.model("b"),
+            severity=None,
+            rule_id=None,
+            samples_per_rule=0,
+            scope="loader_coverage",
+        )
+    assert report.findings_by_scope is not None
+    assert report.findings_by_scope["model_content"].error == 0
+    assert {rule.scope for rule in report.rules} == {"loader_coverage"}
 
 
 @_open("A12", 14)

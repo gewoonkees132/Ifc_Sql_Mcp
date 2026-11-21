@@ -57,16 +57,16 @@ client, as an MCP client would, and checks every model. On the four Duplex files
 ```
 connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 8 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
-  model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,650 warning, 473 info
-  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,013 warning, 1,961 info
-  model 3 ELE Duplex_Electrical_20121207.ifc: elements 103, spaces 1; dq run 3: 0 error, 89 warning, 3,291 info
-  model 4 PLU Duplex_Plumbing_20121113.ifc: elements 498, spaces 1; dq run 4: 0 error, 1,471 warning, 13,223 info
+  model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
+  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
+  model 3 ELE Duplex_Electrical_20121207.ifc: elements 103, spaces 1; dq run 3: 0 error, 90 warning, 3,291 info
+  model 4 PLU Duplex_Plumbing_20121113.ifc: elements 498, spaces 1; dq run 4: 0 error, 1,472 warning, 13,223 info
 run_sql: SELECT discipline, count(*) AS elements FROM v_element GROUP BY 1 ORDER BY 1
   ['ARC', 268]
   ['ELE', 103]
   ['MEP', 926]
   ['PLU', 498]
-ifc://schema: 23,307 characters
+ifc://schema: 26,541 characters
 ```
 
 ## Registering it with a client
@@ -177,7 +177,7 @@ status of its latest data quality check. At most 200 models.
   "property_values": 63683, "quantities": 643, "materials": 0,
   "data_quality": {"status": "checked", "dq_run_id": 2,
                    "finished_at": "2026-11-17T19:52:09.538699Z",
-                   "errors": 0, "warnings": 30013, "info": 1961}
+                   "errors": 0, "warnings": 30014, "info": 1961}
 }
 ```
 
@@ -417,11 +417,15 @@ against 8,090.7 m² (finding A7). At most 500 spaces.
 | `model_id` | integer ≥ 1 | required |
 | `severity` | `error`, `warning`, `info` | only rules of that severity |
 | `rule_id` | text | only that rule |
+| `scope` | `model_content`, `loader_coverage` | only rules of that scope |
 | `samples_per_rule` | 0–20, default 3 | findings shown per rule |
 
 The model's latest successful check (`ifc-sql dq`): the run and when it finished, the
-findings per severity (always for the whole run), and per rule with findings: severity,
-dimension, the rule's description, the number of findings and the first findings by
+findings per severity (always for the whole run), the same split by scope
+(`findings_by_scope`: the model's own gaps, `model_content`, apart from what this tool
+does not read, `loader_coverage`; [data-quality.md](data-quality.md#scope-the-model-or-the-loader)),
+and per rule with findings, `model_content` rules first: severity, dimension, scope, the
+rule's description, the number of findings and the first findings by
 object id. `rules_without_findings` lists the catalogue's rules that found nothing
 (including any rule added after the run). A model never checked has `status:
 never_checked` and nothing else, which is not the same as no findings. Severities are
@@ -433,9 +437,12 @@ findings is the view `v_dq_finding`, through `run_sql`.
 {
   "model_id": 2, "status": "checked", "dq_run_id": 2,
   "finished_at": "2026-11-17T19:52:09.538699Z",
-  "findings": {"error": 0, "warning": 30013, "info": 1961},
+  "findings": {"error": 0, "warning": 30014, "info": 1961},
+  "findings_by_scope": {"model_content": {"error": 0, "warning": 30014, "info": 1961},
+                        "loader_coverage": {"error": 0, "warning": 0, "info": 0}},
   "rules": [
     {"rule_id": "value_is_property_name", "severity": "warning", "dimension": "validity",
+     "scope": "model_content",
      "description": "A text property holds its own name, e.g. BarCode = 'BarCode'. …",
      "findings": 29967,
      "samples": [{"object_id": 296, "global_id": "0$LNoCntTAthq5oMj33Z8K",
@@ -443,9 +450,10 @@ findings is the view `v_dq_finding`, through `run_sql`.
                   "message": "PSet_Revit_Other.AssetIdentifier = 'AssetIdentifier', the parameter's own name: a placeholder, not a value"}]},
     {"rule_id": "quantity_not_a_measure", …, "findings": 44, …},
     {"rule_id": "conflicting_property", …, "findings": 2, …},
+    {"rule_id": "placeholder_project_info", …, "findings": 1, …},
     {"rule_id": "value_is_empty", "severity": "info", …, "findings": 1961, …}
   ],
-  "rules_without_findings": ["conflicting_classification", "conflicting_quantity", …]  // 27 rules
+  "rules_without_findings": ["conflicting_classification", "conflicting_quantity", …]  // 38 rules
 }
 ```
 
@@ -536,7 +544,7 @@ longer than 2,000 characters is cut and ends with `… [cut: 5,000 characters, t
 
 | URI | Type | Content |
 |---|---|---|
-| `ifc://schema` | `text/markdown` | Every table and view of `ifc` with columns, types, comments, keys and foreign keys, generated from `pg_catalog` on every read (23,307 characters). Views first. |
+| `ifc://schema` | `text/markdown` | Every table and view of `ifc` with columns, types, comments, keys and foreign keys, generated from `pg_catalog` on every read (26,541 characters). Views first. |
 | `ifc://models/{model_id}/summary` | `application/json` | One model, exactly as `list_models` describes it. An unknown id is a "not found" error (-32602). |
 
 From `ifc://schema`:

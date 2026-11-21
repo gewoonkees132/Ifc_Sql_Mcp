@@ -159,6 +159,7 @@ erDiagram
         text description
         text severity
         text dimension
+        text scope "model_content or loader_coverage"
         timestamptz retired_at "removed from the catalogue, kept for its findings"
     }
     dq_run {
@@ -288,7 +289,7 @@ name parts of openings in models already loaded.
 | `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height, the OmniClass Table 13 code and title, and `duplicate_of` (v2): an earlier space with the same number, name, storey and floor area, as a model exporting both Revit Rooms and MEP Spaces writes. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |
-| `v_dq_finding` | finding of each model's latest successful data-quality run | The rule's dimension and the object's GlobalId, class and name next to each finding, for the run `v_model_summary` counts ([data-quality.md](data-quality.md#reading-the-findings)). |
+| `v_dq_finding` | finding of each model's latest successful data-quality run | The rule's dimension and scope (model content or loader coverage, v2) and the object's GlobalId, class and name next to each finding, for the run `v_model_summary` counts ([data-quality.md](data-quality.md#reading-the-findings)). |
 | `v_storey_alignment` | storey and model, for models that share a project name | The storey matched across disciplines on a normalised name, each model's elevation, how many of the project's models have the storey, and the spread of their elevations ([below](#storeys-across-disciplines)). |
 
 `tests/integration/test_views.py` builds a small building that reproduces these cases
