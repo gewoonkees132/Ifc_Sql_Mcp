@@ -142,7 +142,7 @@ def test_findings_and_a_summary_are_logged(
     }
     assert len(logged) == 10
     (checked,) = [record for record in caplog.records if record.getMessage() == "checked"]
-    assert (checked.dq_run_id, checked.rules, checked.findings) == (result.run_id, 31, 16)
+    assert (checked.dq_run_id, checked.rules, checked.findings) == (result.run_id, len(RULES), 16)
 
 
 # --------------------------------------------------------------------------- failures

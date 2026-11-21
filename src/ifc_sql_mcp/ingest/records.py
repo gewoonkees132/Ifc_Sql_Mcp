@@ -94,6 +94,7 @@ class PropertyRecord:
     value_bool: bool | None
     unit: str | None
     is_type_property: bool
+    is_implausible: bool
 
 
 @dataclass(frozen=True, slots=True)

@@ -358,6 +358,11 @@ class PropertyValue(BaseModel):
     value_type: str | None = Field(description="IFC type, e.g. IfcLabel, IfcLengthMeasure.")
     unit: str | None = Field(description="SI unit of a numeric value.")
     from_type: bool = Field(description="True when the value comes from the element's type.")
+    implausible: bool = Field(
+        description="True for a quantity-set value that breaks a physical bound of its set "
+        "(e.g. a wall area above twice length x height): it is no measurement, so do not "
+        "quote or sum it; the data_quality findings say which bound it broke."
+    )
 
 
 class PropertySet(BaseModel):
@@ -510,7 +515,8 @@ def get_element(
         connection.execute(
             text(
                 "SELECT pset_name, prop_name, value_type, value_text, value_num, value_bool, "
-                "unit, is_type_property FROM ifc.property WHERE object_id = :object_id "
+                "unit, is_type_property, is_implausible FROM ifc.property "
+                "WHERE object_id = :object_id "
                 "ORDER BY pset_name, prop_name LIMIT :limit"
             ),
             {**key, "limit": MAX_PROPERTIES + 1},
@@ -557,6 +563,7 @@ def _property_sets(rows: list[RowMapping]) -> list[PropertySet]:
                 value_type=row["value_type"],
                 unit=row["unit"],
                 from_type=row["is_type_property"],
+                implausible=row["is_implausible"],
             )
         )
     return [PropertySet(name=name, properties=values) for name, values in sets.items()]

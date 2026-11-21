@@ -120,6 +120,7 @@ erDiagram
         boolean value_bool
         text unit
         boolean is_type_property
+        boolean is_implausible "breaks a bound of its set"
     }
     quantity {
         bigint object_id PK, FK
@@ -204,6 +205,7 @@ Duplex files and how the extract and transform stages handle it.
 |---|---|
 | No `Qto_*` base quantities; quantities sit in `PSet_Revit_Dimensions` | `quantity.source` (`revit_pset`), alongside `ifc_qto` and `geometry` rows for the same object. The raw values also stay in `property`. |
 | Names follow `Family:Type:ElementId`; loadable families add an instance label (`Family:Type:Label:ElementId`), and openings and stair parts add a `:n` suffix to their host's name | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. A feature element (`is_feature`: an opening, void or projection) is named after the element it cuts, so its parts go to `host_revit_family` and `host_revit_type` instead, and its own `revit_family` and `revit_type` are NULL (two CHECKs keep it so): grouping by Revit type then counts walls, not walls and their openings. |
+| Revit 2019 and 2021 write quantity-set values that cannot be measurements: a wall's `NetSideArea` twice, unscaled first (10⁶ too large); a slab's `NetArea` as the whole solid's surface; space volumes 1,000 times too large; perimeters in feet labelled millimetres | `property.is_implausible`: the value is stored as written, but a physical bound of its set flags it, it becomes no `quantity`, and an `implausible_quantity` finding names the bound. A value written twice keeps the one that respects the bounds ([ADR 7](adr/0007-quantity-set-plausibility.md)). |
 | Walls have no `IfcTypeObject`; type data arrives as `PSet_Revit_Type_*` on the instance | `property.is_type_property`, set for those sets and for values inherited from a type object. |
 | Placeholder values (`Manufacturer = 'Manufacturer'`), empty strings | Stored verbatim in `property.value_text` so data-quality rules can find them; nothing rejects them. |
 | Layered walls (`IfcMaterialLayerSetUsage`) | `element_material_layer` keeps layer order and thickness; `v_takeoff` splits area and volume per layer. |

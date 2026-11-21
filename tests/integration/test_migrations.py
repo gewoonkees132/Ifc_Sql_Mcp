@@ -79,6 +79,7 @@ def test_migration_history_is_one_linear_chain() -> None:
         "0008",
         "0009",
         "0010",
+        "0011",
     ]
 
 

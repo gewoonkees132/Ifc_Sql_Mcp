@@ -12,3 +12,4 @@ new record supersedes the old one.
 | [4](0004-idempotent-ingest.md) | Idempotent ingest: files identified by SHA-256, every attempt recorded, issues stored with the model |
 | [5](0005-data-quality-rules.md) | Data quality rules in a checked YAML catalogue, synchronised into `dq_rule` and evaluated in SQL, one recorded run per model |
 | [6](0006-mcp-server.md) | An MCP server of eight read-only tools on the read-only role, a new session per call, and `run_sql` behind four layers: validator, cursor, read-only transaction, privileges |
+| [7](0007-quantity-set-plausibility.md) | Physical bounds on quantity sets: a duplicated value is settled by the bounds, a value that breaks one is kept but flagged and becomes no quantity |

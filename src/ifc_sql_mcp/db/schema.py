@@ -124,6 +124,15 @@ REVIT_TYPE_COMMENT = (
 )
 
 
+IMPLAUSIBLE_COMMENT = (
+    "True when a quantity-set value breaks a physical bound set by the other values of its "
+    "set (a wall's NetSideArea above twice Length x Height, a space volume 1,000 times its "
+    "floor area x height): it is stored as written but is not a measurement, and no "
+    "canonical quantity is made from it. Filter it out (NOT is_implausible) before summing "
+    "quantity-set values; the implausible_quantity finding says which bound it broke."
+)
+
+
 def _within_model(target: str) -> ForeignKey:
     """Foreign key between two rows of the same model, checked at commit instead of at once.
 
@@ -482,6 +491,13 @@ property_ = Table(
         server_default=false(),
         comment="True if the value describes the element's type rather than this instance: "
         "inherited from its IfcTypeObject, or a PSet_Revit_Type_* set copied onto it.",
+    ),
+    Column(
+        "is_implausible",
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        comment=IMPLAUSIBLE_COMMENT,
     ),
     PrimaryKeyConstraint("object_id", "pset_name", "prop_name"),
     Index(None, "pset_name", "prop_name"),

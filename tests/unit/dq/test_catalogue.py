@@ -48,13 +48,16 @@ def test_issue_rules_are_named_after_their_issue_code() -> None:
     ]
 
 
-def test_the_sql_rules_are_the_documented_five() -> None:
+def test_the_sql_rules_are_the_documented_ones() -> None:
     assert [rule.rule_id for rule in SHIPPED if rule.sql is not None] == [
         "value_is_property_name",
         "value_is_not_applicable",
         "value_is_empty",
         "element_without_storey",
         "space_without_area",
+        "wall_area_inconsistent",
+        "space_volume_inconsistent",
+        "space_perimeter_implausible",
     ]
 
 

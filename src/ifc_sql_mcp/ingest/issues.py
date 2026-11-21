@@ -56,6 +56,8 @@ class IssueCode(StrEnum):
     """A value mapped to a quantity is negative; no quantity is made."""
     CONFLICTING_QUANTITY = "conflicting_quantity"
     """Two different values for one quantity and source; the first is kept."""
+    IMPLAUSIBLE_QUANTITY = "implausible_quantity"
+    """A quantity-set value breaks a physical bound of its set; it makes no quantity."""
 
     # Classifications
     OMNICLASS_UNPARSED = "omniclass_unparsed"

@@ -70,6 +70,7 @@ the test module for findings that add a tool or a command.
 | A17 | Two tests depend on the environment | [#19](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/19) | done | full suite green on Ubuntu's PostgreSQL 16 and at any terminal width |
 | A3 | Grouping by Revit type counts openings as walls and doors | [#5](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/5) | done | `test_a3_a_wall_type_counts_its_walls_not_their_openings`: 2,330 → 1,165 |
 | A8 | Unknown totals are reported as 0 | [#10](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/10) | done | `test_a8_an_area_nobody_measured_is_not_zero`: total 0 → null, with a warning |
+| A2 | Revit 2021's duplicated, unscaled quantities reach the LLM | [#4](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/4) | done | `test_a2_the_stored_wall_areas_add_up_to_the_real_total`: 1,157,891,673.6 → 946.0 m² |
 
 ## Per finding
 
@@ -128,3 +129,45 @@ the test module for findings that add a tool or a command.
   measured" and must never be reported as zero.
 - **Before → after on file B:** wall area by type, `total` 0 → **null**; coverage
   "0 of 11,298 elements have area_m2"; the note names the Revit export option.
+
+### A2: Revit 2021's duplicated and unscaled quantities reach the LLM
+
+- **Measured first.** [`harness/quantity_bounds.py`](harness/quantity_bounds.py) measures
+  every quantity set of a file against IFC's own ties: side area ≤ length × height, net
+  ≤ gross, volume ≤ area × height or thickness, perimeter ≥ a circle's. On files A, C
+  and E, the correct values stay within 1.1 of their bound. The defective ones are 10³
+  to 10⁹ away. That set the allowances: a factor of 2 on geometric bounds, 5 % on net
+  against gross ([ADR 7](adr/0007-quantity-set-plausibility.md)).
+- **Duplicates.** Of two values for one quantity, the one that keeps the bounds wins.
+  The `conflicting_property` message says which bound chose it ("the only value within
+  Length x Height"). File order decides only when the bounds cannot.
+- **Single implausible values** stay in `ifc.property` as written, flagged
+  `is_implausible` (migration 0011). They make no quantity, raise an
+  `implausible_quantity` warning that names the bound, and `get_element` marks them.
+- **Found beyond the audit.** Running the bounds on every set exposed three Revit
+  defects the audit had not listed:
+  - Revit 2021 writes a slab's `NetArea` as the whole solid's surface: 219 m² for a
+    105.9 m² floor.
+  - Revit 2019 and 2021 write slab and space `GrossVolume` as m² × mm (1,000 too large).
+  - Revit 2021 gives a sloped roof slab a `GrossArea` a tenth of the roof.
+
+  The first one changes A1: slab area comes from `GrossArea`, never `NetArea`.
+- **One bound corrected on the evidence.** A first version bounded a slab's `NetVolume`
+  by `GrossArea` × `Width`, and flagged the sound volume of that roof, whose `GrossArea`
+  is the wrong value. Now only `GrossVolume`, which Revit computes from `GrossArea`, is
+  bounded that way, and `GrossArea` is checked against `NetVolume` / `Width`. A unit test
+  pins the roof.
+- **Rules.** `wall_area_inconsistent` (5 %), `space_volume_inconsistent` and
+  `space_perimeter_implausible` compare the canonical quantities. The audit's single
+  `quantity_inconsistent` became two rules, walls now and slabs with `width_m` in A1,
+  because a rule id has one meaning. The audit's space-volume check was two-sided
+  (±10 %); here it is upwards only. A room's volume follows its ceiling, and 16 of the
+  Duplex's 21 rooms are 7–26 % below area × unbounded height, correctly.
+- **Before → after** (files A, C, E):
+
+  | Figure | Before | After |
+  |---|---:|---:|
+  | A: `sum(value_num)` of `Qto_WallBaseQuantities.NetSideArea` | 1,157,891,673.6 m² | **946.0 m²** |
+  | C: the same | 3,790,262,224.1 m² | 3,546.7 m² |
+  | A, C: duplicated wall values kept in file order (the unscaled one) | 94, 266 | 0, 0 |
+  | Values flagged implausible, A / C / E | — | 67 / 338 / 407 (no wall in any file) |

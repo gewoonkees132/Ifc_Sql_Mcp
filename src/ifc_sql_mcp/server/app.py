@@ -128,7 +128,9 @@ Returns identity (class, name, Revit family, type and ElementId, IFC type, tag);
 location (storey and its elevation, the room it is in; for a spatial element, its parent \
 and its own elevation); quantities with their source (ifc_qto, revit_pset or geometry) \
 and exact origin; property sets with every value, its IFC type, SI unit and whether it \
-comes from the element's type (at most {tools.MAX_PROPERTIES} values); classifications; \
+comes from the element's type (at most {tools.MAX_PROPERTIES} values; a value marked \
+implausible breaks a physical bound of its quantity set and is no measurement); \
+classifications; \
 materials in layer order with thickness in metres; and the object's findings in the \
 latest data quality check. {UNTRUSTED}"""
 

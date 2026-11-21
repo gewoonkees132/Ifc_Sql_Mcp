@@ -129,7 +129,6 @@ def test_a1_modern_quantity_sets_become_quantities(modern: Modern) -> None:
     assert spaces == [163, 163]
 
 
-@_open("A2", 4)
 def test_a2_the_stored_wall_areas_add_up_to_the_real_total(modern: Modern) -> None:
     # The query any reader would write; it gave 1,157,891,673.6 m2 before the fix.
     naive = modern.scalar(
@@ -140,6 +139,24 @@ def test_a2_the_stored_wall_areas_add_up_to_the_real_total(modern: Modern) -> No
     )
 
     assert naive == pytest.approx(946.04, abs=0.05)
+    # Each wall kept its plausible area: none is flagged. File A's 67 findings are slabs:
+    # 33 NetArea (the solid's surface), 33 GrossVolume (m2 x mm) and one roof's GrossArea.
+    by_class = modern.rows(
+        "SELECT ifc_class, count(*) FROM ifc.v_dq_finding WHERE model_id = :m "
+        "AND rule_id = 'implausible_quantity' GROUP BY 1",
+        m=modern.model("a"),
+    )
+    assert dict(by_class) == {"IfcSlab": 67}
+    # File C's spaces: every GrossVolume (1,000 x area x height) and GrossPerimeter (feet
+    # labelled millimetres) is kept as written, flagged, and not used as a quantity.
+    flagged = modern.rows(
+        "SELECT p.prop_name, count(*) FROM ifc.property AS p JOIN ifc.object AS o "
+        "USING (object_id) WHERE o.model_id = :m AND p.is_implausible GROUP BY 1 ORDER BY 1",
+        m=modern.model("c"),
+    )
+    # And 6 slabs: Revit 2021 writes NetArea as the whole solid's surface and GrossVolume
+    # as GrossArea (m2) x Width (mm).
+    assert dict(flagged) == {"GrossPerimeter": 163, "GrossVolume": 163 + 6, "NetArea": 6}
 
 
 def test_a3_a_wall_type_counts_its_walls_not_their_openings(modern: Modern) -> None:

@@ -84,7 +84,7 @@ READ_BACK = {
     "properties": (
         PropertyRecord,
         "SELECT o.global_id, p.pset_name, p.prop_name, p.value_type, p.value_text, "
-        "p.value_num, p.value_bool, p.unit, p.is_type_property "
+        "p.value_num, p.value_bool, p.unit, p.is_type_property, p.is_implausible "
         "FROM ifc.property AS p JOIN ifc.object AS o USING (object_id) "
         "WHERE o.model_id = :m ORDER BY o.global_id, p.pset_name, p.prop_name",
     ),

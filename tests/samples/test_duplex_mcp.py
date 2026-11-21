@@ -20,6 +20,7 @@ from test_duplex_dq import EXPECTED_FINDINGS, EXPECTED_SEVERITIES
 
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.engine import make_reader_engine
+from ifc_sql_mcp.dq.catalogue import load_catalogue
 from ifc_sql_mcp.dq.run import DqResult
 from ifc_sql_mcp.ingest.pipeline import IngestResult
 from ifc_sql_mcp.server.app import build_server
@@ -144,7 +145,9 @@ async def test_data_quality_report_counts_what_the_run_found(
     assert quality["findings"] == EXPECTED_SEVERITIES[key]
     assert {r["rule_id"]: r["findings"] for r in quality["rules"]} == EXPECTED_FINDINGS[key]
     assert all(len(r["samples"]) == min(3, r["findings"]) for r in quality["rules"])
-    assert len(quality["rules_without_findings"]) == 31 - len(EXPECTED_FINDINGS[key])
+    assert len(quality["rules_without_findings"]) == len(load_catalogue()) - len(
+        EXPECTED_FINDINGS[key]
+    )
 
 
 async def test_material_totals_are_not_element_totals(

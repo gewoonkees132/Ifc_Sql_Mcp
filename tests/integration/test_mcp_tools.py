@@ -14,6 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp_client import call, call_error, connect
 from sqlalchemy import Engine, text
 
+from ifc_sql_mcp.dq.catalogue import load_catalogue
 from ifc_sql_mcp.server import tools
 from ifc_sql_mcp.server.app import build_server
 
@@ -317,7 +318,7 @@ async def test_get_element_returns_everything_about_an_element(server: MCPServer
     values = {(s["name"], p["name"]): p for s in element["property_sets"] for p in s["properties"]}
     assert values["PSet_Revit_Constraints", "Top Offset"] == {
         "name": "Top Offset", "value": -0.3, "value_type": "IfcLengthMeasure", "unit": "m",
-        "from_type": False,
+        "from_type": False, "implausible": False,
     }  # fmt: skip
     assert values["PSet_Revit_Other", "BarCode"]["value"] == "BarCode"
     assert values["PSet_Revit_Other", "Manufacturer"]["value"] == ""
@@ -747,8 +748,8 @@ async def test_report_on_a_checked_model_counts_every_rule(
          "object_name": "Basic Wall:Interior - Stud Partition:200001",
          "message": "Pset_WallCommon.Reference = '': no value"},
     ]  # fmt: skip
-    # The other 21 of the 31 rules found nothing.
-    assert len(report["rules_without_findings"]) == 21
+    # The other rules of the catalogue found nothing.
+    assert len(report["rules_without_findings"]) == len(load_catalogue()) - 10
     assert "element_without_storey" in report["rules_without_findings"]
 
 

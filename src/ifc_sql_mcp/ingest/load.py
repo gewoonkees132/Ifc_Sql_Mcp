@@ -227,6 +227,7 @@ def _property_rows(records: ModelRecords, object_ids: Ids) -> list[Row]:
             "value_bool": p.value_bool,
             "unit": p.unit,
             "is_type_property": p.is_type_property,
+            "is_implausible": p.is_implausible,
         }
         for p in records.properties
     ]

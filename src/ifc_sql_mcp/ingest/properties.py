@@ -16,8 +16,14 @@ Three things happen here, in this order:
    The rules, in order:
 
    * a value on the occurrence overrides one from its type (IFC's own rule), silently;
+   * in a quantity set, the one value that keeps the set's physical bounds wins
+     (``plausibility.choose``): Revit 2021 writes a wall's ``NetSideArea`` twice, first
+     unscaled, and file order would keep the value 10⁶ times too large;
    * otherwise the value written first in the file wins (lowest STEP ids);
    * a losing value that differs from the winner is reported, identical ones are not.
+4. **Plausibility.** A quantity-set value that still breaks a physical bound set by the
+   other values of its set (a space volume of 1,000 x area x height) is kept as written
+   but flagged ``implausible``, so it becomes no quantity (``plausibility.check_set``).
 
 Quantity sets (IfcElementQuantity) are stored here too, under their set name, so every
 value in the file is queryable and ``quantity.source_ref`` always names a property row.
@@ -27,6 +33,7 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from ifc_sql_mcp.ingest import plausibility
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.raw import RawUnit, RawValue
 from ifc_sql_mcp.ingest.records import PropertyRecord
@@ -54,6 +61,7 @@ class TypedValue:
     from_type: bool
     from_quantity_set: bool
     order: tuple[int, int]
+    implausible: bool = False
 
     @property
     def payload(self) -> tuple[object, ...]:
@@ -77,6 +85,7 @@ class TypedValue:
             value_bool=self.boolean,
             unit=self.unit,
             is_type_property=self.is_type_property,
+            is_implausible=self.implausible,
         )
 
 
@@ -173,20 +182,71 @@ def resolve_properties(
         if typed is not None:
             candidates.setdefault((typed.set_name, typed.name), []).append(typed)
 
+    # Occurrence values (from_type False) sort before type values, then file order.
+    ranked = {
+        key: sorted(values, key=lambda value: (value.from_type, value.order))
+        for key, values in candidates.items()
+    }
+    singles = _single_quantities(ranked)
+
     kept: list[TypedValue] = []
-    for key in sorted(candidates):
-        # Occurrence values (from_type False) sort before type values, then file order.
-        ranked = sorted(candidates[key], key=lambda value: (value.from_type, value.order))
-        winner = ranked[0]
+    for key in sorted(ranked):
+        winner, reason = ranked[key][0], ""
+        rivals = _rivals(ranked[key])
+        if rivals and winner.from_quantity_set:
+            siblings = singles.get(key[0], {})
+            chosen = plausibility.choose([winner, *rivals], siblings)
+            if chosen is not None:
+                winner, reason = chosen, f" ({plausibility.why_chosen(chosen, siblings)})"
         kept.append(winner)
-        for loser in ranked[1:]:
-            if loser.from_type == winner.from_type and loser.payload != winner.payload:
+        for loser in ranked[key]:
+            if (
+                loser is not winner
+                and loser.from_type == winner.from_type
+                and loser.payload != winner.payload
+            ):
                 message = (
-                    f"{winner.ref} has several values; kept {_shown(winner)}, "
+                    f"{winner.ref} has several values; kept {_shown(winner)}{reason}, "
                     f"dropped {_shown(loser)}"
                 )
                 issues.append(Issue(IssueCode.CONFLICTING_PROPERTY, global_id, message))
-    return kept, issues
+    checked, check_issues = _check_quantity_sets(global_id, kept)
+    return checked, issues + check_issues
+
+
+def _rivals(ranked: list[TypedValue]) -> list[TypedValue]:
+    """The values that compete with the first: same level, a different value."""
+    first = ranked[0]
+    return [v for v in ranked[1:] if v.from_type == first.from_type and v.payload != first.payload]
+
+
+def _single_quantities(
+    ranked: Mapping[tuple[str, str], list[TypedValue]],
+) -> dict[str, dict[str, float]]:
+    """Per quantity set, the numbers of its quantities that have exactly one value."""
+    singles: dict[str, dict[str, float]] = {}
+    for (set_name, name), values in ranked.items():
+        first = values[0]
+        if first.from_quantity_set and first.number is not None and not _rivals(values):
+            singles.setdefault(set_name, {})[name] = first.number
+    return singles
+
+
+def _check_quantity_sets(
+    global_id: str, values: list[TypedValue]
+) -> tuple[list[TypedValue], list[Issue]]:
+    """Flag the quantity-set values that break a physical bound of their set."""
+    by_set: dict[str, list[TypedValue]] = {}
+    for value in values:
+        if value.from_quantity_set:
+            by_set.setdefault(value.set_name, []).append(value)
+    checked: dict[tuple[str, str], TypedValue] = {}
+    issues: list[Issue] = []
+    for set_values in by_set.values():
+        flagged, set_issues = plausibility.check_set(global_id, set_values)
+        checked.update({(v.set_name, v.name): v for v in flagged})
+        issues.extend(set_issues)
+    return [checked.get((v.set_name, v.name), v) for v in values], issues
 
 
 def _shown(value: TypedValue) -> str:

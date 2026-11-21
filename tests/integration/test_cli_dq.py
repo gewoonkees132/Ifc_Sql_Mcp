@@ -12,7 +12,7 @@ from typer.testing import CliRunner, Result
 from ifc_sql_mcp import cli
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.migrate import head_revision, upgrade
-from ifc_sql_mcp.dq.catalogue import CATALOGUE
+from ifc_sql_mcp.dq.catalogue import CATALOGUE, load_catalogue
 from ifc_sql_mcp.dq.run import UnknownModelError
 from ifc_sql_mcp.ingest.pipeline import ingest_file
 
@@ -23,6 +23,10 @@ MODEL_1 = (
 MODEL_2 = (
     "checked model 2 (MEP, revit_quirks.ifc) in dq run {run}: 0 error, 11 warning, 5 info findings"
 )
+
+
+# Every rule the shipped catalogue has; each run evaluates them all.
+RULE_COUNT = len(load_catalogue())
 
 
 def _dq(*model_ids: str) -> Result:
@@ -60,9 +64,12 @@ def test_dq_checks_every_loaded_model_and_exits_0(two_models: Engine) -> None:
     assert result.stdout == f"{MODEL_1.format(run=1)}\n{MODEL_2.format(run=2)}\n"
     # Logs go to stderr: the sync, then one line per rule that found something.
     stderr = result.stderr
-    assert 'msg="rules synchronised" rules=31 added=31 updated=0 retired=0 deleted=0' in stderr
+    assert (
+        f'msg="rules synchronised" rules={RULE_COUNT} added={RULE_COUNT} updated=0 retired=0 '
+        "deleted=0"
+    ) in stderr
     assert "msg=findings dq_run_id=1 rule_id=value_is_empty severity=info count=3" in stderr
-    assert "msg=checked dq_run_id=2 model_id=2 rules=31 findings=16" in stderr
+    assert f"msg=checked dq_run_id=2 model_id=2 rules={RULE_COUNT} findings=16" in stderr
 
 
 def test_dq_checks_only_the_given_models_once_each(two_models: Engine) -> None:
@@ -87,7 +94,7 @@ def test_dq_with_no_models_says_so_and_exits_0(database: Engine) -> None:
 
     assert result.exit_code == 0, result.output
     assert result.stdout == "no models are loaded; nothing to check\n"
-    assert _count(database, "dq_rule") == 31
+    assert _count(database, "dq_rule") == RULE_COUNT
 
 
 def test_a_failed_run_is_reported_and_the_other_models_are_still_checked(

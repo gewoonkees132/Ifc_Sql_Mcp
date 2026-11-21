@@ -84,6 +84,8 @@ def derive_quantities(
         for value in matching:
             if value.text is None and value.number is None and value.boolean is None:
                 continue  # an empty parameter: nothing to measure, and nothing wrong here
+            if value.implausible:
+                continue  # breaks a bound of its set; implausible_quantity says so already
             if value.number is None or value.unit != rule.unit:
                 message = (
                     f"{value.ref} ({value.value_type}) is not a measure in {rule.unit}; "

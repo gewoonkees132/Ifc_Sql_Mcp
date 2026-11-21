@@ -12,6 +12,7 @@ from collections import Counter
 import make_revit_quirks as fx
 import pytest
 from rows import add_dq_run, add_element, add_property, add_quantity, add_spatial, new_sha256
+from rows import add_model as add_model_row
 from sqlalchemy import Connection, RowMapping, insert, text
 
 from ifc_sql_mcp.db import schema
@@ -37,6 +38,10 @@ FIXTURE_FINDINGS: dict[str, list[str]] = {
     "element_without_storey": [],
     # The store room has no Revit dimensions and no GSA quantity set.
     "space_without_area": [fx.STORE],
+    # The fixture's quantities are consistent; test_dq_quantity_rules.py breaks them.
+    "wall_area_inconsistent": [],
+    "space_volume_inconsistent": [],
+    "space_perimeter_implausible": [],
     # The transform's eight issues (tests/unit/ingest/test_fixture_pipeline.py).
     "multiple_projects": [],
     "invalid_project_global_id": [],
@@ -55,6 +60,7 @@ FIXTURE_FINDINGS: dict[str, list[str]] = {
     "conflicting_property": sorted([fx.PANEL_1, fx.PANEL_2]),
     "quantity_not_a_measure": sorted([fx.PANEL_1, fx.PANEL_2]),
     "negative_quantity": [fx.SLAB],
+    "implausible_quantity": [],
     "conflicting_quantity": [],
     "omniclass_unparsed": [fx.STORE],
     "incomplete_classification_reference": [fx.PROXY],
@@ -283,3 +289,81 @@ def test_space_without_area_accepts_an_area_from_any_source(
     assert [(f["object_id"], f["message"]) for f in findings if f["global_id"] != fx.STORE] == [
         (unmeasured, "space (unnamed) has no area_m2 from any source")
     ]
+
+
+# ------------------------------------------------------------- quantities that disagree
+
+
+def _quantified(conn: Connection, ifc_class: str, **quantities: float) -> tuple[int, int]:
+    """A model with one element or space with the given canonical quantities."""
+    sync_rules(conn, RULES)
+    model_id = add_model_row(conn)
+    if ifc_class == "IfcSpace":
+        object_id = add_spatial(conn, model_id, "IfcSpace", "101")
+    else:
+        object_id = add_element(conn, model_id, ifc_class, "Basic Wall:Generic:1")
+    for name, number in quantities.items():
+        add_quantity(conn, object_id, name, number)
+    return model_id, object_id
+
+
+def _rule(rule_id: str) -> tuple[Rule, ...]:
+    return tuple(rule for rule in RULES if rule.rule_id == rule_id)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "ifc_class", "quantities", "message"),
+    [
+        (
+            "wall_area_inconsistent",
+            "IfcWall",
+            {"area_m2": 11.0, "length_m": 2.0, "height_m": 5.0},
+            "area_m2 = 11.000 m2 is more than 1.05 x length_m x height_m = 10.500 m2",
+        ),
+        (
+            "space_volume_inconsistent",
+            "IfcSpace",
+            {"volume_m3": 30.0, "area_m2": 10.0, "height_m": 2.6},
+            "volume_m3 = 30.000 m3 is more than 1.1 x area_m2 x height_m = 28.600 m3",
+        ),
+        (
+            "space_perimeter_implausible",
+            "IfcSpace",
+            {"perimeter_m": 5.0, "area_m2": 10.0},
+            "perimeter_m = 5.000 m is shorter than 2 x sqrt(pi x area_m2) = 11.210 m",
+        ),
+    ],
+)
+def test_a_quantity_that_contradicts_the_others_is_found(
+    conn: Connection,
+    rule_id: str,
+    ifc_class: str,
+    quantities: dict[str, float],
+    message: str,
+) -> None:
+    model_id, object_id = _quantified(conn, ifc_class, **quantities)
+
+    [finding] = _findings(conn, _check(conn, model_id, _rule(rule_id)))
+
+    assert (finding["object_id"], finding["message"]) == (object_id, message)
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "ifc_class", "quantities"),
+    [
+        # Just inside the allowance, and a wall without a height: nothing to compare.
+        ("wall_area_inconsistent", "IfcWall", {"area_m2": 10.5, "length_m": 2.0, "height_m": 5.0}),
+        ("wall_area_inconsistent", "IfcWall", {"area_m2": 99.0, "length_m": 2.0}),
+        # A room under a ceiling lower than its unbounded height is smaller, never larger.
+        ("space_volume_inconsistent", "IfcSpace",
+         {"volume_m3": 19.0, "area_m2": 10.0, "height_m": 2.6}),
+        # A circle of the area has the shortest perimeter there is.
+        ("space_perimeter_implausible", "IfcSpace", {"perimeter_m": 11.22, "area_m2": 10.0}),
+    ],
+)  # fmt: skip
+def test_quantities_that_agree_are_not_found(
+    conn: Connection, rule_id: str, ifc_class: str, quantities: dict[str, float]
+) -> None:
+    model_id, _ = _quantified(conn, ifc_class, **quantities)
+
+    assert _findings(conn, _check(conn, model_id, _rule(rule_id))) == []

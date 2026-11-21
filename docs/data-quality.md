@@ -71,7 +71,7 @@ Every rule has a `rule_id`, a `description` (the text an LLM reads in `ifc.dq_ru
 `severity` and a `dimension`, and is evaluated in one of two ways:
 
 - **`issue_code`**: the findings are the model's `ifc.ingest_issue` rows with that code,
-  each with the issue's object and message. All 26 issue codes have exactly one rule,
+  each with the issue's object and message. All 27 issue codes have exactly one rule,
   named after the code. `tests/unit/dq/test_catalogue.py` fails until a new `IssueCode`
   gets one.
 - **`sql`**: a SELECT returning `object_id` (NULL for a finding about the whole model)
@@ -125,7 +125,7 @@ later change to the rule does not rewrite earlier runs.
 
 ### The rules
 
-The five SQL rules check stored values:
+The eight SQL rules check stored values:
 
 | Rule | Severity | Dimension | Finds |
 |---|---|---|---|
@@ -134,14 +134,22 @@ The five SQL rules check stored values:
 | `value_is_empty` | info | completeness | An empty or whitespace-only text value. |
 | `element_without_storey` | warning | completeness | An element whose `storey_id` is NULL: takeoffs by storey leave it out. |
 | `space_without_area` | warning | completeness | A space with no `area_m2` from any source: schedules show no area. |
+| `wall_area_inconsistent` | warning | consistency | A wall whose `area_m2` is more than 5 % above `length_m` × `height_m`. |
+| `space_volume_inconsistent` | warning | consistency | A space whose `volume_m3` is more than 10 % above `area_m2` × `height_m`. Only above: a room's volume follows its ceiling, so 16 of the Duplex's 21 rooms are 7–26 % below their area × unbounded height, correctly. |
+| `space_perimeter_implausible` | warning | validity | A space whose `perimeter_m` is shorter than a circle's of the same area, 2√(π · `area_m2`). |
 
-The 26 issue rules, one per `IssueCode` (the issue's meaning is in
+The last three compare the canonical quantities with each other (audit finding A2).
+Values that break a physical bound by far more, such as the unit errors of Revit 2019
+and 2021, never become quantities. The ingest keeps them out and reports them as
+`implausible_quantity` ([ADR 7](adr/0007-quantity-set-plausibility.md)).
+
+The 27 issue rules, one per `IssueCode` (the issue's meaning is in
 [revit-ifc-quirks.md](revit-ifc-quirks.md) and `ingest/issues.py`):
 
 | Severity | Rules |
 |---|---|
 | error | `invalid_project_global_id`, `unit_not_convertible` (validity); `invalid_global_id`, `invalid_elevation`, `non_finite_value`, `invalid_layer_thickness` (validity); `duplicate_global_id` (uniqueness); `unnamed_property`, `unsupported_property`, `unsupported_property_set`, `unsupported_classification`, `unsupported_material`, `unnamed_material` (completeness) |
-| warning | `unit_assumed_si`, `incomplete_classification_reference` (completeness); `measure_not_converted`, `revit_name_unparsed`, `quantity_not_a_measure`, `negative_quantity`, `omniclass_unparsed` (validity); `revit_tag_mismatch`, `conflicting_property`, `conflicting_quantity`, `conflicting_classification` (consistency); `multiple_projects`, `multiple_material_associations` (uniqueness) |
+| warning | `unit_assumed_si`, `incomplete_classification_reference` (completeness); `measure_not_converted`, `revit_name_unparsed`, `quantity_not_a_measure`, `negative_quantity`, `implausible_quantity`, `omniclass_unparsed` (validity); `revit_tag_mismatch`, `conflicting_property`, `conflicting_quantity`, `conflicting_classification` (consistency); `multiple_projects`, `multiple_material_associations` (uniqueness) |
 
 A few of these calls deserve a sentence:
 
@@ -323,7 +331,7 @@ GlobalId). `ingest_issue.global_id` keeps the raw value.
 | Test | Covers |
 |---|---|
 | `tests/unit/dq/test_catalogue.py` | Every way a catalogue is refused, the shipped file, and every `IssueCode` having exactly one rule. |
-| `tests/integration/test_dq_rules.py` | Each of the 31 rules on the synthetic fixture: how many findings, about which objects, with which message; issue findings equal the stored issues; a run reports only its own model; the edge cases of the SQL rules. |
+| `tests/integration/test_dq_rules.py` | Each rule of the catalogue on the synthetic fixture: how many findings, about which objects, with which message; issue findings equal the stored issues; a run reports only its own model; the edge cases of the SQL rules. |
 | `tests/integration/test_dq_sync.py` | Every catalogue change in the table above, and two syncs at once. |
 | `tests/integration/test_dq_run.py` | A run's bookkeeping, a re-run, a failed run that leaves nothing but the failed run, `v_model_summary` before and after, `v_dq_finding`, deleting a model. |
 | `tests/integration/test_cli_dq.py` | Each outcome in the table at the top. |

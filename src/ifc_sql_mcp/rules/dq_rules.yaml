@@ -117,6 +117,68 @@ rules:
             WHERE q.object_id = o.object_id AND q.name = 'area_m2'
         )
 
+  - rule_id: wall_area_inconsistent
+    description: >-
+      A wall's area_m2 (one face) is more than 5 % above its length_m times height_m,
+      which a face of that length and height cannot be. A wall with an edited profile
+      can come close; well above it, one of the three quantities is wrong, and area
+      takeoffs inherit it.
+    severity: warning
+    dimension: consistency
+    sql: |
+      SELECT o.object_id,
+             format('area_m2 = %s m2 is more than 1.05 x length_m x height_m = %s m2',
+                    round(CAST(a.value AS numeric), 3),
+                    round(CAST(1.05 * l.value * h.value AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      JOIN ifc.v_quantity AS l ON l.object_id = o.object_id AND l.name = 'length_m'
+      JOIN ifc.v_quantity AS h ON h.object_id = o.object_id AND h.name = 'height_m'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcWall'
+        AND a.value > 1.05 * l.value * h.value
+
+  - rule_id: space_volume_inconsistent
+    description: >-
+      A space's volume_m3 is more than 10 % above its area_m2 times height_m. A room's
+      volume follows its ceiling, so it is often less than area x height (Revit's
+      Unbounded Height), but it cannot be more; a volume above it was computed or
+      exported wrongly.
+    severity: warning
+    dimension: consistency
+    sql: |
+      SELECT o.object_id,
+             format('volume_m3 = %s m3 is more than 1.1 x area_m2 x height_m = %s m3',
+                    round(CAST(v.value AS numeric), 3),
+                    round(CAST(1.1 * a.value * h.value AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS v ON v.object_id = o.object_id AND v.name = 'volume_m3'
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      JOIN ifc.v_quantity AS h ON h.object_id = o.object_id AND h.name = 'height_m'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSpace'
+        AND v.value > 1.1 * a.value * h.value
+
+  - rule_id: space_perimeter_implausible
+    description: >-
+      A space's perimeter_m is shorter than 2 x sqrt(pi x area_m2), the perimeter of a
+      circle of its area, below which no shape can go. The perimeter or the area is in
+      the wrong unit (Revit 2021 writes GrossPerimeter in feet, labelled with the file's
+      millimetres).
+    severity: warning
+    dimension: validity
+    sql: |
+      SELECT o.object_id,
+             format('perimeter_m = %s m is shorter than 2 x sqrt(pi x area_m2) = %s m',
+                    round(CAST(p.value AS numeric), 3),
+                    round(CAST(2 * sqrt(pi() * a.value) AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS p ON p.object_id = o.object_id AND p.name = 'perimeter_m'
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSpace'
+        AND p.value < 2 * sqrt(pi() * a.value)
+
   # ---------------------------------------------------------- issues: model and units
 
   - rule_id: multiple_projects
@@ -264,6 +326,19 @@ rules:
     severity: warning
     dimension: validity
     issue_code: negative_quantity
+
+  - rule_id: implausible_quantity
+    description: >-
+      A value in an IFC quantity set breaks a physical bound set by the other values of
+      its set: a wall's side area above twice its length x height, a volume above twice
+      area x height or thickness, a net value above its gross one, a perimeter below
+      half that of a circle of the same area. Revit 2019 and 2021 write such values (a
+      space volume 1,000 times too large, a perimeter in feet labelled millimetres). The
+      value is stored as written in ifc.property with is_implausible, and no quantity
+      is made from it; the message gives the bound.
+    severity: warning
+    dimension: validity
+    issue_code: implausible_quantity
 
   - rule_id: conflicting_quantity
     description: >-
