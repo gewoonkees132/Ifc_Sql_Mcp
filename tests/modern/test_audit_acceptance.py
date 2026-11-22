@@ -35,7 +35,15 @@ def _open(finding: str, issue: int) -> pytest.MarkDecorator:
 def test_every_file_loads_all_its_objects(modern: Modern) -> None:
     objects = {key: result.row_counts["object"] for key, result in modern.ingested.items()}
 
-    assert objects == {"a": 500, "b": 14_642, "c": 7_124, "d": 500, "e": 5_633, "duplex": 295}
+    assert objects == {
+        "a": 500,
+        "b": 14_642,
+        "c": 7_124,
+        "d": 500,
+        "e": 5_633,
+        "duplex": 295,
+        "duplex_mep": 973,
+    }
 
 
 def test_storeys_and_their_elevations_are_exact(modern: Modern) -> None:
