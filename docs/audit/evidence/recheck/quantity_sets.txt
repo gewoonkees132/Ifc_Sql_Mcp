@@ -1,0 +1,46 @@
+== Ifc4_Revit_ARC.ifc
+IfcBuildingElementProxy            66  -
+IfcColumn                           3  {'Qto_ColumnBaseQuantities.CrossSectionArea': 3, 'Qto_ColumnBaseQuantities.GrossVolume': 3, 'Qto_ColumnBaseQuantities.Length': 2, 'Qto_ColumnBaseQuantities.OuterSurfaceArea': 2}
+IfcCovering                         2  {'Qto_CoveringBaseQuantities.NetArea': 2}
+IfcCurtainWall                      9  -
+IfcDoor                            16  {'Qto_DoorBaseQuantities.Height': 16, 'Qto_DoorBaseQuantities.Width': 16, 'Qto_DoorBaseQuantities.Area': 16}
+IfcFlowTerminal                     9  -
+IfcFurniture                       32  -
+IfcLightFixture                    10  -
+IfcMember                         144  {'Qto_MemberBaseQuantities.Length': 144, 'Qto_MemberBaseQuantities.CrossSectionArea': 144, 'Qto_MemberBaseQuantities.NetSurfaceArea': 144, 'Qto_MemberBaseQuantities.NetVolume': 144}
+IfcOpeningElement                  35  {'Qto_OpeningElementBaseQuantities.Height': 32, 'Qto_OpeningElementBaseQuantities.Width': 32, 'Qto_OpeningElementBaseQuantities.Depth': 28, 'Qto_OpeningElementBaseQuantities.Area': 2}
+IfcPlate                           44  -
+IfcRailing                         10  {'Qto_RailingBaseQuantities.Length': 10}
+IfcRoof                             2  -
+IfcSlab                            35  {'Qto_SlabBaseQuantities.NetArea': 35, 'Qto_SlabBaseQuantities.NetVolume': 35, 'Qto_SlabBaseQuantities.Perimeter': 35, 'Qto_SlabBaseQuantities.GrossArea': 33, 'Qto_SlabBaseQuantities.GrossVolume': 33, 'Qto_SlabBaseQuantities.Width': 33}
+IfcStair                            3  -
+IfcStairFlight                      2  {'Qto_StairFlightBaseQuantities.Length': 2, 'Qto_StairFlightBaseQuantities.NetVolume': 2, 'Qto_StairFlightBaseQuantities.GrossVolume': 1}
+IfcSystemFurnitureElement           3  -
+IfcWall                            47  {'Qto_WallBaseQuantities.NetVolume': 94, 'Qto_WallBaseQuantities.NetSideArea': 94, 'Qto_WallBaseQuantities.Height': 47, 'Qto_WallBaseQuantities.Length': 47, 'Qto_WallBaseQuantities.Width': 47, 'Qto_WallBaseQuantities.GrossFootprintArea': 44}
+IfcWindow                          17  {'Qto_WindowBaseQuantities.Height': 17, 'Qto_WindowBaseQuantities.Width': 17, 'Qto_WindowBaseQuantities.Area': 17}
+IfcCovering total Qto_CoveringBaseQuantities.NetArea: 154.3
+== Ifc4_Revit_MEP.ifc
+IfcAirTerminal                    309  -
+IfcBuildingElementProxy           654  -
+IfcCableCarrierFitting             14  -
+IfcCableCarrierSegment             20  -
+IfcColumn                         135  {'Qto_ColumnBaseQuantities.Length': 135, 'Qto_ColumnBaseQuantities.CrossSectionArea': 135, 'Qto_ColumnBaseQuantities.OuterSurfaceArea': 135, 'Qto_ColumnBaseQuantities.GrossVolume': 135}
+IfcCovering                        43  {'Qto_CoveringBaseQuantities.NetArea': 43}
+IfcCurtainWall                     33  -
+IfcDoor                           124  {'Qto_DoorBaseQuantities.Height': 124, 'Qto_DoorBaseQuantities.Width': 124, 'Qto_DoorBaseQuantities.Area': 124}
+IfcDuctFitting                    935  -
+IfcDuctSegment                    837  -
+IfcFireSuppressionTerminal          6  -
+IfcFlowTerminal                    11  -
+IfcLightFixture                   410  -
+IfcMember                        1450  {'Qto_MemberBaseQuantities.Length': 1450, 'Qto_MemberBaseQuantities.CrossSectionArea': 1450, 'Qto_MemberBaseQuantities.NetSurfaceArea': 1450, 'Qto_MemberBaseQuantities.NetVolume': 1450}
+IfcOpeningElement                 131  {'Qto_OpeningElementBaseQuantities.Depth': 113, 'Qto_OpeningElementBaseQuantities.Height': 111, 'Qto_OpeningElementBaseQuantities.Width': 111, 'Qto_OpeningElementBaseQuantities.Area': 2}
+IfcPipeFitting                    535  -
+IfcPipeSegment                    491  -
+IfcPlate                          629  -
+IfcRailing                         14  {'Qto_RailingBaseQuantities.Length': 14}
+IfcSlab                            25  {'Qto_SlabBaseQuantities.NetArea': 25, 'Qto_SlabBaseQuantities.NetVolume': 25, 'Qto_SlabBaseQuantities.Perimeter': 25, 'Qto_SlabBaseQuantities.GrossArea': 6, 'Qto_SlabBaseQuantities.GrossVolume': 6, 'Qto_SlabBaseQuantities.Width': 6}
+IfcStair                            8  -
+IfcStairFlight                      8  {'Qto_StairFlightBaseQuantities.NetVolume': 8}
+IfcWall                           133  {'Qto_WallBaseQuantities.NetVolume': 266, 'Qto_WallBaseQuantities.NetSideArea': 266, 'Qto_WallBaseQuantities.Height': 133, 'Qto_WallBaseQuantities.Length': 133, 'Qto_WallBaseQuantities.Width': 133, 'Qto_WallBaseQuantities.GrossFootprintArea': 133}
+IfcCovering total Qto_CoveringBaseQuantities.NetArea: 1755.4

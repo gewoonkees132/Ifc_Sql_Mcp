@@ -12,6 +12,8 @@ and its figures used as assertions.
 | `run_llm_questions.sh` | Asks `llm_questions.tsv` one question at a time, each in a fresh headless Claude Code session that can use only the `ifc-sql` MCP server. |
 | `parse_transcript.py` | Prints the tool calls, final answer and cost of each session. |
 | `measure.py` | Wall time and peak memory of a command. |
+| `space_truth.py` | The [re-check](../2026-11-recheck.md)'s room totals, from IfcOpenShell and shapely only: each space's footprint, Revit Areas apart, and each room once. |
+| `quantity_sets.py` | The quantity sets each class of a file carries, and the coverings' totals. |
 
 ## The files
 
