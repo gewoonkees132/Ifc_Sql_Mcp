@@ -17,6 +17,9 @@ from ifc_sql_mcp.ingest.issues import Issue
 type Scalar = str | float | int | bool
 """A primitive IFC value as IfcOpenShell returns it (``wrappedValue``)."""
 
+DEFAULT_RGBA = (0.8, 0.8, 0.8, 1.0)
+"""Red, green, blue and alpha of a body whose material gives no usable colour: light grey."""
+
 
 @dataclass(frozen=True, slots=True)
 class RawUnit:
@@ -151,6 +154,9 @@ class RawElement(RawObject):
         predefined_type: The occurrence's PredefinedType attribute, if the class has one.
         type_predefined_type: The type object's PredefinedType, if any.
         materials: The element's material definition; empty if it has none.
+        aggregate_global_id: The element this one is a part of through IfcRelAggregates
+            only (a flight's stair, a plate's curtain wall), if any. The viewer's scene
+            nests parts under their aggregate (``viewer/scene.py``).
     """
 
     tag: str | None
@@ -160,6 +166,7 @@ class RawElement(RawObject):
     predefined_type: str | None
     type_predefined_type: str | None
     materials: tuple[RawMaterialEntry, ...]
+    aggregate_global_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,6 +238,32 @@ class RawFootprint:
 
 
 @dataclass(frozen=True, slots=True)
+class RawMesh:
+    """One body as IfcOpenShell triangulated it, in world coordinates (``ingest --viewer``).
+
+    The arrays are kept as bytes, as IfcOpenShell's buffers come, not as tuples of floats:
+    file B's scene holds 831,231 vertices. ``numpy.frombuffer`` reads them back.
+
+    Attributes:
+        global_id: The element or space.
+        step_id: Its STEP instance id (``#123``), which orders meshes the same way on every
+            run: IfcOpenShell's worker threads finish them in any order.
+        vertices: x, y, z of each vertex as float64, in metres, in the file's world
+            coordinates (Z up).
+        faces: Three vertex indices per triangle, as int32.
+        material_ids: Each triangle's material, an index into ``materials``, as int32.
+        materials: Red, green, blue and alpha of each of IfcOpenShell's materials, 0 to 1.
+    """
+
+    global_id: str
+    step_id: int
+    vertices: bytes
+    faces: bytes
+    material_ids: bytes
+    materials: tuple[tuple[float, float, float, float], ...]
+
+
+@dataclass(frozen=True, slots=True)
 class RawModel:
     """Everything extracted from one IFC file.
 
@@ -244,6 +277,9 @@ class RawModel:
         shapes: Shapes measured on request (``geometry.measure_shapes``); empty otherwise.
         geometry_seconds: How long measuring them took; ``None`` when not asked for.
         footprints: The plan of every space with a body (``geometry.measure_space_plans``).
+        meshes: Every element's and space's body, for the viewer's scene, by STEP id
+            (``geometry.triangulate_scene``); empty unless asked for.
+        scene_seconds: How long triangulating them took; ``None`` when not asked for.
     """
 
     file: RawFile
@@ -255,3 +291,5 @@ class RawModel:
     shapes: tuple[RawShape, ...] = ()
     geometry_seconds: float | None = None
     footprints: tuple[RawFootprint, ...] = ()
+    meshes: tuple[RawMesh, ...] = ()
+    scene_seconds: float | None = None

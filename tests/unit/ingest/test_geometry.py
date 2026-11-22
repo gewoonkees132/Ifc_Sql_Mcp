@@ -6,16 +6,31 @@ a 4 x 4 m slab, a 3 x 2 m space, a column and a beam that cannot be triangulated
 
 import math
 from pathlib import Path
+from types import SimpleNamespace
 
+import ifcopenshell
 import ifcopenshell.util.shape
+import numpy as np
 import pytest
-from geometry_model import BEAM, COLUMN, SLAB, SPACE, UNPLANNED_SPACE, WALL, write_measured_model
+from geometry_model import (
+    BARE_STAIR,
+    BEAM,
+    COLUMN,
+    FLIGHTS,
+    SLAB,
+    SPACE,
+    SPACE_COPY,
+    STAIR,
+    UNPLANNED_SPACE,
+    WALL,
+    write_measured_model,
+)
 
 from ifc_sql_mcp.ingest import geometry
 from ifc_sql_mcp.ingest.extract import read_model
 from ifc_sql_mcp.ingest.issues import IssueCode
 from ifc_sql_mcp.ingest.quantities import geometry_quantities
-from ifc_sql_mcp.ingest.raw import RawModel, RawShape
+from ifc_sql_mcp.ingest.raw import DEFAULT_RGBA, RawModel, RawShape
 
 
 def _read(tmp_path: Path) -> RawModel:
@@ -107,12 +122,14 @@ def test_a_model_with_nothing_to_measure_takes_no_time_to_say_so(tmp_path: Path)
     assert plan_seconds >= 0
 
 
+@pytest.mark.parametrize("viewer", [False, True])
 def test_a_space_seen_only_edge_on_from_above_gets_no_plan(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, viewer: bool
 ) -> None:
+    """With or without the viewer's pass, which makes the plans from its own shapes."""
     monkeypatch.setattr(geometry, "plan_from_triangles", lambda verts, faces: None)
 
-    raw = read_model(write_measured_model(tmp_path / "measured.ifc"))
+    raw = read_model(write_measured_model(tmp_path / "measured.ifc"), viewer=viewer)
 
     assert raw.footprints == ()
     assert [issue.message for issue in raw.issues] == [
@@ -162,3 +179,125 @@ def test_a_walls_area_is_its_side_a_slabs_and_spaces_their_footprint() -> None:
         ("0colum", "volume_m3", 0.48, "geometry:volume"),
     }
     assert {r.source for r in records} == {"geometry"}
+
+
+# --------------------------------------------------------------------------- the viewer's pass
+
+
+def _scene_file(tmp_path: Path) -> Path:
+    return write_measured_model(tmp_path / "scene.ifc", scene=True)
+
+
+def test_one_pass_gives_the_measures_plans_and_issues_of_the_two_passes(tmp_path: Path) -> None:
+    """ADR 14, P1: the viewer's pass in local coordinates serves --geometry as well."""
+    path = _scene_file(tmp_path)
+
+    shared = read_model(path, geometry=True, viewer=True)
+    alone = read_model(path, geometry=True)
+
+    def measures(raw: RawModel) -> list[tuple[str, float, float, float]]:
+        return sorted(
+            (s.global_id, s.side_area_m2, s.footprint_area_m2, s.volume_m3) for s in raw.shapes
+        )
+
+    # Both measure in local coordinates, so the figures are the same to the last bit.
+    assert measures(shared) == measures(alone)
+    assert len(shared.shapes) == 9  # wall, slab, space, column, four flights, the copy
+    # The plans come from world coordinates: the matrix's and IfcOpenShell's own.
+    assert [f.global_id for f in shared.footprints] == [f.global_id for f in alone.footprints]
+    assert [f.plan.area for f in shared.footprints] == pytest.approx(
+        [f.plan.area for f in alone.footprints], abs=1e-9
+    )
+    assert shared.issues == alone.issues
+    assert shared.geometry_seconds == shared.scene_seconds
+    assert alone.meshes == ()
+    assert alone.scene_seconds is None
+
+
+def test_the_viewer_alone_measures_nothing_and_still_gives_the_plans(tmp_path: Path) -> None:
+    raw = read_model(_scene_file(tmp_path), viewer=True)
+    names = {e.global_id: e.name for e in raw.elements} | {
+        s.global_id: s.name for s in raw.spatial_elements
+    }
+
+    assert (raw.shapes, raw.geometry_seconds, raw.issues) == ((), None, ())
+    assert raw.scene_seconds is not None
+    assert sorted(names[f.global_id] for f in raw.footprints) == [SPACE, SPACE_COPY]
+    # Every element and space with a body but the beam, which gives no triangle; no opening.
+    assert sorted(str(names[m.global_id]) for m in raw.meshes) == sorted(
+        [WALL, SLAB, SPACE, COLUMN, STAIR, *FLIGHTS[STAIR], *FLIGHTS[BARE_STAIR], SPACE_COPY]
+    )
+    assert [m.step_id for m in raw.meshes] == sorted(m.step_id for m in raw.meshes)
+
+
+def test_meshes_are_moved_to_the_world_coordinates_ifcopenshell_gives(tmp_path: Path) -> None:
+    """The placement matrix in numpy agrees with use-world-coords (ADR 14, P1)."""
+    path = _scene_file(tmp_path)
+    raw = read_model(path, viewer=True)
+    model = ifcopenshell.open(str(path))
+    flights = {e.id(): e for e in model.by_type("IfcStairFlight") if e.Name in FLIGHTS[BARE_STAIR]}
+
+    world = {
+        entity.GlobalId: np.frombuffer(shape.geometry.verts_buffer).reshape(-1, 3)
+        for shape, entity in geometry._triangulated(model, flights, 1, world=True)
+    }
+
+    moved = [m for m in raw.meshes if m.global_id in world]
+    assert len(moved) == 2
+    for mesh in moved:
+        vertices = np.frombuffer(mesh.vertices).reshape(-1, 3)
+        assert np.abs(vertices - world[mesh.global_id]).max() < 1e-9
+        # Turned a quarter and moved: x from 10 - 3 to 10, y from 20 to 21.
+        assert vertices.min(axis=0).tolist() == pytest.approx([7.0, 20.0, 1.0])
+        assert vertices.max(axis=0).tolist() == pytest.approx([10.0, 21.0, 1.2])
+
+
+def test_a_file_with_no_body_triangulates_nothing(tmp_path: Path) -> None:
+    scene = geometry.triangulate_scene(ifcopenshell.file(schema="IFC4"), measure=True)
+
+    assert (scene.meshes, scene.footprints, scene.shapes, scene.issues) == ((), (), (), ())
+    assert scene.seconds >= 0
+
+
+def test_the_viewers_pass_reports_what_it_cannot_measure_or_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_measured_model(tmp_path / "beam.ifc", only_unmeasurable=True)
+    monkeypatch.setattr(ifcopenshell.util.shape, "get_volume", lambda shape: math.nan)
+
+    shared = read_model(path, geometry=True, viewer=True)
+    measured = read_model(_scene_file(tmp_path), geometry=True, viewer=True)
+
+    assert shared.issues == read_model(path, geometry=True).issues
+    assert [i.message for i in shared.issues] == [
+        f"IfcSpace {UNPLANNED_SPACE!r} has a body that gives no plan; a copy of it is found "
+        "by its number, name, storey and area only",
+        f"IfcBeam {BEAM!r} has a body that could not be triangulated; no geometry quantity",
+        f"IfcSpace {UNPLANNED_SPACE!r} has a body that could not be triangulated; no geometry "
+        "quantity",
+    ]
+    failed = [i for i in measured.issues if "could not be measured" in i.message]
+    assert len(failed) == 9
+    assert all("non-finite" in issue.message for issue in failed)
+
+
+@pytest.mark.parametrize(
+    ("diffuse", "transparency", "rgba"),
+    [
+        ((0.4, 0.5, 0.6), math.nan, (0.4, 0.5, 0.6, 1.0)),
+        ((0.65, 0.75, 0.8), 0.8, (0.65, 0.75, 0.8, pytest.approx(0.2))),
+        ((1.5, -0.1, 0.5), None, (1.0, 0.0, 0.5, 1.0)),
+        ((math.nan, 0.5, 0.5), 0.0, DEFAULT_RGBA),
+        (None, 0.0, DEFAULT_RGBA),
+        ((0.1, 0.2), 0.0, DEFAULT_RGBA),
+    ],
+)
+def test_a_materials_colour_is_kept_between_0_and_1_and_light_grey_without_one(
+    diffuse: tuple[float, ...] | None, transparency: float | None, rgba: tuple[float, ...]
+) -> None:
+    material = SimpleNamespace(
+        diffuse=SimpleNamespace(components=diffuse) if diffuse is not None else None,
+        transparency=transparency,
+    )
+
+    assert geometry.rgba(material) == rgba

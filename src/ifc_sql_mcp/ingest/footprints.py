@@ -55,11 +55,14 @@ class SpacePlan:
     repeats_global_id: str | None
 
 
-def plan_from_triangles(verts: Sequence[float], faces: Sequence[int]) -> Any | None:
+def plan_from_triangles(
+    verts: Sequence[float] | np.ndarray[Any, Any], faces: Sequence[int] | np.ndarray[Any, Any]
+) -> Any | None:
     """The plan of a triangulated body: the union of its triangles seen from above.
 
     Args:
-        verts: Flat x, y, z coordinates, in metres (IfcOpenShell's ``geometry.verts``).
+        verts: Flat x, y, z coordinates, in metres, in world coordinates (IfcOpenShell's
+            ``geometry.verts``, or the vertices ``geometry.triangulate_scene`` moves).
         faces: Flat vertex indices, three per triangle (``geometry.faces``).
 
     Returns:

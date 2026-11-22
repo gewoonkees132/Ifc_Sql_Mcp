@@ -96,8 +96,9 @@ warn_unreachable = true
 
 # IfcOpenShell ships partial type hints: entity attributes are resolved at run time, and
 # some signatures are narrower than the values they accept. Treat it as untyped, and only
-# here: ingest/extract.py is the one module that imports it, and it converts every value
-# it reads into a checked type, so everything downstream stays strictly typed.
+# here: ingest/extract.py and ingest/geometry.py are the two modules that import it, and
+# they convert every value they read into a checked type (raw.py), so everything
+# downstream stays strictly typed.
 [[tool.mypy.overrides]]
 module = ["ifcopenshell", "ifcopenshell.*"]
 follow_imports = "skip"
