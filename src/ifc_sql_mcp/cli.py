@@ -6,6 +6,7 @@ so individual commands stay focused on their own job.
 
 import dataclasses
 import logging
+import time
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.config import LOG_LEVELS, Settings, SettingsError, parse_log_level
+from ifc_sql_mcp.db.embedded import EmbeddedError, embedded_database_url
 from ifc_sql_mcp.db.engine import make_engine, make_reader_engine, reader_database_url, redact
 from ifc_sql_mcp.db.migrate import (
     READER_READS_REVISION_FROM,
@@ -33,9 +35,16 @@ from ifc_sql_mcp.dq.run import (
     loaded_model_ids,
 )
 from ifc_sql_mcp.dq.sync import sync_rules
-from ifc_sql_mcp.ingest.pipeline import IngestError, IngestResult, check_discipline, ingest_file
+from ifc_sql_mcp.ingest.pipeline import (
+    IngestError,
+    IngestResult,
+    ReplacesError,
+    check_discipline,
+    ingest_file,
+)
 from ifc_sql_mcp.logging_config import configure_logging
 from ifc_sql_mcp.server.app import build_server
+from ifc_sql_mcp.watch import Watcher, WatchEvent
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +67,23 @@ def resolve_settings(log_level_override: str | None) -> Settings:
     if log_level_override is not None:
         settings = dataclasses.replace(settings, log_level=parse_log_level(log_level_override))
     return settings
+
+
+def _database_settings(ctx: typer.Context) -> Settings:
+    """The settings of a command that uses the database, with the embedded one started first.
+
+    With IFC_SQL_DATA_DIR, the embedded PostgreSQL is started (or attached to) here, by the
+    commands that need it, so that ``--help`` starts nothing (``db/embedded.py``).
+    """
+    settings: Settings = ctx.obj
+    if settings.data_dir is None:
+        return settings
+    try:
+        url = embedded_database_url(settings.data_dir)
+    except EmbeddedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    return dataclasses.replace(settings, database_url=url)
 
 
 def _print_version(value: bool) -> None:
@@ -101,7 +127,7 @@ def migrate(
     ] = "head",
 ) -> None:
     """Create or upgrade the ifc schema: tables, views and the read-only role."""
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(settings.database_url)
     logger.info("migrating", extra={"database": database, "target": revision})
     try:
@@ -148,6 +174,13 @@ def _summary(file_name: str, result: IngestResult) -> str:
             f"{counts['property']:,} property values, {counts['ingest_issue']:,} issues "
             f"(run {result.run_id})"
         )
+    if result.status == "measured":
+        counts = result.row_counts
+        return (
+            f"measured the shapes of {file_name}, already loaded as {model}: "
+            f"{counts['quantity']:,} quantities and {counts['ingest_issue']:,} issues added "
+            f"(run {result.run_id}); check it again with ifc-sql dq {result.model_id}"
+        )
     skipped = f"run {result.run_id}, skipped"
     if result.concurrent:
         return (
@@ -172,20 +205,55 @@ def ingest(
             help="Discipline of the model: 2 to 8 capital letters, e.g. ARC, MEP, ELE, PLU.",
         ),
     ],
+    project: Annotated[
+        str | None,
+        typer.Option(
+            "--project",
+            help="The project this model belongs to, e.g. the project's number. Models with "
+            "the same project are compared across disciplines. Without it, the file's own "
+            "project number or name is used, unless it is a Revit default.",
+        ),
+    ] = None,
+    replaces: Annotated[
+        int | None,
+        typer.Option(
+            "--replaces",
+            min=1,
+            metavar="MODEL_ID",
+            help="The model this file is a new export of. That model stays loaded, but only "
+            "this one counts in project-wide views. Its --project is kept unless given.",
+        ),
+    ] = None,
+    geometry: Annotated[
+        bool,
+        typer.Option(
+            "--geometry",
+            help="Also measure the shapes, for files exported without quantities: wall side "
+            "areas, slab and space footprints, solid volumes. They rank after the file's "
+            "own quantities. Takes about a minute for a 15,000-object file on 4 cores. A "
+            "file already loaded without it is measured into the same model.",
+        ),
+    ] = False,
 ) -> None:
     """Load one IFC file. A file whose exact bytes are already loaded is skipped.
 
     Exit codes: 0 when the file was loaded or already was; 1 when the ingest failed
     (unreadable file, database unreachable or not migrated, load error); 2 for a usage
-    error (no such file, invalid discipline).
+    error (no such file, invalid discipline, blank project, no model to replace).
     """
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(settings.database_url)
     logger.info("ingesting", extra={"file": str(path), "discipline": discipline})
     engine = make_engine(settings.database_url)
     try:
         _require_latest_revision(settings, "ingest")
-        result = ingest_file(engine, path, discipline)
+        result = ingest_file(
+            engine, path, discipline, project_key=project, replaces=replaces, geometry=geometry
+        )
+    except ReplacesError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--replaces'") from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="'--project'") from exc
     except OperationalError as exc:
         typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
         raise typer.Exit(1) from exc
@@ -198,15 +266,23 @@ def ingest(
     finally:
         engine.dispose()
     typer.echo(_summary(path.name, result))
+    for warning in result.warnings:
+        typer.echo(f"warning: {warning}", err=True)
 
 
 def _dq_summary(result: DqResult) -> str:
-    """One line for stdout saying what a run found."""
+    """One line for stdout saying what a run found, the model's gaps apart from the tool's."""
     counts = result.severity_counts
+
+    def triple(scope: str) -> str:
+        c = result.scope_counts[scope]
+        return f"{c['error']:,} / {c['warning']:,} / {c['info']:,}"
+
     return (
         f"checked model {result.model_id} ({result.discipline}, {result.file_name}) in dq run "
         f"{result.run_id}: {counts['error']:,} error, {counts['warning']:,} warning, "
-        f"{counts['info']:,} info findings"
+        f"{counts['info']:,} info findings (model content {triple('model_content')}, "
+        f"loader coverage {triple('loader_coverage')})"
     )
 
 
@@ -229,7 +305,7 @@ def dq(
     run failed, the rule catalogue is invalid, or the database is unreachable or not
     migrated; 2 for a usage error (no model with a given id).
     """
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(settings.database_url)
     engine = make_engine(settings.database_url)
     failed = False
@@ -271,6 +347,89 @@ def dq(
         raise typer.Exit(1)
 
 
+@app.command()
+def watch(
+    ctx: typer.Context,
+    folder: Annotated[
+        Path,
+        typer.Argument(
+            exists=True, file_okay=False, dir_okay=True, help="The folder Revit exports into."
+        ),
+    ],
+    discipline: Annotated[
+        str,
+        typer.Option(
+            "--discipline",
+            callback=_discipline,
+            help="Discipline of every model in the folder, e.g. ARC.",
+        ),
+    ],
+    project: Annotated[
+        str | None,
+        typer.Option("--project", help="The project every model in the folder belongs to."),
+    ] = None,
+    geometry: Annotated[
+        bool, typer.Option("--geometry", help="Also measure the shapes, as ingest --geometry.")
+    ] = False,
+    interval: Annotated[
+        float, typer.Option("--interval", min=0.5, help="Seconds between two looks.")
+    ] = 5.0,
+    once: Annotated[
+        bool,
+        typer.Option("--once", help="Load and check what is in the folder now, then stop."),
+    ] = False,
+) -> None:
+    """Load each IFC file saved into FOLDER, then check it; a new export replaces the old.
+
+    A file is loaded once its size and time have not changed between two looks, and a
+    file whose name was loaded before is loaded as that model's new version
+    (--replaces). Stop with Ctrl+C. Exit codes: 0 when stopped (or after --once with no
+    failure); 1 when a file failed to load or check under --once, or the database is
+    unreachable or not migrated; 2 for a usage error.
+    """
+    settings = _database_settings(ctx)
+    database = redact(settings.database_url)
+    engine = make_engine(settings.database_url)
+    failed = False
+    try:
+        _require_latest_revision(settings, "watch")
+        rules = load_catalogue(CATALOGUE)
+        with engine.begin() as connection:
+            sync_rules(connection, rules)
+        watcher = Watcher(engine, folder, discipline, rules, project_key=project, geometry=geometry)
+        if not once:
+            typer.echo(f"watching {folder} every {interval:g} s; stop with Ctrl+C", err=True)
+        while True:
+            for event in watcher.poll(settle=not once):
+                failed = _report(event) or failed
+            if once:
+                break
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        typer.echo("stopped watching", err=True)
+    except OperationalError as exc:
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
+    if failed and once:
+        raise typer.Exit(1)
+
+
+def _report(event: WatchEvent) -> bool:
+    """Print what the watch did with one file; True when something failed."""
+    if event.ingest is not None:
+        typer.echo(_summary(event.path.name, event.ingest))
+        for warning in event.ingest.warnings:
+            typer.echo(f"warning: {warning}", err=True)
+    if event.check is not None:
+        typer.echo(_dq_summary(event.check))
+    if event.error is not None:
+        typer.echo(f"{event.path.name} failed: {event.error}", err=True)
+        return True
+    return False
+
+
 def _require_latest_revision_as_reader(engine: Engine, database: str) -> None:
     """Like ``_require_latest_revision``, but as ``ifc_reader``: serve has no other role."""
     try:
@@ -297,7 +456,7 @@ def serve(ctx: typer.Context) -> None:
     checks the database before it serves. Exit codes: 0 when the client closes the
     connection; 1 when the database is unreachable or not at the latest migration.
     """
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(reader_database_url(settings.database_url, settings.reader_password))
     engine = make_reader_engine(settings)
     try:

@@ -1,0 +1,454 @@
+{
+ "file": "R8_F1_MAB_AR_M3_XX_XXX_MO_7000.ifc",
+ "schema": "IFC2X3",
+ "open_seconds": 2.2,
+ "application": [
+  "Autodesk Revit 2022 (ENG) 2022"
+ ],
+ "length_unit_scale_to_m": 1.0,
+ "elements_by_class": {
+  "IfcWallStandardCase": 6040,
+  "IfcOpeningElement": 3314,
+  "IfcDoor": 1458,
+  "IfcMember": 1202,
+  "IfcWindow": 1199,
+  "IfcSlab": 440,
+  "IfcPlate": 348,
+  "IfcStairFlight": 182,
+  "IfcBuildingElementProxy": 180,
+  "IfcCurtainWall": 86,
+  "IfcStair": 84,
+  "IfcWall": 55,
+  "IfcRailing": 10,
+  "IfcColumn": 7,
+  "IfcRamp": 4,
+  "IfcRampFlight": 3
+ },
+ "elements_total": 14612,
+ "spaces": 0,
+ "zones": 0,
+ "storeys": [
+  {
+   "name": "XX_AR_B02_pf",
+   "elevation_m": -8.57,
+   "elements": 713
+  },
+  {
+   "name": "XX_AR_B01_pf",
+   "elevation_m": -4.96,
+   "elements": 745
+  },
+  {
+   "name": "XX_AR_L00 -40",
+   "elevation_m": -0.4,
+   "elements": 398
+  },
+  {
+   "name": "XX_AR_L00_pf",
+   "elevation_m": 0.0,
+   "elements": 1657
+  },
+  {
+   "name": "XX_AR_L01",
+   "elevation_m": 4.8,
+   "elements": 1760
+  },
+  {
+   "name": "XX_AR_L02_pf",
+   "elevation_m": 8.1,
+   "elements": 1133
+  },
+  {
+   "name": "XX_AR_L03_pf",
+   "elevation_m": 11.4,
+   "elements": 947
+  },
+  {
+   "name": "XX_AR_L04_pf",
+   "elevation_m": 14.7,
+   "elements": 600
+  },
+  {
+   "name": "XX_AR_L05_pf",
+   "elevation_m": 18.0,
+   "elements": 681
+  },
+  {
+   "name": "XX_AR_L06_pf",
+   "elevation_m": 21.84,
+   "elements": 1018
+  },
+  {
+   "name": "XX_AR_L07_pf",
+   "elevation_m": 25.14,
+   "elements": 1055
+  },
+  {
+   "name": "XX_AR_L08_pf",
+   "elevation_m": 28.44,
+   "elements": 786
+  },
+  {
+   "name": "XX_AR_L09_pf",
+   "elevation_m": 31.74,
+   "elements": 548
+  },
+  {
+   "name": "XX_AR_L10_pf",
+   "elevation_m": 35.04,
+   "elements": 338
+  },
+  {
+   "name": "XX_AR_L11_pf",
+   "elevation_m": 38.34,
+   "elements": 337
+  },
+  {
+   "name": "XX_AR_L12_pf",
+   "elevation_m": 41.64,
+   "elements": 244
+  },
+  {
+   "name": "XX_AR_L13_pf",
+   "elevation_m": 44.94,
+   "elements": 127
+  },
+  {
+   "name": "XX_AR_L14_pf",
+   "elevation_m": 48.24,
+   "elements": 136
+  },
+  {
+   "name": "XX_AR_L15_pf",
+   "elevation_m": 51.54,
+   "elements": 132
+  },
+  {
+   "name": "XX_AR_L16_pf",
+   "elevation_m": 54.84,
+   "elements": 261
+  },
+  {
+   "name": "XX_AR_L17_pf",
+   "elevation_m": 58.14,
+   "elements": 134
+  },
+  {
+   "name": "XX_AR_L18_pf",
+   "elevation_m": 61.44,
+   "elements": 341
+  },
+  {
+   "name": "XX_AR_L19_pf",
+   "elevation_m": 64.74,
+   "elements": 209
+  },
+  {
+   "name": "XX_AR_L20_pf",
+   "elevation_m": 68.04,
+   "elements": 44
+  },
+  {
+   "name": "XX_AR_L21_pf",
+   "elevation_m": 71.34,
+   "elements": 46
+  },
+  {
+   "name": "XX_AR_L22_pf",
+   "elevation_m": 74.64,
+   "elements": 40
+  },
+  {
+   "name": "XX_AR_L23_pf",
+   "elevation_m": 77.94,
+   "elements": 162
+  },
+  {
+   "name": "XX_AR_L24_pf",
+   "elevation_m": 81.24,
+   "elements": 20
+  }
+ ],
+ "elements_without_storey": 0,
+ "IfcDoor": {
+  "count": 1458,
+  "with_overall_width_and_height": 1458,
+  "top_sizes_m": [
+   [
+    "0.87 x 2.1",
+    655
+   ],
+   [
+    "1.35 x 2.15",
+    435
+   ],
+   [
+    "1.127 x 2.145",
+    191
+   ],
+   [
+    "1.697 x 2.172",
+    104
+   ],
+   [
+    "0.97 x 2.1",
+    43
+   ],
+   [
+    "3.096 x 2.93",
+    2
+   ],
+   [
+    "3.579 x 2.97",
+    2
+   ],
+   [
+    "3.131 x 4.66",
+    1
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    1458
+   ]
+  ],
+  "is_external_values": [
+   [
+    "False",
+    1458
+   ]
+  ],
+  "per_storey_top": [
+   [
+    "XX_AR_L01",
+    159
+   ],
+   [
+    "XX_AR_L06_pf",
+    156
+   ],
+   [
+    "XX_AR_L07_pf",
+    145
+   ],
+   [
+    "XX_AR_L00_pf",
+    119
+   ],
+   [
+    "XX_AR_L03_pf",
+    116
+   ],
+   [
+    "XX_AR_L02_pf",
+    112
+   ]
+  ]
+ },
+ "IfcWindow": {
+  "count": 1199,
+  "with_overall_width_and_height": 1199,
+  "top_sizes_m": [
+   [
+    "0.922 x 2.85",
+    369
+   ],
+   [
+    "1.3 x 2.85",
+    342
+   ],
+   [
+    "2.3 x 2.85",
+    187
+   ],
+   [
+    "1.7 x 2.85",
+    144
+   ],
+   [
+    "0.922 x 1.85",
+    131
+   ],
+   [
+    "1.5 x 2.3",
+    16
+   ],
+   [
+    "0.922 x 2.95",
+    8
+   ],
+   [
+    "0.922 x 2.8",
+    1
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    1199
+   ]
+  ],
+  "is_external_values": [
+   [
+    "False",
+    1191
+   ],
+   [
+    "True",
+    8
+   ]
+  ],
+  "per_storey_top": [
+   [
+    "XX_AR_L02_pf",
+    149
+   ],
+   [
+    "XX_AR_L01",
+    118
+   ],
+   [
+    "XX_AR_L05_pf",
+    110
+   ],
+   [
+    "XX_AR_L07_pf",
+    98
+   ],
+   [
+    "XX_AR_L03_pf",
+    96
+   ],
+   [
+    "XX_AR_L04_pf",
+    94
+   ]
+  ]
+ },
+ "IfcWall": {
+  "count": 6095,
+  "is_external_values": [
+   [
+    "True",
+    3636
+   ],
+   [
+    "False",
+    2459
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    6095
+   ]
+  ],
+  "load_bearing_values": [
+   [
+    "False",
+    6095
+   ]
+  ],
+  "material_kinds": [
+   [
+    "IfcMaterialLayerSet",
+    6095
+   ]
+  ]
+ },
+ "material_kinds_all_elements": [
+  [
+   "IfcMaterialLayerSet",
+   6435
+  ],
+  [
+   null,
+   3502
+  ],
+  [
+   "IfcMaterialList",
+   2812
+  ],
+  [
+   "IfcMaterial",
+   1863
+  ]
+ ],
+ "qto_duplicate_quantity_names": 0,
+ "qto_space_totals": {},
+ "qto_wall_net_side_area_by_type_m2": [],
+ "qto_wall_net_side_area_total_m2": 0,
+ "space_examples": [],
+ "geometry": {
+  "targets": 9192,
+  "shapes": 9190,
+  "measure_failures": 0,
+  "seconds": 33.8,
+  "wall_side_area_total_m2": 103057.7,
+  "wall_side_area_by_type_m2": [
+   [
+    "Basic Wall:1AR_MUR_CV003 _Interno_Esterno Poroton Ventilata",
+    1165,
+    25114.3
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV002_Interrato_Interrato",
+    512,
+    18980.5
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV001\u001f\u001f\u001f - Interrato_Interrato",
+    571,
+    10305.5
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV005_Interno_Interno",
+    1252,
+    9953.9
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV012_Servizi_Servizi",
+    636,
+    8635.2
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV104_Zone Comuni_Ascensori STR40",
+    401,
+    7304.0
+   ],
+   [
+    "Basic Wall:1AR_MUR_CV101_Interrato controterra",
+    61,
+    4750.9
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV101+102_Appartamento_Scala",
+    236,
+    4445.0
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV102_Zone Comuni_Scala",
+    248,
+    3197.9
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV101_Appartamento_Scala",
+    121,
+    2672.2
+   ],
+   [
+    "Basic Wall:Generico - 30 cm",
+    470,
+    2445.7
+   ],
+   [
+    "Basic Wall:1AR_MUR_PV104_Zone Comuni_Ascensori STR30",
+    129,
+    2070.5
+   ]
+  ],
+  "slab_footprint_area_total_m2": 83196.2
+ },
+ "total_seconds": 39.8
+}

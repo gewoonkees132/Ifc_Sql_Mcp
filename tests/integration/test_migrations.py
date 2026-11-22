@@ -1,8 +1,10 @@
 """The migrations: they run both ways, and they agree with schema.py."""
 
 import io
+import warnings
 from collections.abc import Callable
 
+import make_revit_quirks
 import pytest
 from alembic import command
 from alembic.autogenerate import compare_metadata
@@ -25,6 +27,7 @@ from ifc_sql_mcp.db.migrate import (
     reader_revision,
 )
 from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA, metadata
+from ifc_sql_mcp.ingest.pipeline import ingest_file
 
 CreateDatabase = Callable[[str], Settings]
 
@@ -76,6 +79,16 @@ def test_migration_history_is_one_linear_chain() -> None:
         "0007",
         "0008",
         "0009",
+        "0010",
+        "0011",
+        "0012",
+        "0013",
+        "0014",
+        "0015",
+        "0016",
+        "0017",
+        "0018",
+        "0019",
     ]
 
 
@@ -132,7 +145,10 @@ def test_schema_py_matches_migrated_database(test_settings: Settings) -> None:
     """
     engine = migration_engine(test_settings.database_url)
     try:
-        with engine.connect() as connection:
+        with engine.connect() as connection, warnings.catch_warnings():
+            # Alembic cannot compare a generated column's expression, and says so;
+            # test_storey_alignment.py checks model.project_group by its values.
+            warnings.filterwarnings("ignore", "Computed default on .* cannot be modified")
             context = MigrationContext.configure(connection, opts=AUTOGENERATE_OPTIONS)
             differences = compare_metadata(context, metadata)
     finally:
@@ -239,3 +255,50 @@ def test_the_reader_reports_any_other_error_reading_the_revision_as_it_is(
         ProgrammingError, match=r"column alembic_version\.version_num does not exist"
     ):
         _reader_revision(broken)
+
+
+FIXTURE = make_revit_quirks.OUTPUT
+
+
+def test_0010_moves_a_loaded_openings_name_parts_both_ways(
+    create_database: CreateDatabase,
+) -> None:
+    """A model loaded before 0010 gets the split it would get from a new load, and back."""
+    settings = create_database("test_0010")
+    config = alembic_config(settings)
+    command.upgrade(config, "head")
+    engine = make_engine(settings.database_url)
+    try:
+        ingest_file(engine, FIXTURE, "ARC")
+        opening = (
+            "SELECT e.is_feature, e.revit_family, e.revit_type, e.host_revit_family, "
+            "e.host_revit_type FROM ifc.element AS e JOIN ifc.object AS o USING (object_id) "
+            "WHERE o.global_id = :g"
+        )
+        name_parts = ("M_Single-Flush", "0915 x 2134mm")
+
+        command.downgrade(config, "0009")
+        with engine.connect() as connection:
+            before = connection.execute(
+                text(
+                    "SELECT e.revit_family, e.revit_type FROM ifc.element AS e "
+                    "JOIN ifc.object AS o USING (object_id) WHERE o.global_id = :g"
+                ),
+                {"g": make_revit_quirks.DOOR_OPENING},
+            ).one()
+        command.upgrade(config, "0010")
+        with engine.connect() as connection:
+            after = connection.execute(text(opening), {"g": make_revit_quirks.DOOR_OPENING}).one()
+            walls = connection.execute(
+                text(
+                    "SELECT count(*) FROM ifc.element AS e JOIN ifc.object AS o "
+                    "USING (object_id) WHERE e.is_feature AND o.ifc_class_base <> "
+                    "'IfcOpeningElement'"
+                )
+            ).scalar_one()
+    finally:
+        engine.dispose()
+
+    assert tuple(before) == name_parts  # 0009: the opening carries the door's name parts
+    assert tuple(after) == (True, None, None, *name_parts)
+    assert walls == 0

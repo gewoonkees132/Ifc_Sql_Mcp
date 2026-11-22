@@ -16,8 +16,14 @@ Three things happen here, in this order:
    The rules, in order:
 
    * a value on the occurrence overrides one from its type (IFC's own rule), silently;
+   * in a quantity set, the one value that keeps the set's physical bounds wins
+     (``plausibility.choose``): Revit 2021 writes a wall's ``NetSideArea`` twice, first
+     unscaled, and file order would keep the value 10⁶ times too large;
    * otherwise the value written first in the file wins (lowest STEP ids);
    * a losing value that differs from the winner is reported, identical ones are not.
+4. **Plausibility.** A quantity-set value that still breaks a physical bound set by the
+   other values of its set (a space volume of 1,000 x area x height) is kept as written
+   but flagged ``implausible``, so it becomes no quantity (``plausibility.check_set``).
 
 Quantity sets (IfcElementQuantity) are stored here too, under their set name, so every
 value in the file is queryable and ``quantity.source_ref`` always names a property row.
@@ -27,10 +33,16 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+from ifc_sql_mcp.ingest import plausibility
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.raw import RawUnit, RawValue
 from ifc_sql_mcp.ingest.records import PropertyRecord
-from ifc_sql_mcp.ingest.units import DIMENSIONLESS_MEASURES, MEASURE_DIMENSIONS, to_si
+from ifc_sql_mcp.ingest.units import (
+    DIMENSIONLESS_MEASURES,
+    MEASURE_DIMENSIONS,
+    Dimension,
+    to_si,
+)
 
 REVIT_TYPE_SET_PREFIX = "PSet_Revit_Type_"
 
@@ -54,6 +66,8 @@ class TypedValue:
     from_type: bool
     from_quantity_set: bool
     order: tuple[int, int]
+    implausible: bool = False
+    from_attribute: bool = False
 
     @property
     def payload(self) -> tuple[object, ...]:
@@ -77,6 +91,7 @@ class TypedValue:
             value_bool=self.boolean,
             unit=self.unit,
             is_type_property=self.is_type_property,
+            is_implausible=self.implausible,
         )
 
 
@@ -116,7 +131,7 @@ def type_value(
     elif isinstance(value, int | float):
         number = float(value)
         dimension = MEASURE_DIMENSIONS.get(raw.value_type or "")
-        if dimension is not None:
+        if dimension is not None and dimension.required:
             unit = raw.unit if raw.unit and raw.unit.unit_type == dimension.unit_type else None
             unit = unit or units[dimension.unit_type]
             converted = to_si(number, unit)
@@ -124,6 +139,8 @@ def type_value(
                 message = f"{ref} = {value!r} is in {unit.name}, which has no SI conversion"
                 return None, [Issue(IssueCode.UNIT_NOT_CONVERTIBLE, global_id, message)]
             number, unit_symbol = converted, dimension.si_symbol
+        elif (derived := _derived_si(number, dimension, raw, units)) is not None:
+            number, unit_symbol = derived
         elif raw.unit is not None or _has_physical_unit(raw.value_type):
             message = f"{ref} = {value!r} ({raw.value_type}) is stored as written, without a unit"
             issues.append(Issue(IssueCode.MEASURE_NOT_CONVERTED, global_id, message))
@@ -144,8 +161,25 @@ def type_value(
         from_type=raw.from_type,
         from_quantity_set=raw.from_quantity_set,
         order=raw.order,
+        from_attribute=raw.from_attribute,
     )
     return typed, issues
+
+
+def _derived_si(
+    number: float, dimension: Dimension | None, raw: RawValue, units: Mapping[str, RawUnit]
+) -> tuple[float, str] | None:
+    """A derived measure in SI with its unit, when its own or the project's unit says how.
+
+    ``None`` when the file declares no unit for it, or one without a known SI factor:
+    the value is then stored as written and reported (audit finding A13).
+    """
+    if dimension is None:
+        return None
+    own = raw.unit if raw.unit and raw.unit.unit_type == dimension.unit_type else None
+    unit = own or units.get(dimension.unit_type)
+    converted = to_si(number, unit) if unit is not None else None
+    return None if converted is None else (converted, dimension.si_symbol)
 
 
 def _has_physical_unit(value_type: str | None) -> bool:
@@ -173,20 +207,71 @@ def resolve_properties(
         if typed is not None:
             candidates.setdefault((typed.set_name, typed.name), []).append(typed)
 
+    # Occurrence values (from_type False) sort before type values, then file order.
+    ranked = {
+        key: sorted(values, key=lambda value: (value.from_type, value.order))
+        for key, values in candidates.items()
+    }
+    singles = _single_quantities(ranked)
+
     kept: list[TypedValue] = []
-    for key in sorted(candidates):
-        # Occurrence values (from_type False) sort before type values, then file order.
-        ranked = sorted(candidates[key], key=lambda value: (value.from_type, value.order))
-        winner = ranked[0]
+    for key in sorted(ranked):
+        winner, reason = ranked[key][0], ""
+        rivals = _rivals(ranked[key])
+        if rivals and winner.from_quantity_set:
+            siblings = singles.get(key[0], {})
+            chosen = plausibility.choose([winner, *rivals], siblings)
+            if chosen is not None:
+                winner, reason = chosen, f" ({plausibility.why_chosen(chosen, siblings)})"
         kept.append(winner)
-        for loser in ranked[1:]:
-            if loser.from_type == winner.from_type and loser.payload != winner.payload:
+        for loser in ranked[key]:
+            if (
+                loser is not winner
+                and loser.from_type == winner.from_type
+                and loser.payload != winner.payload
+            ):
                 message = (
-                    f"{winner.ref} has several values; kept {_shown(winner)}, "
+                    f"{winner.ref} has several values; kept {_shown(winner)}{reason}, "
                     f"dropped {_shown(loser)}"
                 )
                 issues.append(Issue(IssueCode.CONFLICTING_PROPERTY, global_id, message))
-    return kept, issues
+    checked, check_issues = _check_quantity_sets(global_id, kept)
+    return checked, issues + check_issues
+
+
+def _rivals(ranked: list[TypedValue]) -> list[TypedValue]:
+    """The values that compete with the first: same level, a different value."""
+    first = ranked[0]
+    return [v for v in ranked[1:] if v.from_type == first.from_type and v.payload != first.payload]
+
+
+def _single_quantities(
+    ranked: Mapping[tuple[str, str], list[TypedValue]],
+) -> dict[str, dict[str, float]]:
+    """Per quantity set, the numbers of its quantities that have exactly one value."""
+    singles: dict[str, dict[str, float]] = {}
+    for (set_name, name), values in ranked.items():
+        first = values[0]
+        if first.from_quantity_set and first.number is not None and not _rivals(values):
+            singles.setdefault(set_name, {})[name] = first.number
+    return singles
+
+
+def _check_quantity_sets(
+    global_id: str, values: list[TypedValue]
+) -> tuple[list[TypedValue], list[Issue]]:
+    """Flag the quantity-set values that break a physical bound of their set."""
+    by_set: dict[str, list[TypedValue]] = {}
+    for value in values:
+        if value.from_quantity_set:
+            by_set.setdefault(value.set_name, []).append(value)
+    checked: dict[tuple[str, str], TypedValue] = {}
+    issues: list[Issue] = []
+    for set_values in by_set.values():
+        flagged, set_issues = plausibility.check_set(global_id, set_values)
+        checked.update({(v.set_name, v.name): v for v in flagged})
+        issues.extend(set_issues)
+    return [checked.get((v.set_name, v.name), v) for v in values], issues
 
 
 def _shown(value: TypedValue) -> str:

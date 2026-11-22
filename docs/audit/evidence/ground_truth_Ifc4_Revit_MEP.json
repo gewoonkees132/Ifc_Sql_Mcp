@@ -1,0 +1,252 @@
+{
+ "file": "Ifc4_Revit_MEP.ifc",
+ "schema": "IFC4",
+ "open_seconds": 0.6,
+ "application": [
+  "Autodesk Revit 2021 (ENU) 2021"
+ ],
+ "length_unit_scale_to_m": 0.001,
+ "elements_by_class": {
+  "IfcMember": 1450,
+  "IfcDuctFitting": 935,
+  "IfcDuctSegment": 837,
+  "IfcBuildingElementProxy": 654,
+  "IfcPlate": 629,
+  "IfcPipeFitting": 535,
+  "IfcPipeSegment": 491,
+  "IfcLightFixture": 410,
+  "IfcAirTerminal": 309,
+  "IfcColumn": 135,
+  "IfcWall": 133,
+  "IfcOpeningElement": 131,
+  "IfcDoor": 124,
+  "IfcCovering": 43,
+  "IfcCurtainWall": 33,
+  "IfcSlab": 25,
+  "IfcCableCarrierSegment": 20,
+  "IfcRailing": 14,
+  "IfcCableCarrierFitting": 14,
+  "IfcFlowTerminal": 11,
+  "IfcStair": 8,
+  "IfcStairFlight": 8,
+  "IfcFireSuppressionTerminal": 6
+ },
+ "elements_total": 6955,
+ "spaces": 163,
+ "zones": 51,
+ "storeys": [
+  {
+   "name": "Level 1",
+   "elevation_m": 0.094,
+   "elements": 3386
+  },
+  {
+   "name": "Level 2",
+   "elevation_m": 3.8,
+   "elements": 2002
+  },
+  {
+   "name": "Level 3",
+   "elevation_m": 7.3,
+   "elements": 1501
+  },
+  {
+   "name": "Roof Level",
+   "elevation_m": 10.9,
+   "elements": 66
+  }
+ ],
+ "elements_without_storey": 0,
+ "IfcDoor": {
+  "count": 124,
+  "with_overall_width_and_height": 124,
+  "top_sizes_m": [
+   [
+    "0.885 x 2.26",
+    95
+   ],
+   [
+    "0.76 x 2.26",
+    12
+   ],
+   [
+    "1.085 x 2.07",
+    9
+   ],
+   [
+    "2.49 x 2.495",
+    2
+   ],
+   [
+    "2.062 x 3.02",
+    1
+   ],
+   [
+    "1.01 x 1.99",
+    1
+   ],
+   [
+    "0.91 x 2.41",
+    1
+   ],
+   [
+    "2.14 x 2.47",
+    1
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    124
+   ]
+  ],
+  "is_external_values": [
+   [
+    "False",
+    124
+   ]
+  ],
+  "per_storey_top": [
+   [
+    "Level 2",
+    46
+   ],
+   [
+    "Level 1",
+    44
+   ],
+   [
+    "Level 3",
+    34
+   ]
+  ]
+ },
+ "IfcWindow": {
+  "count": 0,
+  "with_overall_width_and_height": 0,
+  "top_sizes_m": [],
+  "fire_rating_values": [],
+  "is_external_values": [],
+  "per_storey_top": []
+ },
+ "IfcWall": {
+  "count": 133,
+  "is_external_values": [
+   [
+    "True",
+    133
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    133
+   ]
+  ],
+  "load_bearing_values": [
+   [
+    "False",
+    133
+   ]
+  ],
+  "material_kinds": [
+   [
+    "IfcMaterialLayerSet",
+    133
+   ]
+  ]
+ },
+ "material_kinds_all_elements": [
+  [
+   null,
+   4048
+  ],
+  [
+   "IfcMaterial",
+   2349
+  ],
+  [
+   "IfcMaterialConstituentSet",
+   295
+  ],
+  [
+   "IfcMaterialLayerSet",
+   197
+  ],
+  [
+   "IfcMaterialList",
+   66
+  ]
+ ],
+ "qto_duplicate_quantity_names": 266,
+ "qto_space_totals": {
+  "space.NetFloorArea_m2": 8090.74,
+  "space.GrossFloorArea_m2": 8090.74
+ },
+ "qto_wall_net_side_area_by_type_m2": [
+  [
+   "Basic Wall:MW 11.5",
+   61,
+   1228.67
+  ],
+  [
+   "Basic Wall:STB 20.0",
+   18,
+   874.96
+  ],
+  [
+   "Basic Wall:Lamelle 11.5",
+   7,
+   650.61
+  ],
+  [
+   "Basic Wall:MW 17.5",
+   29,
+   385.49
+  ],
+  [
+   "Basic Wall:STB 30.0",
+   8,
+   298.88
+  ],
+  [
+   "Basic Wall:STB 30.0 Rot",
+   2,
+   56.09
+  ],
+  [
+   "Basic Wall:WC Trennwand 5.0",
+   7,
+   32.22
+  ],
+  [
+   "Basic Wall:STB 25.0 WD 12.0",
+   1,
+   19.8
+  ]
+ ],
+ "qto_wall_net_side_area_total_m2": 3546.71,
+ "space_examples": [
+  [
+   "28",
+   "Technology"
+  ],
+  [
+   "27",
+   "Cleaning"
+  ],
+  [
+   "30",
+   "Washing Room"
+  ],
+  [
+   "25",
+   "Washing Room"
+  ],
+  [
+   "26",
+   "Cleaning"
+  ]
+ ],
+ "total_seconds": 1.0
+}

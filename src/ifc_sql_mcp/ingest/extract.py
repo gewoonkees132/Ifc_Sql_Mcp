@@ -12,6 +12,15 @@ What it reads, and from where:
   ``IfcElement`` (everything physical, openings included). Other products, such as the
   970 ``IfcDistributionPort`` connection points in the plumbing model, are not loaded;
   their count is logged.
+* **Attributes** that are measurements or kinds of operation, not properties: a door's
+  or window's ``OverallWidth`` and ``OverallHeight`` and its operation or partitioning
+  type, on the occurrence and on its type (:data:`_ATTRIBUTES`). Each is stored as a
+  property of a set named after the entity that declares it (``IfcDoor.OverallWidth``),
+  typed by the schema's declaration, so it is converted like any measure.
+* **Predefined property sets** (``IfcDoorLiningProperties``, ``IfcDoorPanelProperties``,
+  ``IfcWindowLiningProperties``...), whose values are attributes too: every attribute
+  with a simple value becomes a property of a set named after the class. ``NOTDEFINED``
+  is no value, as for ``PredefinedType``.
 * **Properties** by walking ``IfcRelDefinesByProperties`` and the type's
   ``HasPropertySets`` directly, rather than through ``ifcopenshell.util.element.get_psets``.
   That helper merges sets that share a name (losing which value came from the type),
@@ -21,9 +30,14 @@ What it reads, and from where:
   applies IFC's inheritance rule: an occurrence inherits its type's references, and its
   own reference in a system replaces the type's.
 * **Materials** from ``IfcRelAssociatesMaterial`` on the element, or on its type if the
-  element has none (IFC's inheritance rule again).
+  element has none (IFC's inheritance rule again): a single material, a list, a layer set
+  (with thicknesses), and IFC4's constituent sets (a door's frame and panel) and profile
+  sets (a member's section), in the order the file lists them. Revit 2021 names every
+  constituent after its material and gives no fraction, in all 399 sets of the audit's
+  files A and C, so neither is kept.
 """
 
+import dataclasses
 import hashlib
 import logging
 from collections import Counter
@@ -37,6 +51,7 @@ import ifcopenshell.util.classification
 import ifcopenshell.util.element
 import ifcopenshell.util.unit
 
+from ifc_sql_mcp.ingest.geometry import measure_shapes, measure_space_plans
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.raw import (
     RawElement,
@@ -72,6 +87,36 @@ _QUANTITY_VALUE_INDEX = 3
 # Attributes every property set definition has; any other non-empty one is data.
 _PROPERTY_SET_HEADER = frozenset({"type", "GlobalId", "OwnerHistory", "Name", "Description"})
 
+# Attributes read as properties, by the entity that declares them. A door schedule needs
+# the overall size and how the door opens; IFC puts them in attributes, not property
+# sets. Names an entity's schema does not have (IFC2X3's IfcDoor has no OperationType)
+# are skipped.
+_ATTRIBUTES: dict[str, tuple[str, ...]] = {
+    "IfcDoor": ("OverallWidth", "OverallHeight", "OperationType", "UserDefinedOperationType"),
+    "IfcWindow": (
+        "OverallWidth",
+        "OverallHeight",
+        "PartitioningType",
+        "UserDefinedPartitioningType",
+    ),
+    "IfcDoorType": ("OperationType", "UserDefinedOperationType"),
+    "IfcDoorStyle": ("OperationType", "ConstructionType"),
+    "IfcWindowType": ("PartitioningType", "UserDefinedPartitioningType"),
+    "IfcWindowStyle": ("OperationType", "ConstructionType"),
+}
+
+# IFC's simple types, as value types: the attribute declares "boolean", a property
+# would say IfcBoolean.
+_SIMPLE_TYPES = {
+    "boolean": "IfcBoolean",
+    "logical": "IfcLogical",
+    "string": "IfcLabel",
+    "real": "IfcReal",
+    "number": "IfcReal",
+    "integer": "IfcInteger",
+}
+_NOT_DEFINED = "NOTDEFINED"
+
 # An ISO 10303-21 (STEP) file opens and closes with these keywords.
 _STEP_START = b"ISO-10303-21;"
 _STEP_END = b"END-ISO-10303-21;"
@@ -91,8 +136,12 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def read_model(path: Path) -> RawModel:
+def read_model(path: Path, *, geometry: bool = False) -> RawModel:
     """Read the IFC file at ``path``.
+
+    Args:
+        path: The IFC file.
+        geometry: Also triangulate and measure the shapes (``geometry.measure_shapes``).
 
     Raises:
         FileNotFoundError: if there is no such file.
@@ -106,7 +155,16 @@ def read_model(path: Path) -> RawModel:
         model = ifcopenshell.open(str(path))
     except ifcopenshell.Error as exc:
         raise ExtractError(f"{path.name}: not a readable IFC file ({exc})") from exc
-    return _Extractor(model, path.name, sha256, size_bytes).run()
+    raw = _Extractor(model, path.name, sha256, size_bytes).run()
+    footprints, plan_issues, plan_seconds = measure_space_plans(model)
+    logger.debug("measured space plans", extra={"plans": len(footprints), "seconds": plan_seconds})
+    raw = dataclasses.replace(raw, footprints=footprints, issues=raw.issues + tuple(plan_issues))
+    if not geometry:
+        return raw
+    shapes, issues, seconds = measure_shapes(model)
+    return dataclasses.replace(
+        raw, shapes=shapes, issues=raw.issues + tuple(issues), geometry_seconds=seconds
+    )
 
 
 def _check_complete(path: Path, size_bytes: int) -> None:
@@ -127,6 +185,15 @@ def _check_complete(path: Path, size_bytes: int) -> None:
         raise ExtractError(f"{path.name}: the file ends before END-ISO-10303-21; (truncated)")
 
 
+def _coherent_si(unit: Entity) -> bool:
+    """True for an SI unit in which a coherent SI quantity is written: no prefix, or kg."""
+    if unit is None or not unit.is_a("IfcSIUnit"):
+        return False
+    if _text(unit.Name) == "GRAM":
+        return _text(unit.Prefix) == "KILO"
+    return unit.Prefix is None
+
+
 def _text(value: object) -> str | None:
     """Return ``value`` if it is a string, else ``None`` (IFC leaves optional text unset)."""
     return value if isinstance(value, str) else None
@@ -137,6 +204,27 @@ def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
+
+
+def _entries(materials: Any) -> tuple[RawMaterialEntry, ...]:
+    """Materials in file order, without thickness: a list, constituents or profiles.
+
+    A position without a material keeps its number, as an air gap in a layer set does.
+    """
+    return tuple(
+        RawMaterialEntry(position, _text(material.Name) if material is not None else None, None)
+        for position, material in enumerate(materials or (), start=1)
+    )
+
+
+def _is_predefined(definition: Entity) -> bool:
+    """True for a property set definition that is neither a property nor a quantity set."""
+    return not definition.is_a("IfcPropertySet") and not definition.is_a("IfcElementQuantity")
+
+
+def _is_value(value: object) -> bool:
+    """True for a simple attribute value worth storing: not absent, not NOTDEFINED."""
+    return isinstance(value, str | int | float | bool) and value != _NOT_DEFINED
 
 
 def _by_id(entities: Any) -> list[Entity]:
@@ -234,17 +322,37 @@ class _Extractor:
         return tuple(unit for unit in units if unit is not None)
 
     def _unit(self, unit: Entity) -> RawUnit | None:
-        """Describe a named unit; derived and monetary units are not needed here."""
+        """Describe a named or derived unit; monetary units are not needed here.
+
+        A derived unit (W/(m2 K) as kg K-1 s-3) has a factor only when it is coherent SI:
+        every element an SI unit without a prefix, the kilogram excepted. Its values are
+        then SI as written. A mass in grams is scaled to kilograms, the SI unit;
+        IfcOpenShell scales it to grams.
+        """
+        if unit is not None and unit.is_a("IfcDerivedUnit"):
+            elements = unit.Elements or ()
+            coherent = bool(elements) and all(_coherent_si(e.Unit) for e in elements)
+            unit_type = _text(unit.UnitType) or ""
+            return RawUnit(
+                unit_type=unit_type,
+                name=unit_type,
+                prefix=None,
+                is_si=coherent,
+                scale_to_si=1.0 if coherent else None,
+            )
         if unit is None or not unit.is_a("IfcNamedUnit"):
             return None
         is_si = bool(unit.is_a("IfcSIUnit"))
         convertible = is_si or unit.is_a("IfcConversionBasedUnit")
+        scale = float(ifcopenshell.util.unit.get_unit_scale(unit)) if convertible else None
+        if _text(unit.UnitType) == "MASSUNIT" and scale is not None:
+            scale = scale / 1000 if is_si and _text(unit.Name) == "GRAM" else None
         return RawUnit(
             unit_type=_text(unit.UnitType) or "",
             name=_text(unit.Name) or "",
             prefix=_text(unit.Prefix) if is_si else None,
             is_si=is_si,
-            scale_to_si=float(ifcopenshell.util.unit.get_unit_scale(unit)) if convertible else None,
+            scale_to_si=scale,
         )
 
     def _log_skipped_products(self) -> None:
@@ -336,22 +444,34 @@ class _Extractor:
     # ----------------------------------------------------------------- property values
 
     def _values(self, entity: Entity, global_id: str) -> Iterator[RawValue]:
+        definitions: list[tuple[Entity, bool]] = []
         for relation in _by_id(entity.IsDefinedBy):
             if not relation.is_a("IfcRelDefinesByProperties"):
                 continue
             definition = relation.RelatingPropertyDefinition
             # IFC4 can wrap several sets in one IfcPropertySetDefinitionSet.
             if definition.is_a("IfcPropertySetDefinitionSet"):
-                definitions = list(definition.wrappedValue)
+                definitions.extend((each, False) for each in definition.wrappedValue)
             else:
-                definitions = [definition]
-            for each in definitions:
-                yield from self._definition_values(each, global_id, from_type=False)
+                definitions.append((definition, False))
+        yield from self._attribute_values(entity, global_id, from_type=False)
 
         element_type = ifcopenshell.util.element.get_type(entity)
         if element_type is not None:
-            for definition in _by_id(element_type.HasPropertySets):
-                yield from self._definition_values(definition, global_id, from_type=True)
+            definitions.extend((d, True) for d in _by_id(element_type.HasPropertySets))
+            yield from self._attribute_values(element_type, global_id, from_type=True)
+
+        # A predefined set is named after its class; a second one of the same class (a
+        # double door's two panels) gets a number, in file order.
+        seen: Counter[str] = Counter()
+        for definition, from_type in definitions:
+            if _is_predefined(definition):
+                seen[definition.is_a()] += 1
+                count = seen[definition.is_a()]
+                name = definition.is_a() if count == 1 else f"{definition.is_a()} {count}"
+                yield from self._predefined_values(definition, name, global_id, from_type)
+            else:
+                yield from self._definition_values(definition, global_id, from_type=from_type)
 
     def _definition_values(
         self, definition: Entity, global_id: str, *, from_type: bool
@@ -359,17 +479,8 @@ class _Extractor:
         set_name = _text(definition.Name)
         if definition.is_a("IfcPropertySet"):
             members, is_quantity_set = definition.HasProperties, False
-        elif definition.is_a("IfcElementQuantity"):
-            members, is_quantity_set = definition.Quantities, True
         else:
-            # Revit 2011 gives door and window styles an IfcDoorLiningProperties (or
-            # window equivalent) named after one of their instances, with every attribute
-            # empty. Such predefined sets are skipped; one that holds data is reported.
-            info = definition.get_info(include_identifier=False, recursive=False)
-            if any(v is not None for k, v in info.items() if k not in _PROPERTY_SET_HEADER):
-                message = f"{definition.is_a()} {set_name!r} holds values that are not read"
-                self.issues.append(Issue(IssueCode.UNSUPPORTED_PROPERTY_SET, global_id, message))
-            return
+            members, is_quantity_set = definition.Quantities, True
         for member in members or ():
             value = self._member_value(member, set_name, global_id)
             if value is None:
@@ -385,6 +496,76 @@ class _Extractor:
                 from_quantity_set=is_quantity_set,
                 order=(int(definition.id()), int(member.id())),
             )
+
+    def _attribute_values(
+        self, entity: Entity, global_id: str, *, from_type: bool
+    ) -> Iterator[RawValue]:
+        """The attributes of :data:`_ATTRIBUTES` that ``entity`` has, as properties."""
+        for declaring, names in _ATTRIBUTES.items():
+            if not entity.is_a(declaring):
+                continue
+            declared = self._declared_types(entity)
+            for index, name in enumerate(names):
+                value = getattr(entity, name, None) if name in declared else None
+                if _is_value(value):
+                    yield RawValue(
+                        set_name=declaring,
+                        name=name,
+                        value_type=declared[name],
+                        value=value,
+                        unit=None,
+                        from_type=from_type,
+                        from_quantity_set=False,
+                        order=(int(entity.id()), index),
+                        from_attribute=True,
+                    )
+
+    def _predefined_values(
+        self, definition: Entity, set_name: str, global_id: str, from_type: bool
+    ) -> Iterator[RawValue]:
+        """Every simple attribute of a predefined property set, as a property.
+
+        Revit 2011 gives door and window styles such sets with every attribute empty, and
+        Revit 2022 with only NOTDEFINED enumerations: they yield nothing. An attribute
+        that refers to another entity (``ShapeAspectStyle``) is not read, and reported.
+        """
+        declared = self._declared_types(definition)
+        skipped: list[str] = []
+        for index, (name, value_type) in enumerate(declared.items()):
+            if name in _PROPERTY_SET_HEADER:
+                continue
+            value = getattr(definition, name, None)
+            if isinstance(value, ifcopenshell.entity_instance):
+                skipped.append(name)
+            elif _is_value(value):
+                yield RawValue(
+                    set_name=set_name,
+                    name=name,
+                    value_type=value_type,
+                    value=value,
+                    unit=None,
+                    from_type=from_type,
+                    from_quantity_set=False,
+                    order=(int(definition.id()), index),
+                    from_attribute=True,
+                )
+        if skipped:
+            message = f"{set_name}.{skipped[0]} refers to another entity, which is not read"
+            self.issues.append(Issue(IssueCode.UNSUPPORTED_PROPERTY_SET, global_id, message))
+
+    def _declared_types(self, entity: Entity) -> dict[str, str]:
+        """Each attribute of the entity's class, with the IFC type it is declared as."""
+        declaration = self.schema.declaration_by_name(entity.is_a()).as_entity()
+        types: dict[str, str] = {}
+        for attribute in declaration.all_attributes():
+            kind = attribute.type_of_attribute()
+            named = kind.as_named_type()
+            if named is not None:
+                types[str(attribute.name())] = str(named.declared_type().name())
+            elif kind.as_simple_type() is not None:
+                simple = str(kind.as_simple_type().declared_type())
+                types[str(attribute.name())] = _SIMPLE_TYPES.get(simple, "IfcLabel")
+        return types
 
     def _member_value(
         self, member: Entity, set_name: str | None, global_id: str
@@ -403,6 +584,14 @@ class _Extractor:
             if isinstance(value, str | int | float | bool):
                 return str(nominal.is_a()), value, self._unit(member.Unit)
             what = f"an {nominal.is_a()} value"  # e.g. IfcComplexNumber, a pair of numbers
+        elif member.is_a("IfcPropertyEnumeratedValue"):
+            chosen = list(member.EnumerationValues or ())
+            values = [value.wrappedValue for value in chosen]
+            if not values:
+                return None, None, None
+            if all(isinstance(value, str | int | float | bool) for value in values):
+                return self._enumerated(member, chosen, values)
+            what = "an IfcPropertyEnumeratedValue whose values are not all plain values"
         elif ifc_class in _QUANTITY_VALUE_TYPES:
             value = member[_QUANTITY_VALUE_INDEX]
             if isinstance(value, int | float) and not isinstance(value, bool):
@@ -411,6 +600,22 @@ class _Extractor:
         message = f"{set_name!r}.{_text(member.Name)!r} is {what}, which is not read"
         self.issues.append(Issue(IssueCode.UNSUPPORTED_PROPERTY, global_id, message))
         return None
+
+    def _enumerated(
+        self, member: Entity, chosen: list[Entity], values: list[Scalar]
+    ) -> tuple[str, Scalar, RawUnit | None]:
+        """The value an ``IfcPropertyEnumeratedValue`` chose from its enumeration (R3).
+
+        One value is kept as it is, with its type and the enumeration's unit, if any.
+        Several (IFC allows a multiple choice) become one text, joined with ``", "`` in the
+        file's order. Revit 2021 writes ``Pset_DuctSegmentTypeCommon.Shape`` this way, on
+        724 duct segments of the audit's file C.
+        """
+        if len(values) == 1:
+            reference = member.EnumerationReference
+            unit = self._unit(reference.Unit) if reference is not None else None
+            return str(chosen[0].is_a()), values[0], unit
+        return "IfcLabel", ", ".join(str(value) for value in values), None
 
     # ----------------------------------------------------------------- classifications
 
@@ -451,17 +656,23 @@ class _Extractor:
         if definition.is_a("IfcMaterial"):
             return (RawMaterialEntry(1, _text(definition.Name), None),)
         if definition.is_a("IfcMaterialList"):
-            return tuple(
-                RawMaterialEntry(position, _text(material.Name), None)
-                for position, material in enumerate(definition.Materials or (), start=1)
-            )
+            return _entries(definition.Materials)
+        # IFC4: a door's or window's parts (frame, panel, glazing), and a profile's.
+        if definition.is_a("IfcMaterialConstituentSet"):
+            return _entries(c.Material for c in definition.MaterialConstituents or ())
+        if definition.is_a("IfcMaterialProfileSetUsage"):
+            definition = definition.ForProfileSet
+        if definition.is_a("IfcMaterialProfileSet"):
+            return _entries(p.Material for p in definition.MaterialProfiles or ())
+        if definition.is_a("IfcMaterialConstituent") or definition.is_a("IfcMaterialProfile"):
+            return _entries([definition.Material])
         if definition.is_a("IfcMaterialLayerSetUsage"):
             definition = definition.ForLayerSet
         if definition.is_a("IfcMaterialLayerSet"):
             layers = list(definition.MaterialLayers or ())
         elif definition.is_a("IfcMaterialLayer"):
             layers = [definition]
-        else:
+        else:  # pragma: no cover - every IfcMaterialSelect of IFC2X3 and IFC4 is read above
             message = f"{definition.is_a()} is not read; the element gets no materials"
             self.issues.append(Issue(IssueCode.UNSUPPORTED_MATERIAL, global_id, message))
             return ()

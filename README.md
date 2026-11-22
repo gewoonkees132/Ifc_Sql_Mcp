@@ -13,7 +13,7 @@ flowchart LR
     extract --> transform["transform<br/>pure: records and issues"]
     transform --> load["load<br/>one transaction, COPY"]
     load --> db[("PostgreSQL 16<br/>schema ifc")]
-    db <--> dq["ifc-sql dq<br/>31 rules, recorded runs"]
+    db <--> dq["ifc-sql dq<br/>45 rules, recorded runs"]
     db --> mcp["ifc-sql serve<br/>MCP over stdio, read-only role"]
     mcp --> llm["MCP client<br/>Claude Desktop, Claude Code"]
 ```
@@ -27,7 +27,11 @@ interface for the rest.
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/) and Docker.
+Requires [uv](https://docs.astral.sh/uv/), and Docker or nothing more: for one user,
+`ifc-sql` can run PostgreSQL 16 itself in a folder (`IFC_SQL_DATA_DIR`, below). On
+Windows, without `make`, follow [docs/windows.md](docs/windows.md). Before exporting from Revit, read
+[docs/revit-export-settings.md](docs/revit-export-settings.md): which options the tool
+reads, and what it does without them.
 
 ```bash
 make install       # .venv from uv.lock, plus the pre-commit hooks
@@ -36,19 +40,29 @@ make dq-samples    # download the four sample files, migrate, load and check the
 make smoke         # start the MCP server as a client would and call a few tools
 ```
 
+Without Docker, for one user, skip `make up`: with `IFC_SQL_DATA_DIR` set, the commands
+start an embedded PostgreSQL 16 in that folder themselves, and stop it when the last one
+exits ([ADR 13](docs/adr/0013-embedded-postgresql.md); it takes no passwords, so read
+[SECURITY.md](SECURITY.md#the-embedded-database) first).
+
+```bash
+export IFC_SQL_DATA_DIR=~/.local/share/ifc-sql
+make install dq-samples smoke
+```
+
 `make dq-samples` downloads the buildingSMART Duplex Apartment models (CC BY 4.0,
 checksum-verified, not stored in this repository), then loads and checks them. On an
 empty database:
 
 ```
-loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,455 property values, 0 issues (run 1)
+loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,545 property values, 0 issues (run 1)
 loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property values, 46 issues (run 2)
 loaded Duplex_Electrical_20121207.ifc as model 3 (ELE): 109 objects, 6,862 property values, 88 issues (run 3)
 loaded Duplex_Plumbing_20121113.ifc as model 4 (PLU): 504 objects, 41,649 property values, 550 issues (run 4)
-checked model 1 (ARC, Duplex_A_20110907.ifc) in dq run 1: 0 error, 7,650 warning, 473 info findings
-checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,013 warning, 1,961 info findings
-checked model 3 (ELE, Duplex_Electrical_20121207.ifc) in dq run 3: 0 error, 89 warning, 3,291 info findings
-checked model 4 (PLU, Duplex_Plumbing_20121113.ifc) in dq run 4: 0 error, 1,471 warning, 13,223 info findings
+checked model 1 (ARC, Duplex_A_20110907.ifc) in dq run 1: 0 error, 7,651 warning, 551 info findings (model content 0 / 7,651 / 551, loader coverage 0 / 0 / 0)
+checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,035 warning, 1,961 info findings (model content 0 / 30,035 / 1,961, loader coverage 0 / 0 / 0)
+checked model 3 (ELE, Duplex_Electrical_20121207.ifc) in dq run 3: 0 error, 90 warning, 3,291 info findings (model content 0 / 90 / 3,291, loader coverage 0 / 0 / 0)
+checked model 4 (PLU, Duplex_Plumbing_20121113.ifc) in dq run 4: 0 error, 1,472 warning, 13,223 info findings (model content 0 / 1,472 / 13,223, loader coverage 0 / 0 / 0)
 ```
 
 Running it again loads nothing more: each file is identified by its SHA-256, and a
@@ -56,10 +70,10 @@ repeat is recorded as a skipped run (the check runs again, as a new recorded run
 `make smoke` then talks to the server over stdio:
 
 ```
-connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 8 tools, 1 resource, 1 resource template, 1 prompt
+connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 11 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
-  model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,650 warning, 473 info
-  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,013 warning, 1,961 info
+  model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
+  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,035 warning, 1,961 info
   …
 ```
 
@@ -80,21 +94,21 @@ PostgreSQL listens on loopback. Anywhere else, set your own (`.env.example`,
 
 | File | Discipline | Unit declared | Elements | Spaces | Property values | Transform issues | Findings (warning / info) |
 |---|---|---|---:|---:|---:|---:|---:|
-| `Duplex_A_20110907.ifc` | ARC | m | 268 | 21 | 13,455 | 0 | 7,650 / 473 |
-| `Duplex_MEP_20110907.ifc` | MEP | m | 926 | 42 | 63,683 | 46 | 30,013 / 1,961 |
-| `Duplex_Electrical_20121207.ifc` | ELE | ft | 103 | 1 | 6,862 | 88 | 89 / 3,291 |
-| `Duplex_Plumbing_20121113.ifc` | PLU | mm | 498 | 1 | 41,649 | 550 | 1,471 / 13,223 |
+| `Duplex_A_20110907.ifc` | ARC | m | 268 | 21 | 13,545 | 0 | 7,651 / 551 |
+| `Duplex_MEP_20110907.ifc` | MEP | m | 926 | 42 | 63,683 | 46 | 30,035 / 1,961 |
+| `Duplex_Electrical_20121207.ifc` | ELE | ft | 103 | 1 | 6,862 | 88 | 90 / 3,291 |
+| `Duplex_Plumbing_20121113.ifc` | PLU | mm | 498 | 1 | 41,649 | 550 | 1,472 / 13,223 |
 
 - **No errors.** The rules keep the error severity for something in the file that did
-  not reach the database, such as a skipped object; none of the 58,171 findings is one.
+  not reach the database, such as a skipped object; none of the 58,274 findings is one, and none is a gap in the loader's coverage.
 - **Units are normalised.** The four files declare metres, feet and millimetres; every
   length, area and volume is stored in m, m² and m³, and Level 2 sits at 3.100 m in all
   four ([data-model.md](docs/data-model.md#storeys-across-disciplines)).
 - **Placeholders dominate the findings.** Revit 2011 fills unset text parameters with
-  their own name (`BarCode = 'BarCode'`): 29,967 of MEP's 31,974 findings. Revit 2013
+  their own name (`BarCode = 'BarCode'`): 29,967 of MEP's 31,975 findings. Revit 2013
   writes `'N/A'` instead.
 - **Material totals are not element totals.** By element, the architectural model's
-  area is 2,036.7 m²; by material it is 5,329.2 m², because a layered material covers the
+  area is 1,505.0 m²; by material it is 4,797.5 m², because a layered material covers the
   element's face once per layer. Plasterboard alone comes to 931.9 m², more than the
   587.7 m² of all the walls. The takeoff tool says which kind of total it reports.
 
@@ -112,7 +126,7 @@ that were rejected.
   references checked at commit. Pending migrations run in one transaction, and tests
   compare the migrated database with `schema.py` and check every CHECK by name.
 - **Data model** ([ADR 2](docs/adr/0002-properties-eav-vs-jsonb.md),
-  [data-model.md](docs/data-model.md)): 14 tables and 7 views in schema `ifc`, every one
+  [data-model.md](docs/data-model.md)): 14 tables and 8 views in schema `ifc`, every one
   commented. One `object` supertable for spatial elements and physical elements, so
   properties, quantities, classifications and findings all have real foreign keys. Property
   values are a typed entity-attribute-value table; quantities have a fixed vocabulary
@@ -126,23 +140,28 @@ that were rejected.
   transform could not represent is stored as an issue with a stable code
   ([revit-ifc-quirks.md](docs/revit-ifc-quirks.md) goes through every quirk).
 - **Data quality** ([ADR 5](docs/adr/0005-data-quality-rules.md),
-  [data-quality.md](docs/data-quality.md)): 31 rules in one strictly loaded YAML catalogue,
-  one per issue code plus five SQL rules for placeholders, empty values, elements without
-  a storey and spaces without an area. Each run is recorded and evaluated set-based, so
+  [data-quality.md](docs/data-quality.md)): 45 rules in one strictly loaded YAML catalogue,
+  one per issue code plus sixteen SQL rules: placeholders, empty values, elements without
+  a storey, quantities that disagree, and handover requirements (quantities, rooms, fire
+  ratings, real materials, project information). Each rule's scope says whether a
+  finding is the model's gap or the loader's. Each run is recorded and evaluated set-based, so
   quality can be compared over time; a removed rule is retired, not deleted, while
   findings cite it.
-- **MCP server** ([ADR 6](docs/adr/0006-mcp-server.md), [docs/mcp.md](docs/mcp.md)): seven
-  fixed tools (models, storeys, element search and detail, takeoffs, room schedule, data
-  quality report) handle the common questions with tested SQL, and `run_sql` the rest. The
-  server connects only as a read-only role, opens a new session per call, and bounds every
-  result. `run_sql` passes four layers, each tested on its own against PostgreSQL: a
-  sqlglot validator with a function allowlist, a cursor that PostgreSQL accepts only for
-  one SELECT, a read-only transaction with timeouts, and the role's privileges.
+- **MCP server** ([ADR 6](docs/adr/0006-mcp-server.md),
+  [ADR 9](docs/adr/0009-schema-discovery-tool.md), [docs/mcp.md](docs/mcp.md)): nine
+  fixed tools (models, storeys, element search and detail, takeoffs, schedules, room
+  schedule, data quality report, comparison of two exports) handle the common questions
+  with tested SQL, and `run_sql` the rest, with `describe_schema` as its map and errors
+  that name the tables and columns that exist. The server connects only as a read-only
+  role, opens a new session per call, and bounds every result. `run_sql` passes four
+  layers, each tested on its own against PostgreSQL: a sqlglot validator with a function
+  allowlist, a cursor that PostgreSQL accepts only for one SELECT, a read-only
+  transaction with timeouts, and the role's privileges.
 
 ### Asking through MCP
 
 The fixed tools answer most questions in one call. For the rest, `run_sql` takes one
-read-only query, with [`ifc://schema`](docs/mcp.md#resources) as its map. Which walls of
+read-only query, with [`describe_schema`](docs/mcp.md#describe_schema) as its map. Which walls of
 the architectural model are external, by type:
 
 ```sql
@@ -165,15 +184,18 @@ DELETE statement`.
 
 ## Quality
 
-- **Tests**: 869 unit and integration tests, plus 102 on the four real files
-  (`make test-samples`), with 100 % branch coverage. Integration tests run against real
+- **Tests**: 1,087 unit and integration tests at 100 % branch coverage, plus 130 on the
+  real files: the four Duplex models (`make test-samples`) and the audit's five Revit
+  2019–2022 exports, whose acceptance tests pin every audit and re-check finding
+  (`make test-modern`, [docs/audit/](docs/audit/2026-11-implementation.md)). Integration tests run against real
   PostgreSQL in throwaway databases they create and migrate, never against the development
   database, and nothing in the safety layers is mocked. Races (two ingests of one file,
   two catalogue syncs at once) are staged with real blocked transactions.
 - **Checks**: ruff (with the bandit rules and Google docstrings), mypy `--strict`, and
   pytest with warnings as errors, run by `make check` and by
-  [CI](.github/workflows/ci.yml) on GitHub Actions with a PostgreSQL 16 service; ruff and
-  mypy also run as pre-commit hooks.
+  [CI](.github/workflows/ci.yml) on GitHub Actions with a PostgreSQL 16 service. A
+  Windows job runs [the Windows quick start](docs/windows.md) on the embedded database on
+  every push. ruff and mypy also run as pre-commit hooks.
 - **Reproducible**: dependencies locked in `uv.lock`, CI actions pinned to commit SHAs,
   sample files pinned to an upstream commit and verified by SHA-256.
 
@@ -181,21 +203,24 @@ DELETE statement`.
 
 ```
 src/ifc_sql_mcp/
-  cli.py                 ifc-sql: migrate, ingest, dq, serve
+  cli.py                 ifc-sql: migrate, ingest, dq, watch, serve
   config.py              settings from IFC_SQL_* environment variables
   logging_config.py      key=value logs on stderr (stdout is the MCP protocol)
-  db/                    schema.py, engines, migrations 0001-0009, versioned view SQL
+  watch.py               ifc-sql watch: load and check each export saved to a folder
+  db/                    schema.py, engines, embedded PostgreSQL, migrations 0001-0019, view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   dq/                    rule catalogue, sync, runs
-  rules/dq_rules.yaml    the 31 data quality rules
-  server/                MCP server: tools, run_sql, SQL validator, schema resource
+  rules/dq_rules.yaml    the 45 data quality rules
+  server/                MCP server: tools, run_sql, SQL validator, schema description
 tests/
   unit/                  no database needed
   integration/           real PostgreSQL, throwaway databases
   samples/               the four Duplex files (pytest -m sample)
+  modern/                the audit's Revit 2019-2022 exports (pytest -m modern)
   fixtures/              a synthetic Revit-style IFC file and the script that writes it
-scripts/                 sample download, quirks report, load benchmark, MCP smoke test
-docs/                    data model, Revit quirks, data quality, MCP server, ADRs
+  support/               helpers the suites share: sample files, an MCP client, builders
+scripts/                 sample downloads, quirks report, load benchmark, MCP smoke test
+docs/                    data model, Revit quirks, data quality, MCP server, ADRs, audit
 ```
 
 ## Documentation
@@ -206,19 +231,32 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
-| [docs/adr/](docs/adr/README.md) | Six architecture decision records |
+| [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
+| [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder; CI runs it on Windows |
+| [docs/adr/](docs/adr/README.md) | Thirteen architecture decision records |
+| [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
+| [docs/audit/2026-11-recheck.md](docs/audit/2026-11-recheck.md) | The audit's workflow repeated on the fixed tool, and the four findings it made (R1–R4) |
+| [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog and the re-check's findings were implemented: per finding, the issue, the commits and the figures before and after |
 | [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials |
 
 `make help` lists every target.
 
 ## Limitations
 
-- Built and tested against Revit 2011 and 2013 exports in IFC2X3 (the four Duplex files
-  and a synthetic fixture that reproduces their habits). Files from other exporters or in
-  IFC4 are untested.
-- Quantities come from the file; none is computed from geometry. The `geometry` source is
-  reserved in the schema for that ([ADR 3](docs/adr/0003-quantity-sources-and-precedence.md)).
-- A changed file is a new model version; versions are not diffed or merged, and old data
+- Built and tested against Revit exports: 2011 and 2013 in IFC2X3 (the four Duplex
+  files), and 2019, 2021 and 2022 in IFC2X3 and IFC4 (the audit's five files,
+  `make test-modern`). Files from other exporters are untested.
+- Quantities come from the file: IFC base quantities first, then Revit's parameters
+  and a door's or window's size ([ADR 3](docs/adr/0003-quantity-sources-and-precedence.md),
+  [ADR 8](docs/adr/0008-ifc-base-quantities.md)). A value that breaks a physical bound
+  of its set is flagged and not used ([ADR 7](docs/adr/0007-quantity-set-plausibility.md)).
+  A file exported without quantities can be measured instead, with
+  `ifc-sql ingest --geometry` ([ADR 10](docs/adr/0010-geometry-quantities.md)): about a
+  minute for 15,000 objects on 4 cores, and only for walls, slabs, spaces and other
+  solids. A file already loaded is measured into the same model
+  ([ADR 12](docs/adr/0012-measure-in-place.md)).
+- A changed file is a new model version. `--replaces` marks the current one, and
+  `compare_models` lists what changed between two; versions are not merged, and old data
   quality runs are kept until deleted.
 - The MCP server is for one local user: stdio only, no authentication
   ([SECURITY.md](SECURITY.md)).

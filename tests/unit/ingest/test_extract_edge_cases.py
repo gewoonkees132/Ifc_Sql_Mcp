@@ -173,30 +173,126 @@ def test_derived_and_context_dependent_units(tmp_path: Path) -> None:
     derived = tiny.model.create_entity("IfcDerivedUnit", Elements=[], UnitType="USERDEFINED")
     tiny.units.Units = [step, derived]
     raw = tiny.read(tmp_path)
-    assert [(u.name, u.scale_to_si) for u in raw.units] == [("STEP", None)]
+    # A derived unit without elements is no unit an SI factor can be found for.
+    assert [(u.name, u.scale_to_si) for u in raw.units] == [("STEP", None), ("USERDEFINED", None)]
+
+
+def test_derived_units_have_a_factor_only_when_coherent_si(tmp_path: Path) -> None:
+    """Revit's U-value unit is kg K-1 s-3, which is W/(m2 K); a millimetre is not coherent."""
+    tiny = Tiny()
+
+    def si(name: str, unit_type: str, prefix: str | None = None) -> Any:
+        return tiny.model.create_entity("IfcSIUnit", UnitType=unit_type, Prefix=prefix, Name=name)
+
+    def derived(unit_type: str, *elements: tuple[Any, int]) -> Any:
+        parts = [
+            tiny.model.create_entity("IfcDerivedUnitElement", Unit=unit, Exponent=exponent)
+            for unit, exponent in elements
+        ]
+        return tiny.model.create_entity("IfcDerivedUnit", Elements=parts, UnitType=unit_type)
+
+    exponents = tiny.model.create_entity("IfcDimensionalExponents", 1, 0, 0, 0, 0, 0, 0)
+    step = tiny.model.create_entity(
+        "IfcContextDependentUnit", Dimensions=exponents, UnitType="LENGTHUNIT", Name="STEP"
+    )
+    kilogram = si("GRAM", "MASSUNIT", "KILO")
+    tiny.units.Units = [
+        derived(
+            "THERMALTRANSMITTANCEUNIT",
+            (kilogram, 1),
+            (si("KELVIN", "THERMODYNAMICTEMPERATUREUNIT"), -1),
+            (si("SECOND", "TIMEUNIT"), -3),
+        ),
+        derived("MASSDENSITYUNIT", (si("GRAM", "MASSUNIT"), 1), (si("METRE", "LENGTHUNIT"), -3)),
+        derived("VOLUMETRICFLOWRATEUNIT", (si("METRE", "LENGTHUNIT", "MILLI"), 3)),
+        derived("LINEARVELOCITYUNIT", (step, 1), (si("SECOND", "TIMEUNIT"), -1)),
+        kilogram,
+        si("WATT", "POWERUNIT", "KILO"),
+    ]
+    raw = tiny.read(tmp_path)
+
+    assert [(u.unit_type, u.is_si, u.scale_to_si) for u in raw.units] == [
+        ("THERMALTRANSMITTANCEUNIT", True, 1.0),
+        ("MASSDENSITYUNIT", False, None),  # grams, not kilograms
+        ("VOLUMETRICFLOWRATEUNIT", False, None),  # millimetres
+        ("LINEARVELOCITYUNIT", False, None),  # steps per second
+        ("MASSUNIT", True, 1.0),  # IfcOpenShell says 1000: grams
+        ("POWERUNIT", True, 1000.0),
+    ]
 
 
 # --------------------------------------------------------------------------- property values
 
 
-def test_property_kinds_other_than_single_values_are_reported(tmp_path: Path) -> None:
+def test_property_kinds_other_than_single_and_enumerated_values_are_reported(
+    tmp_path: Path,
+) -> None:
     tiny = Tiny()
     wall = tiny.wall()
-    label = tiny.model.create_entity("IfcLabel", "A")
     tiny.pset(
         wall,
         "Pset_Test",
         tiny.single("Kept", tiny.model.create_entity("IfcLabel", "yes")),
         tiny.single("Empty", None),
-        tiny.model.create_entity(
-            "IfcPropertyEnumeratedValue", Name="Choice", EnumerationValues=[label]
-        ),
         tiny.single("Complex", tiny.model.create_entity("IfcComplexNumber", (1.0, 2.0))),
+        tiny.model.create_entity(
+            "IfcPropertyListValue",
+            Name="List",
+            ListValues=[tiny.model.create_entity("IfcLabel", "x")],
+        ),
     )
     raw = tiny.read(tmp_path)
     values = {v.name: (v.value_type, v.value) for v in only_element(raw).values}
     assert values == {"Kept": ("IfcLabel", "yes"), "Empty": (None, None)}
     assert codes(raw) == [IssueCode.UNSUPPORTED_PROPERTY] * 2
+
+
+def test_an_enumerated_value_is_the_value_chosen(tmp_path: Path) -> None:
+    # Revit 2021 writes a duct's Shape so (re-check finding R3, file C).
+    tiny = Tiny()
+    wall = tiny.wall()
+    label = tiny.model.create_entity("IfcLabel", "Undefined")
+    metre = tiny.model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+    sizes = tiny.model.create_entity(
+        "IfcPropertyEnumeration",
+        Name="Sizes",
+        EnumerationValues=[tiny.model.create_entity("IfcLengthMeasure", 0.1)],
+        Unit=metre,
+    )
+
+    def enumerated(name: str, *chosen: object, reference: object = None) -> object:
+        return tiny.model.create_entity(
+            "IfcPropertyEnumeratedValue",
+            Name=name,
+            EnumerationValues=list(chosen) or None,
+            EnumerationReference=reference,
+        )
+
+    tiny.pset(
+        wall,
+        "Pset_DuctSegmentTypeCommon",
+        enumerated("Shape", label),
+        enumerated(
+            "Both",
+            tiny.model.create_entity("IfcLabel", "ROUND"),
+            tiny.model.create_entity("IfcLabel", "FLATOVAL"),
+        ),
+        enumerated("Size", tiny.model.create_entity("IfcLengthMeasure", 0.1), reference=sizes),
+        enumerated("Nothing"),
+        enumerated("Complex", tiny.model.create_entity("IfcComplexNumber", (1.0, 2.0))),
+    )
+    raw = tiny.read(tmp_path)
+    values = {v.name: v for v in only_element(raw).values}
+
+    assert {name: (v.value_type, v.value) for name, v in values.items()} == {
+        "Shape": ("IfcLabel", "Undefined"),
+        "Both": ("IfcLabel", "ROUND, FLATOVAL"),
+        "Size": ("IfcLengthMeasure", 0.1),
+        "Nothing": (None, None),
+    }
+    assert values["Size"].unit is not None
+    assert values["Shape"].unit is None
+    assert codes(raw) == [IssueCode.UNSUPPORTED_PROPERTY]
 
 
 def test_quantities_keep_their_measure_type_and_own_unit(tmp_path: Path) -> None:
@@ -261,20 +357,91 @@ def test_a_property_set_definition_set_is_unpacked(tmp_path: Path) -> None:
     }
 
 
-def test_a_predefined_property_set_with_data_is_reported(tmp_path: Path) -> None:
+def _named(values: tuple[Any, ...]) -> dict[tuple[str, str], Any]:
+    return {(v.set_name, v.name): v for v in values}
+
+
+def test_a_doors_size_and_operation_are_read_from_its_attributes(tmp_path: Path) -> None:
+    tiny = Tiny()
+    door = tiny.root(
+        "IfcDoor", Name="Door:Type:2", Tag="2", OverallWidth=1697.0, OverallHeight=2100.0
+    )
+    door_type = tiny.root(
+        "IfcDoorType", Name="Type", PredefinedType="DOOR", OperationType="SLIDING_TO_LEFT"
+    )
+    tiny.root("IfcRelDefinesByType", RelatedObjects=[door], RelatingType=door_type)
+
+    values = _named(only_element(tiny.read(tmp_path)).values)
+
+    width = values["IfcDoor", "OverallWidth"]
+    assert (width.value, width.value_type, width.from_attribute, width.from_type) == (
+        1697.0,
+        "IfcPositiveLengthMeasure",
+        True,
+        False,
+    )
+    assert values["IfcDoor", "OverallHeight"].value == 2100.0
+    operation = values["IfcDoorType", "OperationType"]
+    assert (operation.value, operation.value_type, operation.from_type) == (
+        "SLIDING_TO_LEFT",
+        "IfcDoorTypeOperationEnum",
+        True,
+    )
+
+
+def test_a_predefined_property_set_is_read_attribute_by_attribute(tmp_path: Path) -> None:
     tiny = Tiny()
     door = tiny.root("IfcDoor", Name="Door:Type:2", Tag="2")
-    door_type = tiny.root(
-        "IfcDoorType", Name="Type", PredefinedType="DOOR", OperationType="SINGLE_SWING_LEFT"
-    )
+    door_type = tiny.root("IfcDoorType", Name="Type", PredefinedType="DOOR")
+    # Revit 2011 writes empty sets; Revit 2022 writes NOTDEFINED: neither is a value.
     empty = tiny.root("IfcDoorLiningProperties", Name="empty")
-    filled = tiny.root("IfcDoorLiningProperties", Name="filled", LiningDepth=0.1)
-    door_type.HasPropertySets = [empty, filled]
+    undefined = tiny.root("IfcDoorPanelProperties", Name="undefined", PanelOperation="NOTDEFINED")
+    filled = tiny.root("IfcDoorLiningProperties", Name="filled", LiningDepth=100.0)
+    panel = tiny.root(
+        "IfcDoorPanelProperties", Name="panel", PanelOperation="SWINGING", PanelWidth=0.5
+    )
+    door_type.HasPropertySets = [empty, undefined, filled, panel]
     tiny.root("IfcRelDefinesByType", RelatedObjects=[door], RelatingType=door_type)
+
     raw = tiny.read(tmp_path)
-    assert only_element(raw).values == ()
+    values = _named(only_element(raw).values)
+
+    # A second set of one class gets a number, in file order.
+    assert sorted(values) == [
+        ("IfcDoorLiningProperties 2", "LiningDepth"),
+        ("IfcDoorPanelProperties 2", "PanelOperation"),
+        ("IfcDoorPanelProperties 2", "PanelWidth"),
+    ]
+    depth = values["IfcDoorLiningProperties 2", "LiningDepth"]
+    assert (depth.value, depth.value_type, depth.from_type, depth.from_attribute) == (
+        100.0,
+        "IfcPositiveLengthMeasure",
+        True,
+        True,
+    )
+    assert codes(raw) == []
+
+
+def test_a_predefined_attribute_that_is_an_entity_is_reported(tmp_path: Path) -> None:
+    tiny = Tiny()
+    door = tiny.root("IfcDoor", Name="Door:Type:2", Tag="2")
+    door_type = tiny.root("IfcDoorType", Name="Type", PredefinedType="DOOR")
+    aspect = tiny.model.create_entity(
+        "IfcShapeAspect", ShapeRepresentations=[], ProductDefinitional=True
+    )
+    lining = tiny.root(
+        "IfcDoorLiningProperties", Name="lining", LiningDepth=100.0, ShapeAspectStyle=aspect
+    )
+    door_type.HasPropertySets = [lining]
+    tiny.root("IfcRelDefinesByType", RelatedObjects=[door], RelatingType=door_type)
+
+    raw = tiny.read(tmp_path)
+
+    assert list(_named(only_element(raw).values)) == [("IfcDoorLiningProperties", "LiningDepth")]
     assert codes(raw) == [IssueCode.UNSUPPORTED_PROPERTY_SET]
-    assert "filled" in raw.issues[0].message
+    assert raw.issues[0].message == (
+        "IfcDoorLiningProperties.ShapeAspectStyle refers to another entity, which is not read"
+    )
 
 
 # --------------------------------------------------------------------------- relations
@@ -335,12 +502,32 @@ def _two(tiny: Tiny, wall: Any) -> None:
 
 
 def _constituents(tiny: Tiny, wall: Any) -> None:
-    steel = tiny.model.create_entity("IfcMaterial", Name="Steel")
-    constituent = tiny.model.create_entity("IfcMaterialConstituent", Material=steel)
+    # Revit 2021's door: frame and panel, each named after its material.
+    frame = tiny.model.create_entity("IfcMaterial", Name="Door - Frame")
+    panel = tiny.model.create_entity("IfcMaterial", Name="Door - Panel")
     constituents = tiny.model.create_entity(
-        "IfcMaterialConstituentSet", MaterialConstituents=[constituent]
+        "IfcMaterialConstituentSet",
+        MaterialConstituents=[
+            tiny.model.create_entity("IfcMaterialConstituent", Name="Door - Frame", Material=frame),
+            tiny.model.create_entity("IfcMaterialConstituent", Name="Door - Panel", Material=panel),
+        ],
     )
     tiny.root("IfcRelAssociatesMaterial", RelatedObjects=[wall], RelatingMaterial=constituents)
+
+
+def _constituent(tiny: Tiny, wall: Any) -> None:
+    glass = tiny.model.create_entity("IfcMaterial", Name="Glass")
+    constituent = tiny.model.create_entity("IfcMaterialConstituent", Material=glass)
+    tiny.root("IfcRelAssociatesMaterial", RelatedObjects=[wall], RelatingMaterial=constituent)
+
+
+def _profiles(tiny: Tiny, wall: Any) -> None:
+    steel = tiny.model.create_entity("IfcMaterial", Name="Steel")
+    profile = tiny.model.create_entity("IfcMaterialProfile", Name="HEA 200", Material=steel)
+    empty = tiny.model.create_entity("IfcMaterialProfile", Name="unassigned")
+    profiles = tiny.model.create_entity("IfcMaterialProfileSet", MaterialProfiles=[profile, empty])
+    usage = tiny.model.create_entity("IfcMaterialProfileSetUsage", ForProfileSet=profiles)
+    tiny.root("IfcRelAssociatesMaterial", RelatedObjects=[wall], RelatingMaterial=usage)
 
 
 @pytest.mark.parametrize(
@@ -349,7 +536,9 @@ def _constituents(tiny: Tiny, wall: Any) -> None:
         (_layer, [(1, "Brick", 0.1)], []),
         (_inherited, [(1, "Steel", None)], []),
         (_two, [(1, "First", None)], [IssueCode.MULTIPLE_MATERIAL_ASSOCIATIONS]),
-        (_constituents, [], [IssueCode.UNSUPPORTED_MATERIAL]),
+        (_constituents, [(1, "Door - Frame", None), (2, "Door - Panel", None)], []),
+        (_constituent, [(1, "Glass", None)], []),
+        (_profiles, [(1, "Steel", None), (2, None, None)], []),
     ],
 )
 def test_material_definitions(

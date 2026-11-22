@@ -5,7 +5,7 @@ its own, so ``dq_rule`` always describes the catalogue that the latest runs used
 change to ``rules/dq_rules.yaml`` does (ADR 5):
 
 * **A new rule** is inserted.
-* **An edited rule** (description, severity or dimension) is updated in place. Earlier
+* **An edited rule** (description, severity, dimension or scope) is updated in place. Earlier
   findings keep the severity they were found with (``dq_result.severity``); later runs
   use the new one.
 * **A removed rule that findings refer to** is kept and gets ``retired_at``.
@@ -38,7 +38,7 @@ class SyncResult:
 
     Attributes:
         added: Rules inserted.
-        updated: Rules whose description, severity or dimension changed, or that were
+        updated: Rules whose description, severity, dimension or scope changed, or that were
             retired and are back in the catalogue.
         retired: Rules removed from the catalogue but kept for their findings; only those
             retired by this sync.
@@ -122,6 +122,7 @@ def _values(rule: Rule) -> dict[str, str]:
         "description": rule.description,
         "severity": rule.severity,
         "dimension": rule.dimension,
+        "scope": rule.scope,
     }
 
 
@@ -130,6 +131,7 @@ def _changed(stored: Row[tuple[object, ...]], rule: Rule) -> bool:
         stored.description != rule.description
         or stored.severity != rule.severity
         or stored.dimension != rule.dimension
+        or stored.scope != rule.scope
         or stored.retired_at is not None
     )
 

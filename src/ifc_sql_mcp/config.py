@@ -9,6 +9,7 @@ audit. The defaults match ``docker-compose.yml`` so a fresh clone works without 
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import Path
 
 ENV_PREFIX = "IFC_SQL_"
 
@@ -48,11 +49,15 @@ class Settings:
         reader_password: Password for the read-only ``ifc_reader`` role. Migrations set
             it; read-only clients connect with it (see ``reader_database_url``).
         log_level: One of ``LOG_LEVELS``.
+        data_dir: With ``IFC_SQL_DATA_DIR``, the folder of an embedded PostgreSQL that
+            ifc-sql runs itself (``db/embedded.py``); ``database_url`` is then that
+            server's, filled in when a command first needs it.
     """
 
     database_url: str
     reader_password: str
     log_level: str
+    data_dir: Path | None = None
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -62,6 +67,14 @@ class Settings:
         plain dict instead of patching the process environment.
         """
         source = os.environ if env is None else env
+
+        data_dir_text = source.get(f"{ENV_PREFIX}DATA_DIR", "").strip()
+        data_dir = Path(data_dir_text) if data_dir_text else None
+        if data_dir is not None and f"{ENV_PREFIX}DATABASE_URL" in source:
+            raise SettingsError(
+                f"set {ENV_PREFIX}DATA_DIR (an embedded database) or {ENV_PREFIX}DATABASE_URL "
+                "(a PostgreSQL server), not both"
+            )
 
         database_url = source.get(f"{ENV_PREFIX}DATABASE_URL", DEFAULT_DATABASE_URL).strip()
         if not database_url.startswith("postgresql"):
@@ -79,4 +92,9 @@ class Settings:
         except SettingsError as exc:
             raise SettingsError(f"{ENV_PREFIX}LOG_LEVEL: {exc}") from exc
 
-        return cls(database_url=database_url, reader_password=reader_password, log_level=log_level)
+        return cls(
+            database_url=database_url,
+            reader_password=reader_password,
+            log_level=log_level,
+            data_dir=data_dir,
+        )

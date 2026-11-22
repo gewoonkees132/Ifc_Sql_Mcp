@@ -14,6 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp_client import call, call_error, connect
 from sqlalchemy import Engine, text
 
+from ifc_sql_mcp.dq.catalogue import load_catalogue
 from ifc_sql_mcp.server import tools
 from ifc_sql_mcp.server.app import build_server
 
@@ -45,7 +46,7 @@ async def test_list_models_describes_each_model_and_its_data_quality(server: MCP
         result = await call(client, "list_models")
 
     first, second = result["models"]
-    assert result["truncated"] is False
+    assert (result["truncated"], result["replaced_left_out"]) == (False, 0)
     common = {
         "file_name": "revit_quirks.ifc",
         "ifc_schema": "IFC2X3",
@@ -53,6 +54,9 @@ async def test_list_models_describes_each_model_and_its_data_quality(server: MCP
         "authoring_app": "ifc-sql-mcp fixture generator 1",
         "project_name": "0042",
         "project_long_name": "Fixture House",
+        "project_group": "0042",
+        "replaces_model_id": None,
+        "replaced_by_model_id": None,
         "length_unit": "ft",
         "storeys": 3,
         "spaces": 2,
@@ -71,7 +75,7 @@ async def test_list_models_describes_each_model_and_its_data_quality(server: MCP
         "dq_run_id": 1,
         "errors": 0,
         "warnings": 11,
-        "info": 5,
+        "info": 7,
     }
     assert _is_timestamp(first["ingested_at"])
     assert _is_timestamp(first["data_quality"]["finished_at"])
@@ -172,6 +176,8 @@ WALL_ROW = {
     "length_m": 3.9999999999999996,
     "area_m2": 10.4,
     "volume_m3": 1.3,
+    "height_m": None,
+    "width_m": None,
 }
 
 
@@ -214,8 +220,9 @@ async def test_find_elements_returns_a_page_and_the_total(server: MCPServer) -> 
         pytest.param(
             {"name_contains": "_"}, [1, 3, 4, 8, 10, 11], id="underscore is a character too"
         ),
+        # The door's opening (8) is named after the door but is no door of the family.
         pytest.param(
-            {"storey_name": "Level 1", "revit_family": "M_Single-Flush"}, [4, 8], id="two filters"
+            {"storey_name": "Level 1", "revit_family": "M_Single-Flush"}, [4], id="two filters"
         ),
         pytest.param({"ifc_class": "IfcWindow"}, [], id="no match"),
     ],
@@ -275,10 +282,13 @@ async def test_get_element_returns_everything_about_an_element(server: MCPServer
         "object_kind": "element",
         "ifc_class": "IfcWallStandardCase",
         "ifc_class_base": "IfcWall",
+        "is_feature": False,
         "name": "Basic Wall:Interior - Stud Partition:200001",
         "long_name": None,
         "revit_family": "Basic Wall",
         "revit_type": "Interior - Stud Partition",
+        "host_revit_family": None,
+        "host_revit_type": None,
         "revit_element_id": 200001,
         "type_name": None,
         "predefined_type": None,
@@ -313,7 +323,7 @@ async def test_get_element_returns_everything_about_an_element(server: MCPServer
     values = {(s["name"], p["name"]): p for s in element["property_sets"] for p in s["properties"]}
     assert values["PSet_Revit_Constraints", "Top Offset"] == {
         "name": "Top Offset", "value": -0.3, "value_type": "IfcLengthMeasure", "unit": "m",
-        "from_type": False,
+        "from_type": False, "implausible": False,
     }  # fmt: skip
     assert values["PSet_Revit_Other", "BarCode"]["value"] == "BarCode"
     assert values["PSet_Revit_Other", "Manufacturer"]["value"] == ""
@@ -333,6 +343,8 @@ async def test_get_element_returns_everything_about_an_element(server: MCPServer
              "dimension": "validity",
              "message": "PSet_Revit_Other.BarCode = 'BarCode', the parameter's own name: a "
              "placeholder, not a value"},
+            {"rule_id": "missing_fire_rating", "severity": "info", "dimension": "completeness",
+             "message": "no FireRating in Pset_WallCommon"},
             {"rule_id": "value_is_empty", "severity": "info", "dimension": "completeness",
              "message": "PSet_Revit_Other.Manufacturer = '': no value"},
             {"rule_id": "value_is_empty", "severity": "info", "dimension": "completeness",
@@ -428,6 +440,9 @@ async def test_get_element_says_what_is_wrong_with_its_arguments(
 # --------------------------------------------------------------------------- quantity_takeoff
 
 
+COVERS = "the total covers those, and the others add nothing to it."
+
+
 async def test_takeoff_by_storey_totals_each_element_once(server: MCPServer) -> None:
     async with connect(server) as client:
         result = await call(
@@ -440,16 +455,20 @@ async def test_takeoff_by_storey_totals_each_element_once(server: MCPServer) -> 
         "metric": "area_m2",
         "unit": "m2",
         "basis": "element",
+        "include_openings": False,
+        "openings_left_out": 2,
         "groups": [
-            {"group": "Level 1", "group_id": 6, "elements": 10, "elements_with_value": 1,
+            {"group": "Level 1", "group_id": 6, "elements": 8, "elements_with_value": 1,
              "value": 10.4},
             {"group": "Level 2", "group_id": 7, "elements": 3, "elements_with_value": 0,
              "value": None},
         ],
         "total": 10.4,
+        "coverage": {"elements": 11, "elements_with_value": 1,
+                     "summary": "1 of 11 elements have area_m2"},
         "truncated": False,
     }  # fmt: skip
-    assert result["note"] == tools.ELEMENT_NOTE
+    assert result["note"] == f"Only 1 of 11 elements have area_m2: {COVERS} {tools.ELEMENT_NOTE}"
 
 
 async def test_takeoff_by_class_counts_elements(server: MCPServer) -> None:
@@ -460,7 +479,6 @@ async def test_takeoff_by_class_counts_elements(server: MCPServer) -> None:
 
     assert [(g["group"], g["value"]) for g in result["groups"]] == [
         ("IfcFlowTerminal", 2),
-        ("IfcOpeningElement", 2),
         ("IfcBeam", 1),
         ("IfcBuildingElementProxy", 1),
         ("IfcDoor", 1),
@@ -471,7 +489,9 @@ async def test_takeoff_by_class_counts_elements(server: MCPServer) -> None:
         ("IfcStairFlight", 1),
         ("IfcWall", 1),
     ]
-    assert (result["total"], result["unit"]) == (13, "elements")
+    # The two openings are left out: they are changes to the wall, not elements.
+    assert (result["total"], result["unit"]) == (11, "elements")
+    assert (result["include_openings"], result["openings_left_out"]) == (False, 2)
 
 
 async def test_takeoff_by_revit_type_groups_family_and_type(server: MCPServer) -> None:
@@ -483,14 +503,39 @@ async def test_takeoff_by_revit_type_groups_family_and_type(server: MCPServer) -
     assert [(g["group"], g["value"]) for g in result["groups"]] == [
         ("Stair:Residential - 180mm Riser", 3),
         ("M_Panelboard:225 A", 2),
-        ("M_Single-Flush:0915 x 2134mm", 2),
-        # The unnamed opening and the generic model have no Revit type.
-        (None, 2),
         ("Basic Wall:Interior - Stud Partition", 1),
         ("Floor:Generic 150mm", 1),
         ("M_Chair-Breuer:Chair-Breuer", 1),
+        # The door alone: its opening, named after it, is left out (audit finding A3).
+        ("M_Single-Flush:0915 x 2134mm", 1),
         ("M_Timber:200x400mm", 1),
+        # The generic model has no Revit type.
+        (None, 1),
     ]
+
+
+async def test_takeoff_counts_openings_under_their_host_only_when_asked(
+    server: MCPServer,
+) -> None:
+    async with connect(server) as client:
+        result = await call(
+            client,
+            "quantity_takeoff",
+            model_id=1,
+            group_by="revit_type",
+            metric="count",
+            include_openings=True,
+        )
+
+    groups = {g["group"]: g["value"] for g in result["groups"]}
+    # Openings have no revit_type of their own: they count in the null group, never
+    # under the door they are named after.
+    assert (groups["M_Single-Flush:0915 x 2134mm"], groups[None]) == (1, 3)
+    assert (result["total"], result["include_openings"], result["openings_left_out"]) == (
+        13,
+        True,
+        0,
+    )
 
 
 async def test_takeoff_by_material_splits_layers_so_it_is_not_an_element_total(
@@ -505,7 +550,10 @@ async def test_takeoff_by_material_splits_layers_so_it_is_not_an_element_total(
             client, "quantity_takeoff", model_id=1, group_by="ifc_class", metric="area_m2"
         )
 
-    assert (by_material["basis"], by_material["note"]) == ("material", tools.MATERIAL_NOTE)
+    assert by_material["basis"] == "material"
+    assert (
+        by_material["note"] == f"Only 1 of 11 elements have area_m2: {COVERS} {tools.MATERIAL_NOTE}"
+    )
     assert by_material["groups"][:2] == [
         {"group": "Plasterboard", "group_id": 4, "elements": 1, "elements_with_value": None,
          "value": 20.8},
@@ -523,7 +571,7 @@ async def test_takeoff_by_material_counts_elements_per_material(server: MCPServe
         )
 
     assert [(g["group"], g["group_id"], g["value"]) for g in result["groups"]] == [
-        (None, None, 8),
+        (None, None, 6),
         ("Paint", 3, 2),
         ("Steel", 5, 2),
         ("Concrete", 1, 1),
@@ -531,8 +579,8 @@ async def test_takeoff_by_material_counts_elements_per_material(server: MCPServe
         ("Plasterboard", 4, 1),
         ("Timber", 6, 1),
     ]
-    # 13 elements, but the wall counts under two materials and a panelboard under two.
-    assert result["total"] == 16
+    # 11 elements, but the wall counts under two materials and a panelboard under two.
+    assert result["total"] == 14
 
 
 @pytest.mark.parametrize("group_by", ["storey", "ifc_class", "revit_type"])
@@ -544,7 +592,7 @@ async def test_element_takeoffs_add_up_to_the_elements_own_quantities(
     expression = "count(*)" if metric == "count" else f"coalesce(sum({metric}), 0)"
     with mcp_engine.connect() as connection:
         expected = connection.execute(
-            text(f"SELECT {expression} FROM ifc.v_element WHERE model_id = 1")  # noqa: S608
+            text(f"SELECT {expression} FROM ifc.v_element WHERE model_id = 1 AND NOT is_feature")  # noqa: S608
         ).scalar_one()
 
     async with connect(server) as client:
@@ -554,7 +602,7 @@ async def test_element_takeoffs_add_up_to_the_elements_own_quantities(
 
     assert result["basis"] == "element"
     assert result["unit"] == tools.METRIC_UNITS[metric]  # type: ignore[index]
-    assert sum(g["elements"] for g in result["groups"]) == 13
+    assert sum(g["elements"] for g in result["groups"]) == 11
     assert result["total"] == pytest.approx(expected)
 
 
@@ -570,7 +618,7 @@ async def test_takeoff_stops_at_its_limit_and_says_so(
 
     assert len(result["groups"]) == 2
     assert result["truncated"] is True
-    assert result["total"] == 4
+    assert result["total"] == 3
 
 
 @pytest.mark.parametrize(
@@ -624,6 +672,8 @@ async def test_space_schedule_lists_the_rooms(server: MCPServer) -> None:
                 "height_m": 2.6,
                 "omniclass_code": "13-51 24 17",
                 "omniclass_title": "Kitchen Space",
+                "category": None,
+                "duplicate_of": None,
             },
             {
                 "object_id": 16,
@@ -637,40 +687,84 @@ async def test_space_schedule_lists_the_rooms(server: MCPServer) -> None:
                 "height_m": None,
                 "omniclass_code": None,
                 "omniclass_title": None,
+                "category": None,
+                "duplicate_of": None,
             },
         ],
         "space_count": 2,
+        "offset": 0,
+        "limit": 150,
+        "next_offset": None,
         "total_area_m2": 12.499999999999998,
+        "duplicate_spaces": 0,
+        "total_area_without_duplicates_m2": 12.499999999999998,
+        "revit_area_spaces": 0,
+        "revit_area_total_m2": None,
         "spaces_without_area": 1,
-        "truncated": False,
+        "note": "1 of 2 spaces have no area; the total covers the others.",
     }
 
 
-async def test_space_schedule_stops_at_its_limit_and_says_so(
-    server: MCPServer, monkeypatch: pytest.MonkeyPatch
+async def test_space_schedule_pages_and_keeps_the_totals_of_all_pages(
+    server: MCPServer,
 ) -> None:
-    monkeypatch.setattr(tools, "MAX_SPACES", 1)
-
     async with connect(server) as client:
-        result = await call(client, "space_schedule", model_id=1)
+        first = await call(client, "space_schedule", model_id=1, limit=1)
+        second = await call(client, "space_schedule", model_id=1, limit=1, offset=1)
+        too_many = await call_error(client, "space_schedule", model_id=1, limit=151)
 
-    assert [s["number"] for s in result["spaces"]] == ["F101"]
-    assert (result["space_count"], result["truncated"]) == (1, True)
+    assert [s["number"] for s in first["spaces"]] == ["F101"]
+    assert [s["number"] for s in second["spaces"]] == ["F201"]
+    assert (first["next_offset"], second["next_offset"]) == (1, None)
+    assert first["space_count"] == second["space_count"] == 2
+    assert first["total_area_m2"] == second["total_area_m2"] == 12.499999999999998
+    assert "less than or equal to 150" in too_many
+
+
+async def test_schedule_groups_the_fixtures_walls_with_their_properties(
+    server: MCPServer,
+) -> None:
+    async with connect(server) as client:
+        result = await call(
+            client,
+            "schedule",
+            model_id=1,
+            ifc_class="IfcWall",
+            group_by=["revit_type"],
+            fields=["length_m", "Pset_WallCommon.IsExternal"],
+        )
+        refused = await call_error(
+            client,
+            "schedule",
+            model_id=1,
+            ifc_class="IfcWall",
+            group_by=["material"],
+            fields=["length_m"],
+        )
+
+    assert result["elements"] == sum(g["elements"] for g in result["groups"])
+    assert all(
+        set(g["fields"]) == {"length_m", "Pset_WallCommon.IsExternal"} for g in result["groups"]
+    )
+    assert "Input should be 'storey', 'revit_type' or 'ifc_class'" in refused
 
 
 # --------------------------------------------------------------------------- data_quality_report
 
 FIXTURE_RULES = [
-    ("conflicting_property", "warning", "consistency", 2),
-    ("quantity_not_a_measure", "warning", "validity", 2),
-    ("value_is_property_name", "warning", "validity", 2),
-    ("incomplete_classification_reference", "warning", "completeness", 1),
-    ("negative_quantity", "warning", "validity", 1),
-    ("omniclass_unparsed", "warning", "validity", 1),
-    ("revit_name_unparsed", "warning", "validity", 1),
-    ("space_without_area", "warning", "completeness", 1),
-    ("value_is_empty", "info", "completeness", 3),
-    ("value_is_not_applicable", "info", "completeness", 2),
+    # The model's own gaps first (audit finding A9)...
+    ("conflicting_property", "warning", "consistency", "model_content", 2),
+    ("quantity_not_a_measure", "warning", "validity", "model_content", 2),
+    ("value_is_property_name", "warning", "validity", "model_content", 2),
+    ("incomplete_classification_reference", "warning", "completeness", "model_content", 1),
+    ("negative_quantity", "warning", "validity", "model_content", 1),
+    ("omniclass_unparsed", "warning", "validity", "model_content", 1),
+    ("space_without_area", "warning", "completeness", "model_content", 1),
+    ("value_is_empty", "info", "completeness", "model_content", 3),
+    ("missing_fire_rating", "info", "completeness", "model_content", 2),
+    ("value_is_not_applicable", "info", "completeness", "model_content", 2),
+    # ...then what the loader did not read.
+    ("revit_name_unparsed", "warning", "validity", "loader_coverage", 1),
 ]
 
 
@@ -682,11 +776,16 @@ async def test_report_on_a_checked_model_counts_every_rule(
 
     assert (report["status"], report["dq_run_id"]) == ("checked", 1)
     assert _is_timestamp(report["finished_at"])
-    assert report["findings"] == {"error": 0, "warning": 11, "info": 5}
+    assert report["findings"] == {"error": 0, "warning": 11, "info": 7}
+    assert report["findings_by_scope"] == {
+        "model_content": {"error": 0, "warning": 10, "info": 7},
+        "loader_coverage": {"error": 0, "warning": 1, "info": 0},
+    }
     assert [
-        (r["rule_id"], r["severity"], r["dimension"], r["findings"]) for r in report["rules"]
+        (r["rule_id"], r["severity"], r["dimension"], r["scope"], r["findings"])
+        for r in report["rules"]
     ] == FIXTURE_RULES
-    assert sum(len(r["samples"]) for r in report["rules"]) == 16  # all of them, at 3 per rule
+    assert sum(len(r["samples"]) for r in report["rules"]) == 18  # all of them, at 3 per rule
     with mcp_engine.connect() as connection:
         descriptions = dict(
             connection.execute(text("SELECT rule_id, description FROM ifc.dq_rule")).all()
@@ -706,8 +805,8 @@ async def test_report_on_a_checked_model_counts_every_rule(
          "object_name": "Basic Wall:Interior - Stud Partition:200001",
          "message": "Pset_WallCommon.Reference = '': no value"},
     ]  # fmt: skip
-    # The other 21 of the 31 rules found nothing.
-    assert len(report["rules_without_findings"]) == 21
+    # The other rules of the catalogue found nothing.
+    assert len(report["rules_without_findings"]) == len(load_catalogue()) - len(FIXTURE_RULES)
     assert "element_without_storey" in report["rules_without_findings"]
 
 
@@ -723,6 +822,7 @@ async def test_report_on_a_model_never_checked_says_so_instead_of_reporting_noth
         "dq_run_id": None,
         "finished_at": None,
         "findings": None,
+        "findings_by_scope": None,
         "rules": [],
         "rules_without_findings": [],
     }
@@ -731,14 +831,20 @@ async def test_report_on_a_model_never_checked_says_so_instead_of_reporting_noth
 async def test_report_filters_by_severity_and_rule(server: MCPServer) -> None:
     async with connect(server) as client:
         info = await call(client, "data_quality_report", model_id=1, severity="info")
+        loader = await call(client, "data_quality_report", model_id=1, scope="loader_coverage")
         one_rule = await call(
             client, "data_quality_report", model_id=1, rule_id="value_is_empty", samples_per_rule=1
         )
         counts_only = await call(client, "data_quality_report", model_id=1, samples_per_rule=0)
 
-    assert [r["rule_id"] for r in info["rules"]] == ["value_is_empty", "value_is_not_applicable"]
+    assert [r["rule_id"] for r in info["rules"]] == [
+        "value_is_empty",
+        "missing_fire_rating",
+        "value_is_not_applicable",
+    ]
+    assert [r["rule_id"] for r in loader["rules"]] == ["revit_name_unparsed"]
     # The severity counts always cover the whole run.
-    assert info["findings"] == {"error": 0, "warning": 11, "info": 5}
+    assert info["findings"] == loader["findings"] == {"error": 0, "warning": 11, "info": 7}
     [rule] = one_rule["rules"]
     assert (rule["rule_id"], rule["findings"], len(rule["samples"])) == ("value_is_empty", 3, 1)
     assert all(r["samples"] == [] for r in counts_only["rules"])
@@ -802,3 +908,18 @@ def test_takeoff_looks_up_group_by_and_metric_before_it_builds_any_sql(
     """The schema stops these at the protocol; the lookups stop them for a Python caller."""
     with mcp_engine.connect() as connection, pytest.raises(KeyError):
         tools.quantity_takeoff(connection, 1, group_by, metric)  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------- compare_models
+
+
+async def test_compare_models_finds_nothing_between_two_loads_of_one_file(
+    server: MCPServer,
+) -> None:
+    async with connect(server) as client:
+        same = await call(client, "compare_models", new_model_id=2, old_model_id=1)
+        no_old = await call_error(client, "compare_models", new_model_id=2)
+
+    assert (same["objects_in_both"], same["objects_added"], same["objects_removed"]) == (20, 0, 0)
+    assert (same["property_changes"], same["note"]) == ([], None)
+    assert no_old.startswith("model 2 replaces no model; give old_model_id")

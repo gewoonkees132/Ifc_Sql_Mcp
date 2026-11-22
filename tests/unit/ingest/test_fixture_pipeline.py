@@ -166,12 +166,15 @@ def test_the_spatial_hierarchy(fixture_records: ModelRecords) -> None:
     assert parents[fx.KITCHEN] == fx.LEVEL_1
 
 
+OPENINGS = {fx.DOOR_OPENING, fx.UNNAMED_OPENING}
+
+
 @pytest.mark.parametrize(
     ("global_id", "family", "revit_type", "element_id"),
     [
         (fx.WALL, "Basic Wall", "Interior - Stud Partition", 200001),
         (fx.DOOR, "M_Single-Flush", "0915 x 2134mm", 200101),
-        (fx.DOOR_OPENING, "M_Single-Flush", "0915 x 2134mm", 200101),  # host's id + ":1"
+        (fx.DOOR_OPENING, None, None, 200101),  # host's id + ":1"; its name is the host's
         (fx.STAIR_STRINGER, "Stair", "Residential - 180mm Riser", 200301),  # ":2", not 2
         (fx.PANEL_1, "M_Panelboard", "225 A", 200601),  # label "Unit 1 Panel" is not the type
         (fx.UNNAMED_OPENING, None, None, None),
@@ -191,6 +194,20 @@ def test_revit_names_are_parsed(
         revit_type,
         element_id,
     )
+
+
+def test_openings_keep_their_hosts_name_parts_apart(fixture_records: ModelRecords) -> None:
+    elements = {e.global_id: e for e in fixture_records.elements}
+    opening = elements[fx.DOOR_OPENING]
+
+    assert opening.is_feature is True
+    assert (opening.host_revit_family, opening.host_revit_type) == (
+        "M_Single-Flush",
+        "0915 x 2134mm",
+    )
+    assert elements[fx.UNNAMED_OPENING].is_feature is True
+    assert not any(e.is_feature for e in elements.values() if e.global_id not in OPENINGS)
+    assert all(e.host_revit_family is None for e in elements.values() if not e.is_feature)
 
 
 def test_containers_and_storeys(fixture_records: ModelRecords) -> None:

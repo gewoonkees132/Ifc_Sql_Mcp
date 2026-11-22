@@ -20,6 +20,7 @@ from test_duplex_dq import EXPECTED_FINDINGS, EXPECTED_SEVERITIES
 
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.engine import make_reader_engine
+from ifc_sql_mcp.dq.catalogue import load_catalogue
 from ifc_sql_mcp.dq.run import DqResult
 from ifc_sql_mcp.ingest.pipeline import IngestResult
 from ifc_sql_mcp.server.app import build_server
@@ -32,6 +33,8 @@ EXPECTED_MODELS = {
     "ele": {"storeys": 3, "spaces": 1, "elements": 103, "materials": 6, "length_unit": "ft"},
     "plu": {"storeys": 3, "spaces": 1, "elements": 498, "materials": 3, "length_unit": "mm"},
 }
+# Openings in each file (IfcOpeningElement), which takeoffs leave out by default (A3).
+OPENINGS = {"arc": 50, "mep": 0, "ele": 0, "plu": 0}
 # Storey name, elevation in metres, elements and spaces on it, from list_storeys.
 EXPECTED_STOREYS = {
     "arc": [("T/FDN", -1.25, 14, 0), ("Level 1", 0.0, 117, 10), ("Level 2", 3.1, 125, 10),
@@ -83,6 +86,14 @@ async def test_list_storeys_and_the_takeoff_by_storey_agree(
     async with connect(mcp) as client:
         storeys = await call(client, "list_storeys", model_id=model_ids[key])
         takeoff = await call(
+            client,
+            "quantity_takeoff",
+            model_id=model_ids[key],
+            group_by="storey",
+            metric="count",
+            include_openings=True,
+        )
+        without_openings = await call(
             client, "quantity_takeoff", model_id=model_ids[key], group_by="storey", metric="count"
         )
 
@@ -90,10 +101,13 @@ async def test_list_storeys_and_the_takeoff_by_storey_agree(
         (s["name"], s["elevation_m"], s["elements"], s["spaces"]) for s in storeys["storeys"]
     ] == EXPECTED_STOREYS[key]
     assert storeys["elements_without_storey"] == 0
+    # list_storeys counts every IfcElement, as IFC does; so does the takeoff with openings.
     assert [(g["group"], g["value"]) for g in takeoff["groups"]] == [
         (name, elements) for name, _, elements, _ in EXPECTED_STOREYS[key]
     ]
     assert takeoff["total"] == EXPECTED_MODELS[key]["elements"]
+    assert without_openings["total"] == EXPECTED_MODELS[key]["elements"] - OPENINGS[key]
+    assert without_openings["openings_left_out"] == OPENINGS[key]
 
 
 @pytest.mark.parametrize("key", report.FILES)
@@ -106,7 +120,7 @@ async def test_space_schedule_lists_every_space(
 
     assert schedule["space_count"] == EXPECTED_MODELS[key]["spaces"]
     assert schedule["spaces_without_area"] == 0
-    assert schedule["truncated"] is False
+    assert schedule["next_offset"] is None
 
 
 async def test_the_architectural_spaces_add_up(server: tuple[MCPServer, dict[str, int]]) -> None:
@@ -131,7 +145,9 @@ async def test_data_quality_report_counts_what_the_run_found(
     assert quality["findings"] == EXPECTED_SEVERITIES[key]
     assert {r["rule_id"]: r["findings"] for r in quality["rules"]} == EXPECTED_FINDINGS[key]
     assert all(len(r["samples"]) == min(3, r["findings"]) for r in quality["rules"])
-    assert len(quality["rules_without_findings"]) == 31 - len(EXPECTED_FINDINGS[key])
+    assert len(quality["rules_without_findings"]) == len(load_catalogue()) - len(
+        EXPECTED_FINDINGS[key]
+    )
 
 
 async def test_material_totals_are_not_element_totals(
@@ -152,8 +168,13 @@ async def test_material_totals_are_not_element_totals(
     walls = next(g for g in by_class["groups"] if g["group"] == "IfcWall")
     plasterboard = next(g for g in by_material["groups"] if g["group"] == "Plasterboard")
     assert (by_class["basis"], by_material["basis"]) == ("element", "material")
-    assert round(by_class["total"], 1) == 2036.7
-    assert round(by_material["total"], 1) == 5329.2
+    # Without the 50 openings, 4 of which carry a copy of the roof's 132.9 m2 (A3).
+    assert (by_class["openings_left_out"], by_material["openings_left_out"]) == (50, 50)
+    # 90 of the 218 elements have an area, and the takeoff says so (A8).
+    assert by_class["coverage"]["summary"] == "90 of 218 elements have area_m2"
+    assert by_class["note"].startswith("Only 90 of 218 elements have area_m2")
+    assert round(by_class["total"], 1) == 1505.0
+    assert round(by_material["total"], 1) == 4797.5
     assert (round(walls["value"], 1), round(plasterboard["value"], 1)) == (587.7, 931.9)
 
 

@@ -41,7 +41,7 @@ from sqlalchemy import (
 
 from ifc_sql_mcp.db import schema
 from ifc_sql_mcp.db.engine import describe_error
-from ifc_sql_mcp.db.schema import SEVERITIES
+from ifc_sql_mcp.db.schema import SCOPES, SEVERITIES
 from ifc_sql_mcp.dq.catalogue import Rule
 
 logger = logging.getLogger(__name__)
@@ -97,6 +97,8 @@ class DqResult:
         file_name: That model's file name.
         finding_counts: Findings per rule, for every rule evaluated, in catalogue order.
         severity_counts: Findings per severity: ``error``, ``warning`` and ``info``.
+        scope_counts: The same per scope: ``model_content`` (what the file contains) and
+            ``loader_coverage`` (what this tool does not read).
     """
 
     run_id: int
@@ -105,6 +107,7 @@ class DqResult:
     file_name: str
     finding_counts: dict[str, int]
     severity_counts: dict[str, int]
+    scope_counts: dict[str, dict[str, int]]
 
 
 def loaded_model_ids(connection: Connection) -> list[int]:
@@ -167,8 +170,10 @@ def check_model(engine: Engine, model_id: int, rules: Sequence[Rule]) -> DqResul
         },
     )
     severities = dict.fromkeys(SEVERITIES, 0)
+    scopes = {scope: dict.fromkeys(SEVERITIES, 0) for scope in SCOPES}
     for rule in rules:
         severities[rule.severity] += counts[rule.rule_id]
+        scopes[rule.scope][rule.severity] += counts[rule.rule_id]
     return DqResult(
         run_id=run_id,
         model_id=model_id,
@@ -176,6 +181,7 @@ def check_model(engine: Engine, model_id: int, rules: Sequence[Rule]) -> DqResul
         file_name=file_name,
         finding_counts=counts,
         severity_counts=severities,
+        scope_counts=scopes,
     )
 
 

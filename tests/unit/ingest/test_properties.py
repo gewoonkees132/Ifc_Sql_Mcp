@@ -130,6 +130,32 @@ def test_other_measures_with_a_unit_are_stored_as_written_and_reported() -> None
     assert [issue.code for issue in issues] == [IssueCode.MEASURE_NOT_CONVERTED]
 
 
+U_VALUE_UNIT = RawUnit("THERMALTRANSMITTANCEUNIT", "THERMALTRANSMITTANCEUNIT", None, True, 1.0)
+KILOWATT = RawUnit("POWERUNIT", "WATT", "KILO", True, 1000.0)
+
+
+def test_a_derived_measure_in_a_declared_si_unit_gets_its_unit() -> None:
+    """Revit declares U-values in coherent SI (audit finding A13): no conversion, a unit."""
+    raw = value("Pset_DoorCommon", "ThermalTransmittance", 1.4, "IfcThermalTransmittanceMeasure")
+    result = typed(raw, FEET | {"THERMALTRANSMITTANCEUNIT": U_VALUE_UNIT})
+    assert (result.number, result.unit) == (1.4, "W/(m2*K)")
+
+
+def test_a_derived_measure_is_scaled_by_its_prefix_and_its_own_unit_comes_first() -> None:
+    raw = value("PSet_Revit_Electrical", "Apparent Load", 1.2, "IfcPowerMeasure", unit=KILOWATT)
+    result = typed(raw)
+    assert (result.number, result.unit) == (1200.0, "W")
+
+
+def test_a_derived_measure_in_a_unit_without_an_si_factor_is_kept_and_reported() -> None:
+    incoherent = RawUnit("VOLUMETRICFLOWRATEUNIT", "VOLUMETRICFLOWRATEUNIT", None, False, None)
+    raw = value("Mechanical", "Flow", 12.0, "IfcVolumetricFlowRateMeasure")
+    result, issues = type_value(GID, raw, FEET | {"VOLUMETRICFLOWRATEUNIT": incoherent})
+    assert result is not None
+    assert (result.number, result.unit) == (12.0, None)
+    assert [issue.code for issue in issues] == [IssueCode.MEASURE_NOT_CONVERTED]
+
+
 def test_a_plain_number_with_an_explicit_unit_is_reported_too() -> None:
     raw = value("Other", "Height", 6.0, "IfcReal", unit=FOOT)
     assert issue_codes(raw) == [IssueCode.MEASURE_NOT_CONVERTED]

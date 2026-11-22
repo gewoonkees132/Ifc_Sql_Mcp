@@ -31,8 +31,8 @@ EXPECTED_ROWS = {
         "object": 295,
         "spatial_element": 27,
         "element": 268,
-        "property": 13_455,
-        "quantity": 426,
+        "property": 13_545,  # 13,455 plus 90 attributes of doors, windows and door styles
+        "quantity": 502,  # 426 plus the 38 doors' and windows' width_m and height_m
         "material": 18,
         "element_material_layer": 271,
         "classification": 138,

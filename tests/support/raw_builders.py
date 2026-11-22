@@ -46,6 +46,7 @@ def value(
     from_type: bool = False,
     from_quantity_set: bool = False,
     order: tuple[int, int] | None = None,
+    from_attribute: bool = False,
 ) -> RawValue:
     """A raw property value; ``order`` defaults to file order of creation."""
     return RawValue(
@@ -57,6 +58,7 @@ def value(
         from_type=from_type,
         from_quantity_set=from_quantity_set,
         order=order or (next(_ids), next(_ids)),
+        from_attribute=from_attribute,
     )
 
 

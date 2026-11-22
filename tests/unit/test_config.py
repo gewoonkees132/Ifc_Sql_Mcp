@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from ifc_sql_mcp.config import (
@@ -64,3 +66,18 @@ def test_settings_are_immutable() -> None:
 
     with pytest.raises(AttributeError):
         settings.log_level = "DEBUG"  # type: ignore[misc]
+
+
+def test_a_data_dir_asks_for_the_embedded_database(tmp_path: Path) -> None:
+    settings = Settings.from_env({"IFC_SQL_DATA_DIR": f" {tmp_path} "})
+
+    assert settings.data_dir == tmp_path
+    assert Settings.from_env({"IFC_SQL_DATA_DIR": "  "}).data_dir is None
+    assert Settings.from_env({}).data_dir is None
+
+
+def test_a_data_dir_and_a_database_url_are_refused_together(tmp_path: Path) -> None:
+    with pytest.raises(SettingsError, match="not both"):
+        Settings.from_env(
+            {"IFC_SQL_DATA_DIR": str(tmp_path), "IFC_SQL_DATABASE_URL": DEFAULT_DATABASE_URL}
+        )

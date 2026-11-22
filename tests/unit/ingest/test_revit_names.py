@@ -116,6 +116,72 @@ def test_a_tag_that_matches_no_reading_is_reported() -> None:
     assert issues == [IssueCode.REVIT_TAG_MISMATCH]
 
 
+def test_an_opening_tagged_with_its_own_id_is_normal() -> None:
+    """Revit names an opening after the wall it cuts and tags it with its own id (A13)."""
+    name = "Basic Wall:1AR_MUR_CV003 _Interno_Esterno Poroton Ventilata:2907718"
+    parsed, issues = parse_revit_name(GID, name, "3184370", named_after_host=True)
+    assert (parsed.element_id, issues) == (2907718, [])
+
+
+@pytest.mark.parametrize(
+    ("name", "tag"),
+    [
+        ("Precast Stair:Stair:1287438 Run 2", "1287898"),
+        ("Precast Stair:Stair:1287438 Landing 1", "1287441"),
+        ("Assembled Stair:Stair:665557 Support 3", None),
+    ],
+)
+def test_a_modern_stair_part_keeps_its_stairs_family_type_and_id(
+    name: str, tag: str | None
+) -> None:
+    """Revit 2019 to 2022 write the part after a space (audit finding A14)."""
+    family, _ = name.split(":", 1)
+    stair_id = int(name.split(":")[-1].split(" ")[0])
+    assert parse(name, tag) == (RevitName(family, "Stair", stair_id), [])
+
+
+def test_stringers_are_stair_parts_too() -> None:
+    assert parse("Assembled Stair:Stair:4959975 Stringer 10", "4960001") == (
+        RevitName("Assembled Stair", "Stair", 4959975),
+        [],
+    )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "Precast Stair:Stair:1287438 Flight 1",  # not a part word Revit was seen to write
+        "Stair:1287438 Run 1",  # no type before the stair's id
+        "Model Text:350mm Arial 2",
+    ],
+)
+def test_other_names_with_a_trailing_word_stay_reported(name: str) -> None:
+    assert parse(name)[1] == [IssueCode.REVIT_NAME_UNPARSED]
+
+
+def test_control_characters_are_removed_from_family_and_type_and_reported() -> None:
+    """Revit 2022 left U+001F in wall type names on the audit's tower (finding A16)."""
+    name = "Basic Wall:1AR_MUR_PV001\x1f\x1f\x1f - Interrato_Interrato:1539717"
+    parsed, issues = parse_revit_name(GID, name, "1539717")
+    assert parsed == RevitName("Basic Wall", "1AR_MUR_PV001 - Interrato_Interrato", 1539717)
+    [issue] = issues
+    assert issue.code == IssueCode.CONTROL_CHARACTER_IN_NAME
+    assert "(U+001F); removed from the Revit family and type" in issue.message
+
+
+def test_an_opening_repeats_its_hosts_name_and_is_not_reported_again() -> None:
+    name = "Basic Wall:1AR_MUR_PV001\x1f - Interrato_Interrato:1539717"
+    parsed, issues = parse_revit_name(GID, name, "1693877", named_after_host=True)
+    assert (parsed.type, issues) == ("1AR_MUR_PV001 - Interrato_Interrato", [])
+
+
+def test_a_family_of_control_characters_alone_is_no_family() -> None:
+    assert parse("\x1f\x07:Generic:138437") == (
+        RevitName(None, None, 138437),
+        [IssueCode.REVIT_NAME_UNPARSED],
+    )
+
+
 @pytest.mark.parametrize("tag", ["", "A-12", "0"])
 def test_a_tag_that_is_not_an_element_id_is_ignored(tag: str) -> None:
     assert parse("Basic Wall:Generic:138437", tag) == (

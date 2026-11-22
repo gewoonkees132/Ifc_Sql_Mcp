@@ -17,8 +17,10 @@ from typing import Literal
 from ifc_sql_mcp.ingest.issues import Issue
 
 type ObjectKind = Literal["spatial_element", "element"]
-type QuantityName = Literal["length_m", "area_m2", "volume_m3", "perimeter_m", "height_m"]
-type QuantitySource = Literal["ifc_qto", "revit_pset", "geometry"]
+type QuantityName = Literal[
+    "length_m", "area_m2", "volume_m3", "perimeter_m", "height_m", "width_m"
+]
+type QuantitySource = Literal["ifc_qto", "revit_pset", "ifc_attribute", "geometry"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,24 +52,38 @@ class ObjectRecord:
 
 @dataclass(frozen=True, slots=True)
 class SpatialElementRecord:
-    """A row for ``ifc.spatial_element``; ``parent_global_id`` becomes ``parent_id``."""
+    """A row for ``ifc.spatial_element``; the two ``*_global_id`` fields become ``*_id``.
+
+    The last three are for spaces only (re-check finding R1, ``footprints.py``).
+    """
 
     global_id: str
     parent_global_id: str | None
     long_name: str | None
     elevation_m: Decimal | None
+    revit_category: str | None = None
+    footprint_m2: float | None = None
+    repeats_global_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class ElementRecord:
-    """A row for ``ifc.element``; the two ``*_global_id`` fields become ``*_id``."""
+    """A row for ``ifc.element``; the two ``*_global_id`` fields become ``*_id``.
+
+    A feature element (an opening, say) has its name's family and type in the ``host_*``
+    fields, because Revit names it after the element it cuts; ``revit_family`` and
+    ``revit_type`` are then ``None``.
+    """
 
     global_id: str
     container_global_id: str | None
     storey_global_id: str | None
     tag: str | None
+    is_feature: bool
     revit_family: str | None
     revit_type: str | None
+    host_revit_family: str | None
+    host_revit_type: str | None
     revit_element_id: int | None
     type_name: str | None
     predefined_type: str | None
@@ -86,6 +102,7 @@ class PropertyRecord:
     value_bool: bool | None
     unit: str | None
     is_type_property: bool
+    is_implausible: bool
 
 
 @dataclass(frozen=True, slots=True)

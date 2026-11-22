@@ -107,7 +107,7 @@ def property_values(m: Loaded) -> Counter[str]:
         value.order[1]
         for obj in (*m.raw.spatial_elements, *m.raw.elements)
         for value in obj.values
-        if not value.from_quantity_set
+        if not value.from_quantity_set and not value.from_attribute
     }
     rows = m.records.properties
     return Counter(
@@ -119,6 +119,12 @@ def property_values(m: Loaded) -> Counter[str]:
                 for obj in (*m.raw.spatial_elements, *m.raw.elements)
                 for value in obj.values
                 if value.from_quantity_set
+            ),
+            "rows from entity attributes": sum(
+                1
+                for obj in (*m.raw.spatial_elements, *m.raw.elements)
+                for value in obj.values
+                if value.from_attribute
             ),
             "rows with is_type_property": sum(1 for r in rows if r.is_type_property),
             "rows in PSet_Revit_Type_* sets": sum(

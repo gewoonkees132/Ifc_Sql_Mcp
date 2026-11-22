@@ -1,6 +1,6 @@
 # ADR 6: An MCP server of read-only tools on the read-only role, with run_sql behind four layers
 
-- Status: accepted
+- Status: accepted; decision 8 amended by [ADR 9](0009-schema-discovery-tool.md)
 - Date: 2026-11-17
 
 ## Context

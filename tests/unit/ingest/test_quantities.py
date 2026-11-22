@@ -121,3 +121,195 @@ def test_two_sets_with_the_same_value_do_not_conflict() -> None:
     )
     assert len(records) == 1
     assert issues == []
+
+
+# --------------------------------------------------------------- IFC base quantities
+
+MEASURES = {"m": "IfcLengthMeasure", "m2": "IfcAreaMeasure", "m3": "IfcVolumeMeasure"}
+
+
+def qto(set_name: str, name: str, number: float, unit: str) -> RawValue:
+    return value(set_name, name, number, MEASURES[unit], from_quantity_set=True)
+
+
+def quantities(ifc_class_base: str | None, *raws: RawValue) -> dict[str, tuple[float, str]]:
+    """Canonical quantities of one object: name -> (value, source_ref)."""
+    values, _ = resolve_properties(GID, raws, SI_UNITS)
+    records, issues = derive_quantities(GID, values, ifc_class_base)
+    assert issues == []
+    return {r.name: (r.value, r.source_ref) for r in records if r.source == "ifc_qto"}
+
+
+def test_a_revit_2021_wall_gets_its_net_side_area_and_its_thickness() -> None:
+    assert quantities(
+        "IfcWall",
+        qto("Qto_WallBaseQuantities", "Length", 6.404, "m"),
+        qto("Qto_WallBaseQuantities", "Height", 6.4987, "m"),
+        qto("Qto_WallBaseQuantities", "Width", 0.202, "m"),
+        qto("Qto_WallBaseQuantities", "GrossFootprintArea", 1.2936, "m2"),
+        qto("Qto_WallBaseQuantities", "NetSideArea", 22.355, "m2"),
+        qto("Qto_WallBaseQuantities", "NetVolume", 4.5157, "m3"),
+    ) == {
+        "length_m": (6.404, "Qto_WallBaseQuantities.Length"),
+        "height_m": (6.4987, "Qto_WallBaseQuantities.Height"),
+        "width_m": (0.202, "Qto_WallBaseQuantities.Width"),
+        "area_m2": (22.355, "Qto_WallBaseQuantities.NetSideArea"),
+        "volume_m3": (4.5157, "Qto_WallBaseQuantities.NetVolume"),
+    }
+
+
+def test_an_ifc2x3_base_quantities_set_is_read_as_its_class_set() -> None:
+    # Revit 2019 (file E) writes one set named BaseQuantities, with gross values only.
+    wall = quantities(
+        "IfcWall",
+        qto("BaseQuantities", "Length", 5.0, "m"),
+        qto("BaseQuantities", "Height", 3.0, "m"),
+        qto("BaseQuantities", "GrossSideArea", 15.0, "m2"),
+        qto("BaseQuantities", "GrossVolume", 3.0, "m3"),
+    )
+    space = quantities("IfcSpace", qto("BaseQuantities", "NetFloorArea", 98.8, "m2"))
+
+    assert wall["area_m2"] == (15.0, "BaseQuantities.GrossSideArea")
+    assert wall["volume_m3"] == (3.0, "BaseQuantities.GrossVolume")
+    assert space == {"area_m2": (98.8, "BaseQuantities.NetFloorArea")}
+
+
+def test_base_quantities_of_a_class_without_a_qto_set_are_not_quantities() -> None:
+    assert quantities("IfcFurnishingElement", qto("BaseQuantities", "Length", 1.0, "m")) == {}
+    assert quantities(None, qto("BaseQuantities", "Length", 1.0, "m")) == {}
+
+
+def test_a_gross_value_stands_in_silently_only_for_a_missing_or_implausible_net_one() -> None:
+    both = quantities(
+        "IfcWall",
+        qto("Qto_WallBaseQuantities", "NetSideArea", 20.0, "m2"),
+        qto("Qto_WallBaseQuantities", "GrossSideArea", 24.0, "m2"),
+    )
+    # Revit 2021's space: GrossVolume is 1,000 x area x height, so no volume at all.
+    flagged = quantities(
+        "IfcSpace",
+        qto("Qto_SpaceBaseQuantities", "NetFloorArea", 18.3, "m2"),
+        qto("Qto_SpaceBaseQuantities", "Height", 3.8, "m"),
+        qto("Qto_SpaceBaseQuantities", "GrossVolume", 69562.2, "m3"),
+    )
+
+    assert both["area_m2"] == (20.0, "Qto_WallBaseQuantities.NetSideArea")
+    assert "volume_m3" not in flagged
+
+
+def test_a_slab_area_is_its_gross_area_never_its_net_area() -> None:
+    # Revit 2021 writes NetArea as the whole solid's surface: 219 m2 for a 105.9 m2 floor.
+    slab = quantities(
+        "IfcSlab",
+        qto("Qto_SlabBaseQuantities", "GrossArea", 105.906, "m2"),
+        qto("Qto_SlabBaseQuantities", "NetArea", 219.012, "m2"),
+        qto("Qto_SlabBaseQuantities", "NetVolume", 15.8859, "m3"),
+        qto("Qto_SlabBaseQuantities", "Perimeter", 48.0, "m"),
+        qto("Qto_SlabBaseQuantities", "Width", 0.15, "m"),
+    )
+    without_gross = quantities("IfcSlab", qto("Qto_SlabBaseQuantities", "NetArea", 320.5, "m2"))
+
+    assert slab["area_m2"] == (105.906, "Qto_SlabBaseQuantities.GrossArea")
+    assert (slab["width_m"], slab["perimeter_m"]) == (
+        (0.15, "Qto_SlabBaseQuantities.Width"),
+        (48.0, "Qto_SlabBaseQuantities.Perimeter"),
+    )
+    assert without_gross == {}
+
+
+@pytest.mark.parametrize("set_name", ["Qto_DoorBaseQuantities", "Qto_WindowBaseQuantities"])
+def test_doors_and_windows_get_width_height_and_area(set_name: str) -> None:
+    assert quantities(
+        "IfcDoor",
+        qto(set_name, "Width", 0.8, "m"),
+        qto(set_name, "Height", 2.1, "m"),
+        qto(set_name, "Area", 2.965, "m2"),
+    ) == {
+        "width_m": (0.8, f"{set_name}.Width"),
+        "height_m": (2.1, f"{set_name}.Height"),
+        "area_m2": (2.965, f"{set_name}.Area"),
+    }
+
+
+@pytest.mark.parametrize(
+    "set_name",
+    [
+        "Qto_ColumnBaseQuantities",
+        "Qto_BeamBaseQuantities",
+        "Qto_MemberBaseQuantities",
+        "Qto_StairFlightBaseQuantities",
+    ],
+)
+def test_linear_elements_get_length_and_volume(set_name: str) -> None:
+    assert quantities(
+        "IfcColumn",
+        qto(set_name, "Length", 3.0, "m"),
+        qto(set_name, "GrossVolume", 0.27, "m3"),
+    ) == {"length_m": (3.0, f"{set_name}.Length"), "volume_m3": (0.27, f"{set_name}.GrossVolume")}
+
+
+def test_a_railing_gets_its_length() -> None:
+    assert quantities("IfcRailing", qto("Qto_RailingBaseQuantities", "Length", 7.5, "m")) == {
+        "length_m": (7.5, "Qto_RailingBaseQuantities.Length")
+    }
+
+
+def test_a_ceiling_gets_its_net_area_and_its_thickness() -> None:
+    # Revit 2021, IFC4 (files A and C): NetArea only. The gross area stands in for it.
+    ceiling = quantities(
+        "IfcCovering",
+        qto("Qto_CoveringBaseQuantities", "NetArea", 83.51, "m2"),
+        qto("Qto_CoveringBaseQuantities", "GrossArea", 84.0, "m2"),
+        qto("Qto_CoveringBaseQuantities", "Width", 0.05, "m"),
+    )
+    gross_only = quantities(
+        "IfcCovering", qto("Qto_CoveringBaseQuantities", "GrossArea", 9.0, "m2")
+    )
+
+    assert ceiling == {
+        "area_m2": (83.51, "Qto_CoveringBaseQuantities.NetArea"),
+        "width_m": (0.05, "Qto_CoveringBaseQuantities.Width"),
+    }
+    assert gross_only == {"area_m2": (9.0, "Qto_CoveringBaseQuantities.GrossArea")}
+
+
+def test_revit_2019s_gross_ceiling_area_is_a_ceilings_area() -> None:
+    # File E, IFC2X3: one BaseQuantities set, whose only value is Revit's own name.
+    assert quantities("IfcCovering", qto("BaseQuantities", "GrossCeilingArea", 52.6, "m2")) == {
+        "area_m2": (52.6, "BaseQuantities.GrossCeilingArea")
+    }
+
+
+def test_the_gsa_area_stands_in_for_a_missing_space_net_floor_area_only() -> None:
+    gsa = qto("GSA Space Areas", "GSA BIM Area", 30.1, "m2")
+
+    assert quantities("IfcSpace", gsa)["area_m2"] == (30.1, "GSA Space Areas.GSA BIM Area")
+    assert quantities("IfcSpace", qto("Qto_SpaceBaseQuantities", "NetFloorArea", 30.0, "m2"), gsa)[
+        "area_m2"
+    ] == (30.0, "Qto_SpaceBaseQuantities.NetFloorArea")
+
+
+# --------------------------------------------------------------------------- IFC attributes (A4)
+
+
+def test_a_doors_overall_size_is_its_width_and_height_from_its_attributes() -> None:
+    raws = (
+        value("IfcDoor", "OverallWidth", 1.697, "IfcPositiveLengthMeasure", from_attribute=True),
+        value("IfcDoor", "OverallHeight", 2.1, "IfcPositiveLengthMeasure", from_attribute=True),
+    )
+    values, _ = resolve_properties(GID, raws, SI_UNITS)
+    records, issues = derive_quantities(GID, values, "IfcDoor")
+
+    assert (issues, [(r.name, r.source, r.value, r.source_ref) for r in records]) == (
+        [],
+        [
+            ("height_m", "ifc_attribute", 2.1, "IfcDoor.OverallHeight"),
+            ("width_m", "ifc_attribute", 1.697, "IfcDoor.OverallWidth"),
+        ],
+    )
+
+
+def test_a_property_set_named_after_an_entity_is_not_its_attributes() -> None:
+    records, issues = derive(value("IfcDoor", "OverallWidth", 0.9, "IfcPositiveLengthMeasure"))
+
+    assert (records, issues) == ([], [])

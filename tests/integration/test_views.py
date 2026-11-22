@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 from rows import (
     add_classification,
+    add_dq_run,
     add_element,
     add_layer,
     add_material,
@@ -23,6 +24,10 @@ from rows import (
 from sqlalchemy import Connection, RowMapping, func, insert, text
 
 from ifc_sql_mcp.db import schema
+from ifc_sql_mcp.dq.catalogue import load_catalogue
+from ifc_sql_mcp.dq.run import evaluate
+from ifc_sql_mcp.dq.sync import sync_rules
+from ifc_sql_mcp.server import tools
 
 
 @dataclass(frozen=True)
@@ -112,6 +117,27 @@ def building(conn: Connection) -> Building:
 
 def _rows(conn: Connection, sql: str, **params: object) -> list[RowMapping]:
     return list(conn.execute(text(sql), params).mappings())
+
+
+@pytest.mark.parametrize(
+    ("sources", "chosen"),
+    [
+        (("geometry", "ifc_attribute", "revit_pset", "ifc_qto"), "ifc_qto"),
+        (("geometry", "ifc_attribute", "revit_pset"), "revit_pset"),
+        (("geometry", "ifc_attribute"), "ifc_attribute"),
+        (("geometry",), "geometry"),
+    ],
+)
+def test_v_quantity_ranks_the_four_sources(
+    conn: Connection, building: Building, sources: tuple[str, ...], chosen: str
+) -> None:
+    door = add_element(conn, building.model_id, "IfcDoor", "M_Single-Flush:0915 x 2134mm:1")
+    for rank, source in enumerate(sources):
+        add_quantity(conn, door, "width_m", 0.9 + rank / 100, source=source, source_ref=source)
+
+    [row] = _rows(conn, "SELECT source FROM ifc.v_quantity WHERE object_id = :id", id=door)
+
+    assert row["source"] == chosen
 
 
 def test_v_quantity_prefers_ifc_quantity_sets_over_revit_parameters(
@@ -207,7 +233,177 @@ def test_v_space_schedule(conn: Connection, building: Building) -> None:
         "height_m": None,
         "omniclass_code": "13-51 24 11",
         "omniclass_title": "General Residential Space",
+        "category": None,
+        "footprint_m2": None,
+        "duplicate_of": None,
     }
+
+
+def test_a_room_exported_twice_is_marked_and_counted_once(
+    conn: Connection, building: Building
+) -> None:
+    """Revit Rooms and MEP Spaces exported together: one room, two IfcSpaces (A7)."""
+    storey = building.level_1
+    room = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor", parent_id=storey
+    )
+    mep_space = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor", parent_id=storey
+    )
+    other_name = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor B", parent_id=storey
+    )
+    # The same number and name but another area: a different space that reuses a number.
+    other_area = add_spatial(
+        conn, building.model_id, "IfcSpace", "49", long_name="Corridor", parent_id=storey
+    )
+    for space in (room, mep_space, other_name):
+        add_quantity(conn, space, "area_m2", 474.3)
+    add_quantity(conn, other_area, "area_m2", 12.0)
+    sync_rules(conn, load_catalogue())
+    run_id = add_dq_run(conn, building.model_id)
+    evaluate(
+        conn,
+        run_id,
+        building.model_id,
+        [r for r in load_catalogue() if r.rule_id == "duplicate_space"],
+    )
+
+    marks = dict(
+        conn.execute(
+            text("SELECT object_id, duplicate_of FROM ifc.v_space_schedule WHERE number = '49'")
+        ).all()
+    )
+    schedule = tools.space_schedule(conn, building.model_id)
+    [finding] = conn.execute(
+        text("SELECT object_id, message FROM ifc.dq_result WHERE dq_run_id = :r"), {"r": run_id}
+    ).all()
+
+    assert marks == {room: None, mep_space: room, other_name: None, other_area: None}
+    assert (schedule.duplicate_spaces, schedule.total_area_m2) == (
+        1,
+        pytest.approx(14.0 + 3 * 474.3 + 12.0),
+    )
+    assert schedule.total_area_without_duplicates_m2 == pytest.approx(14.0 + 2 * 474.3 + 12.0)
+    assert schedule.note is not None
+    assert "total_area_m2 counts that floor twice" in schedule.note
+    assert finding.object_id == mep_space
+    assert finding.message == (
+        f"space 49 'Corridor' on Level 1 repeats space 49 'Corridor' (object {room}): the "
+        "same number, name, storey and floor area, a room exported twice"
+    )
+
+
+def test_a_room_whose_plan_lies_inside_another_repeats_it(
+    conn: Connection, building: Building
+) -> None:
+    """A Room and an MEP Space of the same floor, under other numbers and names (R1)."""
+    storey = building.level_1
+    corridor = add_spatial(
+        conn,
+        building.model_id,
+        "IfcSpace",
+        "49",
+        long_name="Corridor",
+        parent_id=storey,
+        footprint_m2=474.3,
+    )
+    part = add_spatial(
+        conn,
+        building.model_id,
+        "IfcSpace",
+        "49b",
+        long_name="Corridor",
+        parent_id=storey,
+        footprint_m2=174.5,
+        repeats_id=corridor,
+    )
+    # Measured, and it repeats nothing, although it shares the corridor's number and name.
+    namesake = add_spatial(
+        conn,
+        building.model_id,
+        "IfcSpace",
+        "49",
+        long_name="Corridor",
+        parent_id=storey,
+        footprint_m2=474.3,
+    )
+    for space, area in ((corridor, 474.3), (part, 174.5), (namesake, 474.3)):
+        add_quantity(conn, space, "area_m2", area)
+    sync_rules(conn, load_catalogue())
+    run_id = add_dq_run(conn, building.model_id)
+    evaluate(
+        conn,
+        run_id,
+        building.model_id,
+        [r for r in load_catalogue() if r.rule_id == "duplicate_space"],
+    )
+
+    marks = dict(
+        conn.execute(
+            text("SELECT object_id, duplicate_of FROM ifc.v_space_schedule WHERE number LIKE '49%'")
+        ).all()
+    )
+    [finding] = conn.execute(
+        text("SELECT object_id, message FROM ifc.dq_result WHERE dq_run_id = :r"), {"r": run_id}
+    ).all()
+
+    assert marks == {corridor: None, part: corridor, namesake: None}
+    assert finding.object_id == part
+    assert finding.message == (
+        f"space 49b 'Corridor' on Level 1 repeats space 49 'Corridor' (object {corridor}): its "
+        "plan lies inside that one, a room exported twice"
+    )
+
+
+def test_revit_areas_are_listed_but_left_out_of_the_room_totals(
+    conn: Connection, building: Building
+) -> None:
+    """Revit's area plans are spaces of category Areas: gross areas, not rooms (R1)."""
+    area_plan = add_spatial(
+        conn,
+        building.model_id,
+        "IfcSpace",
+        "14",
+        long_name="Area",
+        parent_id=building.level_1,
+        revit_category="Areas",
+        footprint_m2=3_087.4,
+    )
+    add_quantity(conn, area_plan, "area_m2", 3_087.4)
+
+    schedule = tools.space_schedule(conn, building.model_id)
+    listed = {space.object_id: space.category for space in schedule.spaces}
+
+    assert listed[area_plan] == "Areas"
+    assert (schedule.space_count, schedule.revit_area_spaces) == (2, 1)
+    assert schedule.revit_area_total_m2 == pytest.approx(3_087.4)
+    # The kitchen's 14 m² alone: the area plan is in neither total.
+    assert schedule.total_area_m2 == schedule.total_area_without_duplicates_m2 == 14.0
+    assert schedule.note == (
+        "1 spaces are Revit Areas (category Areas), Revit's area plans, not rooms: they are "
+        "listed, and left out of both totals (3,087.4 m²)."
+    )
+
+
+def test_revit_areas_without_an_area_are_counted_but_not_measured(
+    conn: Connection, building: Building
+) -> None:
+    add_spatial(
+        conn,
+        building.model_id,
+        "IfcSpace",
+        "15",
+        long_name="Area",
+        parent_id=building.level_1,
+        revit_category="Areas",
+    )
+
+    schedule = tools.space_schedule(conn, building.model_id)
+
+    assert (schedule.revit_area_spaces, schedule.revit_area_total_m2) == (1, None)
+    assert schedule.note is not None
+    assert schedule.note.endswith("they are listed, and left out of both totals.")
 
 
 def test_v_takeoff_splits_layered_elements_by_material(
@@ -266,6 +462,7 @@ def test_v_model_summary_counts_and_latest_dq_run(conn: Connection, building: Bu
             description="Value equals the property name.",
             severity="warning",
             dimension="validity",
+            scope="model_content",
         )
     )
     older = _add_dq_run(conn, building.model_id, "succeeded", minutes_ago=60)

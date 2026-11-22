@@ -73,8 +73,9 @@ READ_BACK = {
     ),
     "elements": (
         ElementRecord,
-        "SELECT o.global_id, container.global_id, storey.global_id, e.tag, e.revit_family, "
-        "e.revit_type, e.revit_element_id, e.type_name, e.predefined_type "
+        "SELECT o.global_id, container.global_id, storey.global_id, e.tag, e.is_feature, "
+        "e.revit_family, e.revit_type, e.host_revit_family, e.host_revit_type, "
+        "e.revit_element_id, e.type_name, e.predefined_type "
         "FROM ifc.element AS e JOIN ifc.object AS o USING (object_id) "
         "LEFT JOIN ifc.object AS container ON e.container_id = container.object_id "
         "LEFT JOIN ifc.object AS storey ON e.storey_id = storey.object_id "
@@ -83,7 +84,7 @@ READ_BACK = {
     "properties": (
         PropertyRecord,
         "SELECT o.global_id, p.pset_name, p.prop_name, p.value_type, p.value_text, "
-        "p.value_num, p.value_bool, p.unit, p.is_type_property "
+        "p.value_num, p.value_bool, p.unit, p.is_type_property, p.is_implausible "
         "FROM ifc.property AS p JOIN ifc.object AS o USING (object_id) "
         "WHERE o.model_id = :m ORDER BY o.global_id, p.pset_name, p.prop_name",
     ),

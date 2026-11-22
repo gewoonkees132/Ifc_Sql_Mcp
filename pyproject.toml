@@ -13,10 +13,16 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "pydantic>=2.14,<3",
     "pyyaml>=6.0.3,<7",
+    "shapely>=2.2,<3",
     "sqlalchemy>=2.0,<3",
     "sqlglot>=30.33,<31",
     "typer>=0.16",
 ]
+
+[project.optional-dependencies]
+# PostgreSQL 16 itself, as a wheel, for one user without Docker (IFC_SQL_DATA_DIR; audit
+# finding A18, item 4). About 150 MB, so it is not installed unless asked for.
+embedded = ["pixeltable-pgserver>=0.7.2,<0.8"]
 
 [project.scripts]
 ifc-sql = "ifc_sql_mcp.cli:app"
@@ -96,6 +102,12 @@ warn_unreachable = true
 module = ["ifcopenshell", "ifcopenshell.*"]
 follow_imports = "skip"
 
+# shapely ships no complete type hints either. ingest/footprints.py, which compares the
+# plans of spaces, is the one module that uses it, and it returns only floats and strings.
+[[tool.mypy.overrides]]
+module = ["shapely", "shapely.*"]
+ignore_missing_imports = true
+
 # --------------------------------------------------------------------------- pytest
 [tool.pytest]
 minversion = "9.0"
@@ -104,9 +116,10 @@ testpaths = ["tests"]
 # fixture generator (`make_revit_quirks`) and shared helpers (`record_contract`).
 pythonpath = ["scripts", "tests/fixtures", "tests/support"]
 strict = true
-addopts = ["-ra", "-m", "not sample"]
+addopts = ["-ra", "-m", "not sample and not modern"]
 markers = [
     "sample: reads the real Duplex files, downloading them if needed (deselected by default; run with -m sample)",
+    "modern: reads the audit's Revit 2019-2022 exports, downloading them if needed (deselected by default; run with -m modern)",
 ]
 filterwarnings = ["error"]
 

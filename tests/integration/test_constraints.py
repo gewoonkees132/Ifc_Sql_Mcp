@@ -39,6 +39,7 @@ from ifc_sql_mcp.db import schema
         ("discipline", "Architecture", "ck_model_discipline_format"),
         ("project_global_id", "not-a-global-id", "ck_model_project_global_id_format"),
         ("length_unit", "", "ck_model_length_unit_not_blank"),
+        ("project_key", " ", "ck_model_project_key_not_blank"),
     ],
 )
 def test_model_rejects_malformed_values(
@@ -54,6 +55,33 @@ def test_the_same_file_cannot_be_loaded_twice(conn: Connection) -> None:
 
     with violates(conn, "uq_model_file_sha256"):
         add_model(conn, file_sha256=sha256, discipline="MEP")
+
+
+def test_a_model_is_replaced_once_and_never_by_itself(conn: Connection) -> None:
+    first = add_model(conn)
+    add_model(conn, replaces_model_id=first)
+
+    with violates(conn, "uq_model_replaces_model_id"):
+        add_model(conn, replaces_model_id=first)
+    with violates(conn, "fk_model_replaces_model_id"):
+        add_model(conn, replaces_model_id=999_999)
+    with violates(conn, "ck_model_replaces_model_id_not_itself"):
+        conn.execute(
+            text("UPDATE ifc.model SET replaces_model_id = model_id WHERE model_id = :m"),
+            {"m": first},
+        )
+
+
+def test_deleting_a_replaced_model_leaves_its_successor_current(conn: Connection) -> None:
+    first = add_model(conn)
+    later = add_model(conn, replaces_model_id=first)
+
+    conn.execute(text("DELETE FROM ifc.model WHERE model_id = :m"), {"m": first})
+
+    replaces = conn.execute(
+        text("SELECT replaces_model_id FROM ifc.model WHERE model_id = :m"), {"m": later}
+    ).scalar_one()
+    assert replaces is None
 
 
 # --------------------------------------------------------------------------- objects
@@ -370,6 +398,7 @@ def test_ingestion_run_valid_lifecycle(conn: Connection) -> None:
         ({"rule_id": "Placeholder-Value"}, "ck_dq_rule_rule_id_format"),
         ({"severity": "critical"}, "ck_dq_rule_severity_valid"),
         ({"dimension": "timeliness"}, "ck_dq_rule_dimension_valid"),
+        ({"scope": "the_exporter"}, "ck_dq_rule_scope_valid"),
     ],
 )
 def test_dq_rule_rejects_bad_values(
@@ -380,6 +409,7 @@ def test_dq_rule_rejects_bad_values(
         "description": "Value equals the property name.",
         "severity": "warning",
         "dimension": "validity",
+        "scope": "model_content",
     } | values
 
     with violates(conn, constraint):
@@ -411,7 +441,11 @@ def test_deleting_a_model_removes_everything_loaded_from_it(conn: Connection) ->
     ).scalar_one()
     conn.execute(
         insert(schema.dq_rule).values(
-            rule_id="test_rule", description="Test.", severity="info", dimension="validity"
+            rule_id="test_rule",
+            description="Test.",
+            severity="info",
+            dimension="validity",
+            scope="model_content",
         )
     )
     dq_run_id = conn.execute(

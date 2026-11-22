@@ -60,6 +60,7 @@ def test_the_first_sync_adds_every_rule_as_written(conn: Connection, synced: Syn
             "description": rule.description,
             "severity": rule.severity,
             "dimension": rule.dimension,
+            "scope": rule.scope,
             "retired_at": None,
         }
 
@@ -88,6 +89,7 @@ def test_an_edited_rule_is_updated_and_its_findings_keep_their_severity(
         "description": "A text property is empty.",
         "severity": "warning",
         "dimension": "validity",
+        "scope": "model_content",
         "retired_at": None,
     }
     severities = conn.execute(text("SELECT severity FROM ifc.dq_result")).scalars().all()

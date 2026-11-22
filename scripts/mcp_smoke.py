@@ -23,7 +23,12 @@ from mcp import Client, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 SERVER = Path(sys.executable).with_name("ifc-sql")
-PASSED_ON = ("IFC_SQL_DATABASE_URL", "IFC_SQL_READER_PASSWORD", "IFC_SQL_LOG_LEVEL")
+PASSED_ON = (
+    "IFC_SQL_DATABASE_URL",
+    "IFC_SQL_DATA_DIR",
+    "IFC_SQL_READER_PASSWORD",
+    "IFC_SQL_LOG_LEVEL",
+)
 QUERY = "SELECT discipline, count(*) AS elements FROM v_element GROUP BY 1 ORDER BY 1"
 
 

@@ -1,10 +1,13 @@
 # Data quality
 
 `ifc-sql dq` checks loaded models against a catalogue of rules and records what it finds,
-one run per model. Every issue the ingest reported becomes a finding, and five SQL rules
-check what was stored: Revit's placeholder values, empty strings, elements without a
-storey and spaces without an area. The design, and the alternatives that were rejected,
-are in [ADR 5](adr/0005-data-quality-rules.md).
+one run per model. Every issue the ingest reported becomes a finding, and sixteen SQL
+rules check what was stored: Revit's placeholder values, empty strings, elements without
+a storey, quantities that disagree with each other, and what a handover usually requires
+(quantities, rooms, fire ratings, real materials, filled-in project information). Every
+rule says whether its findings are about the **model's content** or about the **loader's
+coverage** of the file ([Scope](#scope-the-model-or-the-loader)). The design, and the
+alternatives that were rejected, are in [ADR 5](adr/0005-data-quality-rules.md).
 
 ```bash
 make dq-samples            # make ingest-samples, then check every loaded model
@@ -34,7 +37,7 @@ be compared over time ([Reading the findings](#reading-the-findings)).
 
 | Outcome | Run | Exit | Output |
 |---|---|---|---|
-| Checked | `succeeded` | 0 | `checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,013 warning, 1,961 info findings` |
+| Checked | `succeeded` | 0 | `checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,035 warning, 1,961 info findings (model content 0 / 30,035 / 1,961, loader coverage 0 / 0 / 0)` |
 | A rule failed | `failed` | 1 | `dq of model 1 failed (dq run 1): RuleError: rule fails_for_model_1 failed: DivisionByZero: division by zero`; the other models are still checked |
 | No model loaded | none | 0 | `no models are loaded; nothing to check` |
 | Unknown model id | none | 2 | Usage error: `Invalid value for MODEL_ID: no model with id 7` |
@@ -68,10 +71,10 @@ msg=checked dq_run_id=3 model_id=3 rules=31 findings=3380 seconds=0.233
 [`src/ifc_sql_mcp/rules/dq_rules.yaml`](../src/ifc_sql_mcp/rules/dq_rules.yaml) holds
 the rules. It lives inside the package, so an installed wheel can run `ifc-sql dq`.
 Every rule has a `rule_id`, a `description` (the text an LLM reads in `ifc.dq_rule`), a
-`severity` and a `dimension`, and is evaluated in one of two ways:
+`severity`, a `dimension` and a `scope`, and is evaluated in one of two ways:
 
 - **`issue_code`**: the findings are the model's `ifc.ingest_issue` rows with that code,
-  each with the issue's object and message. All 26 issue codes have exactly one rule,
+  each with the issue's object and message. All 29 issue codes have exactly one rule,
   named after the code. `tests/unit/dq/test_catalogue.py` fails until a new `IssueCode`
   gets one.
 - **`sql`**: a SELECT returning `object_id` (NULL for a finding about the whole model)
@@ -85,6 +88,7 @@ Every rule has a `rule_id`, a `description` (the text an LLM reads in `ifc.dq_ru
       filters on the property treats the placeholder as a real value.
     severity: warning
     dimension: validity
+    scope: model_content
     sql: |
       SELECT p.object_id,
              format('%s.%s = %L, the parameter''s own name: a placeholder, not a value',
@@ -98,7 +102,7 @@ Every rule has a `rule_id`, a `description` (the text an LLM reads in `ifc.dq_ru
 The loader (`src/ifc_sql_mcp/dq/catalogue.py`) refuses, naming the rule and the
 problem: YAML syntax errors; a key written twice in one mapping; unknown or missing
 keys; values that are not text (an unquoted `no` is read as false); a `rule_id` that is
-not snake_case or is used twice; a severity or dimension outside the CHECKs on
+not snake_case or is used twice; a severity, dimension or scope outside the CHECKs on
 `dq_rule`; both or neither of `issue_code` and `sql`; an issue code that does not exist
 or is mapped by two rules; and SQL that does not use `:model_id`, or that uses any other
 parameter. Without `:model_id` a rule would report every model's objects. SQLAlchemy
@@ -123,9 +127,30 @@ refused too.
 Each finding copies its rule's severity when it is found (`dq_result.severity`), so a
 later change to the rule does not rewrite earlier runs.
 
+### Scope: the model or the loader
+
+An architect asking "is my model fit for handover?" needs the model's gaps, not this
+tool's. The audit's file B showed why (finding A9): its 1,458 errors were door panel sets
+this loader did not read, and no rule said that the model had no quantities, no rooms,
+no fire ratings and Revit's default project information. So every rule has a `scope`
+(migration 0016, `dq_rule.scope`, shown in `v_dq_finding.scope`):
+
+| Scope | Meaning | Who acts |
+|---|---|---|
+| `model_content` | About what the file contains: something its author, or Revit's exporter settings, decided. | The model's author. |
+| `loader_coverage` | Something in the file that this tool does not read, or reads only partly. The model is not at fault. | This project. |
+
+The nine `loader_coverage` rules are `unsupported_property`, `unsupported_property_set`,
+`unsupported_classification`, `unsupported_material`, `unit_not_convertible`,
+`measure_not_converted`, `revit_name_unparsed`, `geometry_not_measured` and
+`space_area_not_mapped`. Every other
+rule is `model_content`. `ifc-sql dq` prints both counts after the total, and
+`data_quality_report` gives `findings_by_scope`, lists `model_content` rules first, and
+filters by `scope`.
+
 ### The rules
 
-The five SQL rules check stored values:
+The sixteen SQL rules check stored values:
 
 | Rule | Severity | Dimension | Finds |
 |---|---|---|---|
@@ -134,14 +159,35 @@ The five SQL rules check stored values:
 | `value_is_empty` | info | completeness | An empty or whitespace-only text value. |
 | `element_without_storey` | warning | completeness | An element whose `storey_id` is NULL: takeoffs by storey leave it out. |
 | `space_without_area` | warning | completeness | A space with no `area_m2` from any source: schedules show no area. |
+| `wall_area_inconsistent` | warning | consistency | A wall whose `area_m2` is more than 5 % above `length_m` × `height_m`. |
+| `slab_volume_inconsistent` | warning | consistency | A slab whose `volume_m3` is not between 0.75 and 1.1 × `area_m2` × `width_m` (its thickness). Below 0.91 or above 1.0, the audit's files have only defects: a 150 mm foundation slab of `Width` 25.4 m, pile caps of 600 × 600 × 900 mm with a 0.6 m `Width` and a third of their volume. |
+| `space_volume_inconsistent` | warning | consistency | A space whose `volume_m3` is more than 10 % above `area_m2` × `height_m`. Only above: a room's volume follows its ceiling, so 16 of the Duplex's 21 rooms are 7–26 % below their area × unbounded height, correctly. |
+| `duplicate_space` | warning | uniqueness | A space that covers the floor of another again: its plan lies at least 90 % inside larger spaces on its storey, whatever its number or name (without a plan: the same number, name, storey and floor area). A Revit model that exports both Rooms and MEP Spaces writes each room twice: 75 of the 163 spaces of the audit's file C, and the 21 "MEP Space" copies of the Duplex MEP model (re-check finding R1). `v_space_schedule.duplicate_of` marks the repeat. Export rooms or spaces, not both. |
+| `space_perimeter_implausible` | warning | validity | A space whose `perimeter_m` is shorter than a circle's of the same area, 2√(π · `area_m2`). |
+| `model_without_quantities` | warning | completeness | One finding for a model whose elements have no quantity from IFC base quantities or Revit parameters (a door's overall size alone does not count): the file was exported without "Export base quantities". |
+| `model_without_spaces` | warning | completeness | One finding for an architectural model without a single space: room schedules and areas by room are empty. |
+| `missing_fire_rating` | info | completeness | A wall, curtain wall, door or slab without a `FireRating` in its `Pset_*Common` set, or with an empty one. Handover requirements usually ask for it; info, because not every element needs one. |
+| `placeholder_material` | warning | validity | A material Revit names by default: `Default*`, `<Unnamed>`, `<By Category>` or a render material (`Render Material 0-127-255`, Italian `Materiale per il rendering …`). One finding per material, saying how many elements use it. |
+| `placeholder_project_info` | warning | validity | One finding for a model whose Project Information is Revit's default: number `0001` or `Project Number`, or name `Project Name`. |
+| `space_area_not_mapped` | warning | completeness | A space with an area in one of its sets but none in `quantity`: the loader does not map that set (loader coverage; the A1 case). |
 
-The 26 issue rules, one per `IssueCode` (the issue's meaning is in
+`wall_area_inconsistent`, `slab_volume_inconsistent`, `space_volume_inconsistent` and
+`space_perimeter_implausible` compare the canonical quantities with each other (audit
+findings A1, A2). Values that break a physical bound by far more, such as the unit
+errors of Revit 2019 and 2021, never become quantities. The ingest keeps them out and
+reports them as `implausible_quantity` ([ADR 7](adr/0007-quantity-set-plausibility.md)).
+The last six are requirement rules, of the kind an IDS or a BIM execution plan states
+(audit finding A9). Reading a buildingSMART IDS file as the requirements is left for later.
+
+The 29 issue rules, one per `IssueCode` (the issue's meaning is in
 [revit-ifc-quirks.md](revit-ifc-quirks.md) and `ingest/issues.py`):
+
+Eight of them are `loader_coverage` (listed in [Scope](#scope-the-model-or-the-loader)).
 
 | Severity | Rules |
 |---|---|
 | error | `invalid_project_global_id`, `unit_not_convertible` (validity); `invalid_global_id`, `invalid_elevation`, `non_finite_value`, `invalid_layer_thickness` (validity); `duplicate_global_id` (uniqueness); `unnamed_property`, `unsupported_property`, `unsupported_property_set`, `unsupported_classification`, `unsupported_material`, `unnamed_material` (completeness) |
-| warning | `unit_assumed_si`, `incomplete_classification_reference` (completeness); `measure_not_converted`, `revit_name_unparsed`, `quantity_not_a_measure`, `negative_quantity`, `omniclass_unparsed` (validity); `revit_tag_mismatch`, `conflicting_property`, `conflicting_quantity`, `conflicting_classification` (consistency); `multiple_projects`, `multiple_material_associations` (uniqueness) |
+| warning | `unit_assumed_si`, `incomplete_classification_reference`, `geometry_not_measured` (completeness); `measure_not_converted`, `revit_name_unparsed`, `control_character_in_name`, `quantity_not_a_measure`, `negative_quantity`, `implausible_quantity`, `omniclass_unparsed` (validity); `revit_tag_mismatch`, `conflicting_property`, `conflicting_quantity`, `conflicting_classification` (consistency); `multiple_projects`, `multiple_material_associations` (uniqueness) |
 
 A few of these calls deserve a sentence:
 
@@ -152,6 +198,8 @@ A few of these calls deserve a sentence:
   the one that was dropped.
 - **`measure_not_converted` is a warning**: the value is stored, but in the file's own
   unit and without one, so it cannot be compared with the same measure from another file.
+  A derived measure whose unit the file declares in SI, such as Revit's U-values, gets
+  its unit instead and is not reported ([revit-ifc-quirks.md](revit-ifc-quirks.md)).
 
 ## Findings on the four Duplex files
 
@@ -172,17 +220,19 @@ ORDER BY f.severity, f.rule_id;
 ```
                rule_id               | severity |  dimension   | arc  |  mep  | ele  |  plu
 -------------------------------------+----------+--------------+------+-------+------+-------
+ missing_fire_rating                 | info     | completeness |   78 |     0 |    0 |     0
  value_is_empty                      | info     | completeness |  473 |  1961 |  273 |  1759
  value_is_not_applicable             | info     | completeness |    0 |     0 | 3018 | 11464
  conflicting_property                | warning  | consistency  |    0 |     2 |    2 |   225
  incomplete_classification_reference | warning  | completeness |    0 |     0 |   85 |   263
  omniclass_unparsed                  | warning  | validity     |    0 |     0 |    1 |     1
+ placeholder_project_info            | warning  | validity     |    1 |     1 |    1 |     1
  quantity_not_a_measure              | warning  | validity     |    0 |    44 |    0 |    61
  value_is_property_name              | warning  | validity     | 7650 | 29967 |    1 |   921
-(7 rows)
+(9 rows)
 ```
 
-The other 24 rules find nothing in any of the four files. `tests/samples/test_duplex_dq.py`
+The other 36 rules find nothing in any of the four files. `tests/samples/test_duplex_dq.py`
 pins every count (`make test-samples`), and checks them against two independent sources:
 
 - **The issue rules equal the issue table** in
@@ -197,8 +247,12 @@ pins every count (`make test-samples`), and checks them against two independent 
 
 What the numbers say:
 
-- **No errors.** Nothing in the four files was skipped or dropped, and every element has
-  a storey and every space an area.
+- **No errors, and nothing the loader missed.** Nothing in the four files was skipped or
+  dropped, every element has a storey and every space an area, and every finding is
+  `model_content`.
+- **The requirement rules find two gaps.** All four files keep Revit's default project
+  number, `0001`. 78 of the architectural model's 92 walls, doors and slabs (57 walls and
+  all 21 slabs) have no `FireRating`; IfcOpenShell's `get_psets` counts the same 78.
 - **Placeholders dominate.** In MEP, 38 parameters hold their own name on 969 of the 973
   objects; `AccessibilityPerformance`, `AssetIdentifier`, `BarCode`, `CodePerformance`
   and `Color` do so on all 926 elements. The 2013 files write `'N/A'` instead, an `info`
@@ -225,10 +279,10 @@ Each run's duration is `finished_at - started_at` in `dq_run`, from the same
 
 | File | Findings | Run (s) |
 |---|---:|---:|
-| `Duplex_A_20110907.ifc` | 8,123 | 0.47 |
-| `Duplex_MEP_20110907.ifc` | 31,974 | 1.52 |
-| `Duplex_Electrical_20121207.ifc` | 3,380 | 0.23 |
-| `Duplex_Plumbing_20121113.ifc` | 14,694 | 0.77 |
+| `Duplex_A_20110907.ifc` | 8,202 | 0.47 |
+| `Duplex_MEP_20110907.ifc` | 31,975 | 0.72 |
+| `Duplex_Electrical_20121207.ifc` | 3,381 | 0.16 |
+| `Duplex_Plumbing_20121113.ifc` | 14,695 | 0.52 |
 
 ## Reading the findings
 
@@ -238,10 +292,10 @@ NULL, not 0, for a model that was never checked. After the `make dq-samples` abo
 ```
  model_id | discipline | dq_run_id | errors | warnings | info
 ----------+------------+-----------+--------+----------+-------
-        1 | ARC        |         1 |      0 |     7650 |   473
-        2 | MEP        |         2 |      0 |    30013 |  1961
-        3 | ELE        |         3 |      0 |       89 |  3291
-        4 | PLU        |         4 |      0 |     1471 | 13223
+        1 | ARC        |         1 |      0 |     7651 |   551
+        2 | MEP        |         2 |      0 |    30035 |  1961
+        3 | ELE        |         3 |      0 |       90 |  3291
+        4 | PLU        |         4 |      0 |     1472 | 13223
 ```
 
 (`SELECT model_id, discipline, dq_run_id, dq_error_count AS errors, dq_warning_count AS
@@ -249,7 +303,7 @@ warnings, dq_info_count AS info FROM ifc.v_model_summary ORDER BY model_id`.)
 
 `v_dq_finding` (migration 0008) lists the findings of the same runs, one row each, with
 what a reader needs: `model_id`, `dq_run_id`, `rule_id`, `severity`, the rule's
-`dimension`, and the object's `object_id`, `global_id`, `ifc_class` and `object_name`,
+`dimension` and `scope` (v2, migration 0016), and the object's `object_id`, `global_id`, `ifc_class` and `object_name`,
 plus the `message`. It picks the latest run exactly as `v_model_summary` does, so their
 counts always agree (a test checks this on all four files). The rule's description is
 in `ifc.dq_rule`.
@@ -288,7 +342,7 @@ Every `ifc-sql dq` makes `ifc.dq_rule` match the catalogue before it evaluates a
 | Change to the YAML | Effect on `dq_rule` |
 |---|---|
 | New rule | Inserted. |
-| Description, severity or dimension edited | Updated in place. Findings of earlier runs keep the severity they were found with. |
+| Description, severity, dimension or scope edited | Updated in place. Findings of earlier runs keep the severity they were found with. |
 | Rule removed, and findings refer to it | Kept, with `retired_at` set. Later runs do not evaluate it. `dq_result.rule_id` deliberately does not cascade, so each finding goes on naming its rule. |
 | Rule removed, and nothing refers to it | Deleted. A retired rule is deleted once its last findings are gone, for example with their model. |
 | Retired rule back in the file | `retired_at` is cleared and runs evaluate it again. |
@@ -323,12 +377,14 @@ GlobalId). `ingest_issue.global_id` keeps the raw value.
 | Test | Covers |
 |---|---|
 | `tests/unit/dq/test_catalogue.py` | Every way a catalogue is refused, the shipped file, and every `IssueCode` having exactly one rule. |
-| `tests/integration/test_dq_rules.py` | Each of the 31 rules on the synthetic fixture: how many findings, about which objects, with which message; issue findings equal the stored issues; a run reports only its own model; the edge cases of the SQL rules. |
+| `tests/integration/test_dq_rules.py` | Each rule of the catalogue on the synthetic fixture: how many findings, about which objects, with which message; issue findings equal the stored issues; a run reports only its own model; the edge cases of the SQL rules. |
 | `tests/integration/test_dq_sync.py` | Every catalogue change in the table above, and two syncs at once. |
 | `tests/integration/test_dq_run.py` | A run's bookkeeping, a re-run, a failed run that leaves nothing but the failed run, `v_model_summary` before and after, `v_dq_finding`, deleting a model. |
 | `tests/integration/test_cli_dq.py` | Each outcome in the table at the top. |
 | `tests/samples/test_duplex_dq.py` | Every rule's count on each of the four files (`make test-samples`). |
 
-On the fixture the rules find 16 problems, all of them put there on purpose
+On the fixture the rules find 18 problems, all of them put there on purpose
 (`tests/fixtures/make_revit_quirks.py`): 2 placeholders, 2 `'N/A'`, 3 empty strings, a
-store room without an area, and the transform's 8 issues.
+store room without an area, a wall and a slab without a fire rating, and the
+transform's 8 issues. The audit's five files check the requirement rules and the scope
+split against IfcOpenShell (`tests/modern/test_audit_acceptance.py`, A9).

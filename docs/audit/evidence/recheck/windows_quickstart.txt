@@ -1,0 +1,39 @@
+The Windows quick start (docs/windows.md) on the embedded PostgreSQL, as CI ran it:
+run 46, job "Windows → quick start on the embedded database", windows-2025, 2026-11-22,
+code 8186b1e. https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45013742843
+Only the lines ifc-sql and pytest print are kept, in order; the log lines (ts=…) are left out
+but for the three that say where the database was.
+
+# IFC_SQL_DATA_DIR=C:\Users\runneradmin\AppData\Local\ifc-sql\data   (no Docker, no URL)
+
+> uv run ifc-sql migrate
+database is at revision 0019
+
+> uv run python scripts/download_samples.py
+> uv run ifc-sql ingest data\samples\Duplex_A_20110907.ifc --discipline ARC --project duplex
+loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,545 property values, 0 issues (run 1)
+> uv run ifc-sql dq
+level=info logger=ifc_sql_mcp.db.embedded msg="embedded database" data_dir="C:\\Users\\runneradmin\\AppData\\Local\\ifc-sql\\data"
+checked model 1 (ARC, Duplex_A_20110907.ifc) in dq run 1: 0 error, 7,651 warning, 551 info findings (model content 0 / 7,651 / 551, loader coverage 0 / 0 / 0)
+
+> Copy-Item data\samples\Duplex_MEP_20110907.ifc exports\
+> uv run ifc-sql watch exports --discipline MEP --project duplex --once
+level=info logger=ifc_sql_mcp.dq.run msg=findings dq_run_id=2 rule_id=duplicate_space severity=warning count=21
+loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property values, 46 issues (run 2)
+checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,035 warning, 1,961 info findings (model content 0 / 30,035 / 1,961, loader coverage 0 / 0 / 0)
+
+> uv run python scripts/mcp_smoke.py
+level=info logger=ifc_sql_mcp.cli msg=serving database=***127.0.0.1:51038/ifc transport=stdio
+connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 11 tools, 1 resource, 1 resource template, 1 prompt
+list_models: 2 models
+  model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
+  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,035 warning, 1,961 info
+run_sql: SELECT discipline, count(*) AS elements FROM v_element GROUP BY 1 ORDER BY 1
+  ['ARC', 268]
+  ['MEP', 926]
+ifc://schema: 29,778 characters
+
+> uv run pytest tests/integration/test_embedded.py -p no:cacheprovider
+platform win32 -- Python 3.12.10, pytest-9.2.0, pluggy-1.7.0
+tests\integration\test_embedded.py ..                                    [100%]
+============================== 2 passed in 10.14s ==============================

@@ -13,13 +13,31 @@ from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 # Record type, table, columns the database generates, and record fields that stand in
 # for foreign key columns until the loader knows the generated ids.
 CASES = [
-    (records.ModelRecord, schema.model, {"model_id", "ingested_at", "discipline"}, {}),
+    # discipline, project_key and replaces_model_id are given at ingest; project_group is
+    # generated from the others.
+    (
+        records.ModelRecord,
+        schema.model,
+        {
+            "model_id",
+            "ingested_at",
+            "discipline",
+            "project_key",
+            "project_group",
+            "replaces_model_id",
+        },
+        {},
+    ),
     (records.ObjectRecord, schema.object_, {"object_id", "model_id"}, {"global_id": "global_id"}),
     (
         records.SpatialElementRecord,
         schema.spatial_element,
         set(),
-        {"global_id": "object_id", "parent_global_id": "parent_id"},
+        {
+            "global_id": "object_id",
+            "parent_global_id": "parent_id",
+            "repeats_global_id": "repeats_id",
+        },
     ),
     (
         records.ElementRecord,

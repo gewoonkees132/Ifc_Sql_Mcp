@@ -1,6 +1,6 @@
 # Data model
 
-Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 7 views and a read-only
+Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 8 views and a read-only
 role. It is created by Alembic migrations:
 
 ```bash
@@ -67,6 +67,9 @@ erDiagram
         text project_global_id
         text project_name
         text project_long_name
+        text project_key "given at ingest: --project"
+        text project_group "generated: what project-wide views group by"
+        bigint replaces_model_id FK "the earlier version: --replaces"
         text length_unit "declared unit; *_m columns are converted"
         timestamptz ingested_at
     }
@@ -95,14 +98,20 @@ erDiagram
         bigint parent_id FK
         text long_name
         numeric elevation_m "numeric(9,3)"
+        text revit_category "spaces: Rooms, Spaces or Areas"
+        double footprint_m2 "spaces: area of the plan"
+        bigint repeats_id FK "spaces: the one it covers again"
     }
     element {
         bigint object_id PK, FK
         bigint container_id FK "storey or space"
         bigint storey_id FK "resolved storey"
         text tag
+        boolean is_feature "opening, void, projection"
         text revit_family
         text revit_type
+        text host_revit_family "features only"
+        text host_revit_type "features only"
         bigint revit_element_id
         text type_name
         text predefined_type
@@ -117,11 +126,12 @@ erDiagram
         boolean value_bool
         text unit
         boolean is_type_property
+        boolean is_implausible "breaks a bound of its set"
     }
     quantity {
         bigint object_id PK, FK
-        text name PK "length_m, area_m2, volume_m3, perimeter_m, height_m"
-        text source PK "ifc_qto, revit_pset, geometry"
+        text name PK "length_m, area_m2, volume_m3, perimeter_m, height_m, width_m"
+        text source PK "ifc_qto, revit_pset, ifc_attribute, geometry"
         float8 value
         text source_ref
     }
@@ -155,6 +165,7 @@ erDiagram
         text description
         text severity
         text dimension
+        text scope "model_content or loader_coverage"
         timestamptz retired_at "removed from the catalogue, kept for its findings"
     }
     dq_run {
@@ -182,7 +193,7 @@ erDiagram
 | `model` | one IFC file version | Identified by `file_sha256`, so loading the same bytes twice is impossible. `discipline` is supplied at ingest; IFC files do not state it. |
 | `ingestion_run` | one ingest attempt | Written outside the load transaction, so failed and skipped runs are recorded too. Keeps `file_sha256` because `model_id` is NULL when no model was committed. |
 | `object` | one IFC product | Shared supertype of spatial elements and physical elements (class-table inheritance, ADR 2). |
-| `spatial_element` | site, building, storey, space | `parent_id` follows `IfcRelAggregates`. |
+| `spatial_element` | site, building, storey, space | `parent_id` follows `IfcRelAggregates`. Spaces also carry Revit's `revit_category` (`Rooms`, `Spaces` or `Areas`), the area of their plan, `footprint_m2`, measured at every ingest, and `repeats_id`, the larger space whose floor they cover again (re-check finding R1, migration 0019). |
 | `element` | wall, door, duct, chair... | `container_id` is the direct `IfcRelContainedInSpatialStructure` target; `storey_id` is resolved at ingest. |
 | `property` | one value per object, set and name | Typed entity-attribute-value table (ADR 2). |
 | `quantity` | one value per object, quantity and source | Canonical names whose suffix is the unit. Several sources can coexist. |
@@ -199,8 +210,10 @@ Duplex files and how the extract and transform stages handle it.
 
 | Quirk in Revit exports | Where the schema handles it |
 |---|---|
-| No `Qto_*` base quantities; quantities sit in `PSet_Revit_Dimensions` | `quantity.source` (`revit_pset`), alongside `ifc_qto` and `geometry` rows for the same object. The raw values also stay in `property`. |
-| Names follow `Family:Type:ElementId`; loadable families add an instance label (`Family:Type:Label:ElementId`), and openings and stair parts add a `:n` suffix to their host's name | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. |
+| Revit 2011 and 2013: no `Qto_*` base quantities; quantities sit in `PSet_Revit_Dimensions`. Revit 2019 to 2022: `Qto_*BaseQuantities` (IFC4) or one `BaseQuantities` set (IFC2X3) | `quantity.source` (`revit_pset` or `ifc_qto`), alongside `geometry` rows for the same object; an IFC2X3 `BaseQuantities` set is read as the class's `Qto_` set ([ADR 8](adr/0008-ifc-base-quantities.md)). The raw values also stay in `property`. |
+| Names follow `Family:Type:ElementId`; loadable families add an instance label (`Family:Type:Label:ElementId`), and openings and stair parts add a `:n` suffix to their host's name | `object.name` keeps the raw string. `element.revit_family`, `revit_type` and `revit_element_id` hold the parsed parts. `revit_element_id` is indexed but deliberately not unique. A feature element (`is_feature`: an opening, void or projection) is named after the element it cuts, so its parts go to `host_revit_family` and `host_revit_type` instead, and its own `revit_family` and `revit_type` are NULL (two CHECKs keep it so): grouping by Revit type then counts walls, not walls and their openings. |
+| Revit 2019 and 2021 write quantity-set values that cannot be measurements: a wall's `NetSideArea` twice, unscaled first (10⁶ too large); a slab's `NetArea` as the whole solid's surface; space volumes 1,000 times too large; perimeters in feet labelled millimetres | `property.is_implausible`: the value is stored as written, but a physical bound of its set flags it, it becomes no `quantity`, and an `implausible_quantity` finding names the bound. A value written twice keeps the one that respects the bounds ([ADR 7](adr/0007-quantity-set-plausibility.md)). |
+| A door's and a window's size (`OverallWidth`, `OverallHeight`) and how it opens (`OperationType`) are entity attributes; lining and panel data sit in predefined property sets (`IfcDoorLiningProperties`...) | Stored as properties of a set named after the declaring entity (`IfcDoor.OverallWidth`) or the predefined set's class (`IfcDoorPanelProperties.PanelOperation`), typed and converted by the schema's declaration. The overall size also becomes `width_m` and `height_m` with source `ifc_attribute`, ranked after `revit_pset` (audit finding A4). |
 | Walls have no `IfcTypeObject`; type data arrives as `PSet_Revit_Type_*` on the instance | `property.is_type_property`, set for those sets and for values inherited from a type object. |
 | Placeholder values (`Manufacturer = 'Manufacturer'`), empty strings | Stored verbatim in `property.value_text` so data-quality rules can find them; nothing rejects them. |
 | Layered walls (`IfcMaterialLayerSetUsage`) | `element_material_layer` keeps layer order and thickness; `v_takeoff` splits area and volume per layer. |
@@ -223,7 +236,8 @@ accommodates:
   parameter.
 - **Project GlobalIds don't match.** The architectural model's `IfcProject` GlobalId
   differs from the other three files, so `project_global_id` is stored but cannot
-  match models. `v_storey_alignment` matches the disciplines by project name instead.
+  match models. `v_storey_alignment` matches the disciplines by `project_group` instead
+  ([below](#projects-and-versions)).
 - **Quantity sets coexist with Revit parameters.** Spaces carry a `GSA Space Areas`
   quantity set (an `IfcElementQuantity`) next to the Revit `Area` parameter, which is
   why a quantity can have more than one source.
@@ -270,18 +284,22 @@ accommodates:
 ## Views
 
 Each view is a versioned file (`v_element.v1.sql`) that also carries its `COMMENT`s.
-`v_element` is at version 2: migration 0004 corrected its `revit_type` comment (and the
-column's), which wrongly said the type may contain colons.
+`v_element` is at version 4. Migration 0004 corrected its `revit_type` comment (and the
+column's), which wrongly said the type may contain colons; migration 0010 added
+`is_feature`, `host_revit_family` and `host_revit_type` (audit finding A3) and moved the
+name parts of openings in models already loaded; migration 0012 added `width_m` (audit
+finding A1).
 
 | View | One row per | What it adds |
 |---|---|---|
-| `v_quantity` | object and quantity | Picks one value when several sources supply it, in the order `ifc_qto`, then `revit_pset`, then `geometry`: an IFC quantity set written by the exporter, then Revit's own parameter, then a value computed here. The other views read quantities through it. |
-| `v_element` | element | Identity, Revit name parts, storey and elevation, the containing room, the five canonical quantities as columns, and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). |
-| `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height and the OmniClass Table 13 code and title. |
+| `v_quantity` | object and quantity | Picks one value when several sources supply it, in the order `ifc_qto`, then `revit_pset`, then `ifc_attribute`, then `geometry`: an IFC quantity set written by the exporter, then Revit's own parameter, then a door's or window's attribute, then a value measured from the shape (`--geometry`). The other views read quantities through it. |
+| `v_element` | element | Identity, Revit name parts (a feature element's are its host's, in `host_revit_*`), `is_feature`, storey and elevation, the containing room, the six canonical quantities as columns (`width_m` since v4), and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). Openings are rows too: filter `NOT is_feature` to count building elements. |
+| `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height, the OmniClass Table 13 code and title, Revit's `category` and the plan's `footprint_m2` (v3), and `duplicate_of`: the space whose floor this one covers again, as a model exporting both Revit Rooms and MEP Spaces writes. Since v3 it comes from the plans (`spatial_element.repeats_id`); a space without a plan keeps v2's key, the same number, name, storey and floor area. Spaces of category `Areas` are Revit's area plans, not rooms. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |
-| `v_dq_finding` | finding of each model's latest successful data-quality run | The rule's dimension and the object's GlobalId, class and name next to each finding, for the run `v_model_summary` counts ([data-quality.md](data-quality.md#reading-the-findings)). |
-| `v_storey_alignment` | storey and model, for models that share a project name | The storey matched across disciplines on a normalised name, each model's elevation, how many of the project's models have the storey, and the spread of their elevations ([below](#storeys-across-disciplines)). |
+| `v_dq_finding` | finding of each model's latest successful data-quality run | The rule's dimension and scope (model content or loader coverage, v2) and the object's GlobalId, class and name next to each finding, for the run `v_model_summary` counts ([data-quality.md](data-quality.md#reading-the-findings)). |
+| `v_model_current` | model that no later model replaces | The current version of each model, with its `project_group`. Project-wide views read these ([below](#projects-and-versions)). |
+| `v_storey_alignment` | storey and model, for current models of one project (v2) | The storey matched across disciplines on a normalised name, each model's elevation, how many of the project's models have the storey, and the spread of their elevations ([below](#storeys-across-disciplines)). |
 
 `tests/integration/test_views.py` builds a small building that reproduces these cases
 and checks each figure. `tests/integration/test_load.py` loads the synthetic fixture and
@@ -293,9 +311,10 @@ checks the views on it, and `tests/samples/test_duplex_ingest.py` checks
 Discipline models of one building are exported separately, and each can define its own
 levels. `v_storey_alignment` puts them side by side:
 
-- **Same project** means the same `model.project_name` (`IfcProject.Name`, Revit's
-  Project Number), compared exactly. The project GlobalId cannot be used because ARC's
-  differs from the other three. Models without a project name are left out.
+- **Same project** means the same `model.project_group` ([below](#projects-and-versions)),
+  compared exactly, among the current models (`v_model_current`). The project GlobalId
+  cannot be used because ARC's differs from the other three. Models in no project are
+  left out.
 - **Same storey** means the same `storey_key`: the `IfcBuildingStorey` name with every
   run of whitespace replaced by one space, trimmed and lower-cased. `'Level 2'`,
   `' LEVEL  2'` and `'level\t2'` match. `'Level 02'`, `'L2'` and a storey at the same
@@ -304,8 +323,8 @@ levels. `v_storey_alignment` puts them side by side:
 - **One row per storey and model**, with the model's own name and elevation, plus
   `storey_model_count` (how many of the project's models have this key),
   `project_model_count` and `elevation_spread_m` (highest minus lowest elevation). A
-  storey lines up when the counts are equal and the spread is 0. Every loaded version of
-  a model counts as a model, so load one version per discipline to compare disciplines.
+  storey lines up when the counts are equal and the spread is 0. A model a later version
+  replaces is not compared, so load a re-export with `--replaces`.
 
 On the four Duplex files, after `make ingest-samples` (`make psql`):
 
@@ -313,7 +332,7 @@ On the four Duplex files, after `make ingest-samples` (`make psql`):
 SELECT storey_key, discipline, storey_name, elevation_m,
        storey_model_count AS models_with_it, project_model_count AS models,
        elevation_spread_m AS spread_m
-FROM ifc.v_storey_alignment WHERE project_name = '0001'
+FROM ifc.v_storey_alignment WHERE project_group = 'Duplex Apartment'
 ORDER BY elevation_m, storey_key, discipline;
 ```
 
@@ -346,12 +365,76 @@ WHERE storey_model_count < project_model_count OR elevation_spread_m <> 0;
 -- t/fdn
 ```
 
+### Projects and versions
+
+Two questions decide what a project-wide answer adds up: which models are one project,
+and which version of a model is the current one. The file cannot be trusted with either
+(audit finding A12). Revit writes `0001`, `Project Number` and `Project Name` until
+someone fills in Project Information, so v1 of `v_storey_alignment` made the audit's
+Italian tower (`0001`) the Duplex's fifth model. A weekly re-export was a second model
+of the same project, counted next to last week's.
+
+- **`model.project_key`** is the project given at ingest:
+  `ifc-sql ingest model.ifc --discipline ARC --project 2024-017`.
+- **`model.project_group`**, a generated column, is what project-wide views group by:
+  `project_key`, else `project_name` (`IfcProject.Name`, Revit's Project Number), else
+  `project_long_name`, leaving out Revit's placeholders. A model in no project
+  (`project_group` NULL) is compared with no other. On the audit's files:
+
+  | Model | `project_name` / `project_long_name` | `project_group` |
+  |---|---|---|
+  | Duplex (all four) | `0001` / `Duplex Apartment` | `Duplex Apartment` |
+  | A and D, the house | `001-00` / `Sample House` | `001-00` |
+  | B, the tower | `0001` / `Project Name` | NULL |
+  | C, the office | `Project Number` / `Project Name` | NULL |
+  | E, the school | `170016` / `Nittedal ungdomsskole` | `170016` |
+
+- **`model.replaces_model_id`** is the earlier version a model replaces:
+  `ifc-sql ingest week_12.ifc --discipline ARC --replaces 4`. The new model keeps the old
+  one's `project_key` unless given another. A model is replaced at most once (a unique
+  key), and never by itself. The replaced model stays loaded, and every tool still reads
+  it by its id. **`v_model_current`** lists the models no later model replaces, and
+  `v_storey_alignment` and `list_models` read only those (`list_models` takes
+  `include_replaced` to show the others).
+- **A warning at ingest** says when a placeholder decided the project:
+
+  ```
+  warning: the project number '0001' and name 'Project Name' are Revit's defaults, so model 2 joins no project; give it one with --project, and fill in Project Information in Revit
+  ```
+
+  The data quality rule `placeholder_project_info` reports the same on every check.
+
 ## Loading
 
 ```bash
 make ingest-samples                          # make samples + make migrate, then the four files
 uv run ifc-sql ingest path/to/model.ifc --discipline ARC
+uv run ifc-sql ingest tower.ifc --discipline ARC --geometry            # measure the shapes too
+uv run ifc-sql ingest week_12.ifc --discipline ARC --replaces 4 --project 2024-017
+uv run ifc-sql watch C:/Exports --discipline ARC --project 2024-017    # keep a folder in step
 ```
+
+`ifc-sql watch` loads every `.ifc` file saved into a folder once its size and time have
+not changed between two looks (every 5 s), then checks it, as `ifc-sql dq` does. A file
+whose name and discipline match a current model, but whose bytes differ, is loaded as
+that model's new version (`--replaces`). A file whose bytes are loaded already is passed
+over, and a failure is reported without stopping the watch (`src/ifc_sql_mcp/watch.py`,
+audit finding A18). `--once` loads what is there and stops.
+
+`--geometry` is for a file exported without quantities ([ADR 10](adr/0010-geometry-quantities.md)).
+IfcOpenShell triangulates the shapes of walls, slabs, spaces and other solids in
+parallel. A wall's side area, a slab's or space's footprint and every solid's volume
+become quantities of source `geometry`, ranked after the file's own. A body it cannot
+triangulate is reported as `geometry_not_measured`, and the run records the time in
+`ingestion_run.geometry_seconds`. On the audit's tower (14,642 objects) it measured
+8,285 shapes in 54 s on 4 cores, and gave its 6,095 walls their 103,057.7 m².
+
+A file already loaded without `--geometry` is measured in place: `ingest --geometry` on
+the same file adds the measured quantities, and any body it could not measure, to the
+model it is loaded as, which keeps its id, versions and data quality runs. The run is
+recorded as `succeeded` with its `geometry_seconds`, and a model is measured only once.
+Its data quality is not checked again until `ifc-sql dq` runs (re-check finding R4,
+[ADR 12](adr/0012-measure-in-place.md)).
 
 `ifc-sql ingest` loads one file through `ingest/pipeline.py`. The steps, and why they
 come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):
@@ -377,6 +460,7 @@ come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):
 | Database unreachable | none | 1 | `cannot reach the database at postgresql+psycopg://ifc:***@127.0.0.1:1/ifc: connection failed: …` (the password is masked) |
 | Database not at the latest migration | none | 1 | ``the database at postgresql+psycopg://ifc:***@localhost:5432/ifc_empty is not migrated, but ingest needs revision 0009: run `ifc-sql migrate` first`` |
 | No such file; missing or invalid `--discipline` | none | 2 | Usage error, e.g. `Invalid value for '--discipline': discipline must be 2 to 8 capital letters, e.g. ARC; got 'arc'` |
+| `--replaces` a model that does not exist, or one already replaced; a blank `--project` | none | 2 | Usage error, e.g. `Invalid value for '--replaces': model 1 is already replaced by model 2; replace model 2` |
 
 The outputs are from runs of the command in this container, except the concurrent one,
 whose wording is checked by `tests/integration/test_cli_ingest.py`. An empty file and a

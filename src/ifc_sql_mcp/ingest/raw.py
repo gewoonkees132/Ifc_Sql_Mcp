@@ -10,6 +10,7 @@ way on every run.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from ifc_sql_mcp.ingest.issues import Issue
 
@@ -52,6 +53,9 @@ class RawValue:
         from_type: True if the set belongs to the element's IfcTypeObject.
         from_quantity_set: True if the set is an IfcElementQuantity.
         order: (set id, value id) in the STEP file, for deterministic tie-breaking.
+        from_attribute: True if the value is an attribute of an entity rather than an
+            IfcProperty: a door's ``OverallWidth`` (under a set named after the declaring
+            entity) or a lining's ``LiningDepth`` (under a set named after its class).
     """
 
     set_name: str | None
@@ -62,6 +66,7 @@ class RawValue:
     from_type: bool
     from_quantity_set: bool
     order: tuple[int, int]
+    from_attribute: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +201,36 @@ class RawProject:
 
 
 @dataclass(frozen=True, slots=True)
+class RawShape:
+    """What IfcOpenShell measured on one object's body (``ifc-sql ingest --geometry``).
+
+    Attributes:
+        global_id: The object.
+        side_area_m2: Area of the shape seen along its local Y axis: a wall's face.
+        footprint_area_m2: Area of the shape seen from above: a slab's or a space's plan.
+        volume_m3: Volume enclosed by the triangulated shape.
+    """
+
+    global_id: str
+    side_area_m2: float
+    footprint_area_m2: float
+    volume_m3: float
+
+
+@dataclass(frozen=True, slots=True)
+class RawFootprint:
+    """A space's plan: its body seen from above, in world coordinates (``footprints.py``).
+
+    Attributes:
+        global_id: The space.
+        plan: A shapely (multi)polygon, in metres.
+    """
+
+    global_id: str
+    plan: Any
+
+
+@dataclass(frozen=True, slots=True)
 class RawModel:
     """Everything extracted from one IFC file.
 
@@ -206,6 +241,9 @@ class RawModel:
         spatial_elements: Sites, buildings, storeys and spaces, in file order.
         elements: Physical elements, in file order.
         issues: Problems found while reading (e.g. unsupported property kinds).
+        shapes: Shapes measured on request (``geometry.measure_shapes``); empty otherwise.
+        geometry_seconds: How long measuring them took; ``None`` when not asked for.
+        footprints: The plan of every space with a body (``geometry.measure_space_plans``).
     """
 
     file: RawFile
@@ -214,3 +252,6 @@ class RawModel:
     spatial_elements: tuple[RawSpatialElement, ...]
     elements: tuple[RawElement, ...]
     issues: tuple[Issue, ...]
+    shapes: tuple[RawShape, ...] = ()
+    geometry_seconds: float | None = None
+    footprints: tuple[RawFootprint, ...] = ()

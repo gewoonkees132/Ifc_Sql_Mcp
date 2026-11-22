@@ -7,11 +7,19 @@ until its unit is known. Each IFC measure type names its dimension (an
 same room 145.72 m² whether the file says ``145.72``, ``1568.5`` (ft²) or
 ``145721689`` (mm²).
 
-Only four dimensions are converted: length, area, volume and plane angle. They cover
-every measure type in the sample files and every ``*_m`` column. Plane angles become
-radians, the SI unit, so that the rule "a number with a unit is in SI" has no
-exception; degrees are ``value * 180 / pi`` away. Other measures with a physical unit
-are stored as written, without a unit, and reported (see ``properties.py``).
+Four dimensions are always converted: length, area, volume and plane angle. They cover
+every ``*_m`` column, and a file that declares no unit for one is assumed SI and
+reported. Plane angles become radians, the SI unit, so that the rule "a number with a
+unit is in SI" has no exception; degrees are ``value * 180 / pi`` away.
+
+The **derived measures** Revit 2019 to 2022 declare follow (audit finding A13): thermal
+transmittance, mass density, power, pressure, flow rate, voltage and the rest of
+:data:`MEASURE_DIMENSIONS`. Revit declares them as coherent SI units (U-values as
+kg/(K s3), which is W/(m2 K)), so their numbers are SI as written and only gain the
+unit. Such a measure is labelled only when the file declares its unit and that unit's
+factor to SI is known; otherwise it is stored as written, without a unit, and reported
+(see ``properties.py``). Temperatures are not among them: Revit declares degrees
+Celsius, which are offset from kelvin, not scaled.
 """
 
 import math
@@ -36,6 +44,10 @@ class Dimension:
     unit_type: str
     si_symbol: str
     si_name: str
+    required: bool = True
+    """True for the four dimensions every file must have a unit for: one it does not
+    declare is assumed SI, and one without an SI factor drops the value. False for a
+    derived measure, which is then stored as written, without a unit."""
 
 
 LENGTH = Dimension("LENGTHUNIT", "m", "METRE")
@@ -43,6 +55,11 @@ AREA = Dimension("AREAUNIT", "m2", "SQUARE_METRE")
 VOLUME = Dimension("VOLUMEUNIT", "m3", "CUBIC_METRE")
 PLANE_ANGLE = Dimension("PLANEANGLEUNIT", "rad", "RADIAN")
 CONVERTED_DIMENSIONS = (LENGTH, AREA, VOLUME, PLANE_ANGLE)
+
+
+def _derived(unit_type: str, si_symbol: str) -> Dimension:
+    return Dimension(unit_type, si_symbol, unit_type, required=False)
+
 
 MEASURE_DIMENSIONS: Mapping[str, Dimension] = {
     "IfcLengthMeasure": LENGTH,
@@ -52,8 +69,24 @@ MEASURE_DIMENSIONS: Mapping[str, Dimension] = {
     "IfcVolumeMeasure": VOLUME,
     "IfcPlaneAngleMeasure": PLANE_ANGLE,
     "IfcPositivePlaneAngleMeasure": PLANE_ANGLE,
+    # Derived measures, labelled when the file declares their unit (A13).
+    "IfcThermalTransmittanceMeasure": _derived("THERMALTRANSMITTANCEUNIT", "W/(m2*K)"),
+    "IfcMassDensityMeasure": _derived("MASSDENSITYUNIT", "kg/m3"),
+    "IfcMassMeasure": _derived("MASSUNIT", "kg"),
+    "IfcPowerMeasure": _derived("POWERUNIT", "W"),
+    "IfcPressureMeasure": _derived("PRESSUREUNIT", "Pa"),
+    "IfcForceMeasure": _derived("FORCEUNIT", "N"),
+    "IfcVolumetricFlowRateMeasure": _derived("VOLUMETRICFLOWRATEUNIT", "m3/s"),
+    "IfcLinearVelocityMeasure": _derived("LINEARVELOCITYUNIT", "m/s"),
+    "IfcElectricCurrentMeasure": _derived("ELECTRICCURRENTUNIT", "A"),
+    "IfcElectricVoltageMeasure": _derived("ELECTRICVOLTAGEUNIT", "V"),
+    "IfcFrequencyMeasure": _derived("FREQUENCYUNIT", "Hz"),
+    "IfcIlluminanceMeasure": _derived("ILLUMINANCEUNIT", "lx"),
+    "IfcLuminousFluxMeasure": _derived("LUMINOUSFLUXUNIT", "lm"),
+    "IfcLuminousIntensityMeasure": _derived("LUMINOUSINTENSITYUNIT", "cd"),
+    "IfcTimeMeasure": _derived("TIMEUNIT", "s"),
 }
-"""IFC measure types whose values are converted, and the dimension of each."""
+"""IFC measure types whose values are converted to SI, and the dimension of each."""
 
 DIMENSIONLESS_MEASURES = frozenset(
     {

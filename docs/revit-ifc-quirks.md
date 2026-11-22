@@ -80,11 +80,19 @@ declare plane angles in degrees.
 - **Plane angles become radians**, with `unit = 'rad'` (16, 420, 0 and 228 rows). The
   rule "a number with a unit is in SI" then has no exception, and degrees are one
   multiplication away. Showing degrees is a presentation choice for the views or tools.
-- Only length, area, volume and plane angle are converted, because they are the only
-  measure types in these files. Any other measure with a physical unit (an
-  `IfcPowerMeasure`, say) is stored as written without a unit and reported as
-  `measure_not_converted`, so nothing claims to be SI that is not. Pure numbers
-  (`IfcReal`, `IfcInteger`, `IfcCountMeasure`) need no unit.
+- Length, area, volume and plane angle are always converted: the Duplex files declare
+  no other unit. Revit 2019 to 2022 also declare **derived units**, as coherent SI: a
+  U-value's is `IFCDERIVEDUNIT` of kg, K⁻¹ and s⁻³, which is W/(m²·K). So a derived
+  measure (thermal transmittance, mass density, power, pressure, flow rate, voltage,
+  current, frequency, force, mass, light, time) gets the SI unit (`W/(m2*K)`, `kg/m3`,
+  `W`, `Pa`, `m3/s`, …) when the file declares its unit and that unit is coherent SI or
+  an SI unit with a prefix (a kilowatt is scaled by 1,000). On the audit's tower, all
+  2,208 U-values of its doors, windows and walls are stored in `W/(m2*K)` (audit
+  finding A13). A measure whose unit is not declared, or is not coherent (a flow in
+  mm³/s), is stored as written without a unit and reported as `measure_not_converted`,
+  so nothing claims to be SI that is not. Temperatures stay as written: Revit declares
+  degrees Celsius, which are offset from kelvin, not scaled. Pure numbers (`IfcReal`,
+  `IfcInteger`, `IfcCountMeasure`) need no unit.
 - A file that declares no unit for a converted dimension gets IFC's SI default and a
   `unit_assumed_si` issue.
 
@@ -133,7 +141,12 @@ column becomes NULL with an `invalid_elevation` issue.
   `M_Fixed:4835mm x 2420mm:4835mm x 2420mm:145788:1`,
   `Stair:Residential - 200mm Max Riser 250mm Tread:151086:1`. Their ElementId is the
   host's, which is why `revit_element_id` is indexed but not unique. Taking the last
-  segment as the id would give these elements id 1.
+  segment as the id would give these elements id 1. An opening's family and type are its
+  host's too, so they are stored as `host_revit_family` and `host_revit_type`, not as its
+  own: 48 of the architectural model's 50 openings, and all 3,314 of the audit's Revit
+  2022 tower, would otherwise double the count of their wall, door or window type. Revit
+  2011 also copies its host roof's `Dimensions` onto an opening: 4 openings in the
+  architectural model carry the roof's 132.9 m², which takeoffs now leave out with them.
 
 Revit also writes the ElementId into `Tag`:
 
@@ -146,10 +159,29 @@ Revit also writes the ElementId into `Tag`:
 **Handling** (`revit_names.py`): read the id from the end of the name. When the last two
 segments are both numbers and the last is smaller, it is a part number. When the Tag is
 a number, it decides between the two readings, and a Tag that matches neither is
-reported (`revit_tag_mismatch`). The segments before the id are family, type and an
+reported (`revit_tag_mismatch`). An opening is the exception: Revit names it after the
+wall it cuts and tags it with its own id, so its Tag never matches and is not reported.
+On the audit's tower, all 2,072 `revit_tag_mismatch` findings were openings (audit
+finding A13). The segments before the id are family, type and an
 optional label, which is not stored (it stays in `object.name`). A name that does not end
 in an id is reported (`revit_name_unparsed`) and its parts are NULL. On the four files
 every name parses and every parsed id agrees with its Tag.
+
+Revit 2019 to 2022 write a stair's parts differently: the part follows the stair's id
+after a space, `Precast Stair:Stair:1287438 Run 2`, `…:1287438 Landing 1`,
+`Assembled Stair:Stair:4959975 Stringer 10`. Each part's Tag is its own id. Such a part
+keeps the stair's family, type and ElementId, and its Tag is not compared. The part
+words are those the audit's files show (`Run`, `Landing`, `Support`, `Stringer`); any
+other is still reported. Before this, the audit's tower reported 278 of these names and
+had no Revit type on any of its 182 stair flights (audit finding A14).
+
+Revit 2022 can leave **control characters** in a type name: two wall types of the
+audit's tower read `1AR_MUR_PV001`, three U+001F, ` - Interrato_Interrato`. The
+characters are invisible, but they travelled into every grouping and answer, and an LLM
+quoted them. They are removed from `revit_family` and
+`revit_type` (and the `host_*` parts of the openings in such walls), and reported once
+per element as `control_character_in_name`: 731 walls on the tower. `object.name` keeps
+the IFC Name as written (audit finding A16).
 
 ## 4. Some elements have no container; furniture sits in rooms
 
@@ -186,11 +218,12 @@ proxy rather than becoming an `IfcBuildingElement`.
 | | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
 | typed elements | 99 | 926 | 99 | 498 |
-| property rows from an `IfcTypeObject` | 0 | 0 | 0 | 0 |
+| property rows from an `IfcTypeObject` | 14 | 0 | 0 | 0 |
 | rows in `PSet_Revit_Type_*` sets on instances | 8,594 | 35,268 | 0 | 0 |
 
-No type object in the four files carries a property set with values. ARC's door and
-window styles each have one predefined set, an `IfcDoorLiningProperties` or
+No type object in the four files carries a property set with values; the 14 rows are the
+door styles' own `OperationType` attribute, read since audit finding A4
+(`IfcDoorStyle.OperationType`). ARC's door and window styles each have one predefined set, an `IfcDoorLiningProperties` or
 `IfcWindowLiningProperties`, named after one of their instances and with every attribute
 empty (`grep -c '=IFCDOORLININGPROPERTIES(' data/samples/Duplex_A_20110907.ifc` gives 6,
 and the same for windows). `ifcopenshell.util.element.get_psets()` reports such a set as
@@ -260,12 +293,19 @@ the defect it is supposed to report.
 | | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
 | `IfcPropertySingleValue` entities reached from loaded objects | 5,213 | 28,129 | 2,366 | 16,049 |
-| property rows | 13,455 | 63,683 | 6,862 | 41,649 |
+| property rows | 13,545 | 63,683 | 6,862 | 41,649 |
 | of which from quantity sets | 21 | 42 | 1 | 1 |
+| of which entity attributes (a door's `OverallWidth`, a style's `OperationType`) | 90 | 0 | 0 | 0 |
 
 One `IfcPropertySet` can be related to many elements, so there are more rows than
-property entities. All of them are single values; other property kinds (lists, tables,
-enumerations, complex properties) would be reported as `unsupported_property`.
+property entities. All of them are single values.
+
+Revit 2021 also writes enumerated values: the audit's file C has 724, each a duct
+segment's `Pset_DuctSegmentTypeCommon.Shape`, all `Undefined`. An
+`IfcPropertyEnumeratedValue` is read as the value it chose, with its type and the
+enumeration's unit. A multiple choice becomes one text, joined with `", "` in the file's
+order (re-check finding R3). Other property kinds (lists, tables, bounded values, complex
+properties) are reported as `unsupported_property`.
 
 Quantity sets are stored as property rows too, under their set name, so that every value
 in the file can be queried and every `quantity.source_ref` names an existing property
@@ -284,6 +324,7 @@ this table (`quantities.QUANTITY_RULES`); nothing else becomes a quantity:
 | `volume_m3` | `revit_pset` | `….Volume` |
 | `perimeter_m` | `revit_pset` | `….Perimeter` |
 | `height_m` | `revit_pset` | `….Unbounded Height` (spaces) |
+| `width_m`, `height_m` | `ifc_attribute` | `IfcDoor` and `IfcWindow` `OverallWidth`, `OverallHeight` (since A4) |
 
 | | ARC | MEP | ELE | PLU |
 |---|---:|---:|---:|---:|
@@ -293,6 +334,8 @@ this table (`quantities.QUANTITY_RULES`); nothing else becomes a quantity:
 | perimeter_m (revit_pset) | 54 | 42 | 1 | 1 |
 | volume_m3 (revit_pset) | 131 | 42 | 1 | 1 |
 | length_m (revit_pset) | 84 | 433 | 2 | 231 |
+| width_m (ifc_attribute) | 38 | 0 | 0 | 0 |
+| height_m (ifc_attribute) | 38 | 0 | 0 | 0 |
 
 **GSA BIM Area counts as `area_m2`.** Every space carries a `GSA Space Areas` quantity
 set with one `IfcQuantityArea`, `GSA BIM Area` (GSA being the US General Services
@@ -373,7 +416,9 @@ only references create UniFormat rows.
 - **Project GlobalIds differ.** ARC's `IfcProject` is `1xS3BCk291UvhgP2a6eflL`, the others'
   is `0o8nNAbaT5OQLV8CAFemQP`, although all four say project `0001`, `Duplex Apartment`.
   `project_global_id` is stored but cannot match models across disciplines, so
-  `v_storey_alignment` matches them by project name instead.
+  `v_storey_alignment` matches them by `project_group` instead. That is their name here,
+  because `0001` is Revit's default number
+  ([data-model.md](data-model.md#projects-and-versions)).
 - **PredefinedType.** A type object's value applies to its occurrences unless it is
   `NOTDEFINED`; `NOTDEFINED` itself is stored as NULL. `USERDEFINED` is kept; the custom
   text that goes with it lives in `ObjectType`, free text the column's format could not
@@ -381,6 +426,42 @@ only references create UniFormat rows.
 - **Duplicate or malformed GlobalIds** would skip the object with an issue, and any
   reference to it becomes NULL, so a foreign key can never point at nothing. The four
   files have neither.
+
+## 14. Revit 2019 to 2022 write IFC base quantities, some of them wrong
+
+The sections above describe the four Duplex files (Revit 2011 and 2013). The audit of
+modern exports ([docs/audit/](audit/2026-11-modern-revit-exports.md)) loaded five files
+from Revit 2019, 2021 and 2022. They carry IFC base quantities, which the Duplex files do
+not: `Qto_WallBaseQuantities` and its siblings in IFC4 (files A, C, D), one set named
+`BaseQuantities` in IFC2X3 (file E). File B, exported with base quantities off, has none.
+
+`quantities.QUANTITY_RULES` maps them ([ADR 8](adr/0008-ifc-base-quantities.md)); a
+gross value stands in for a missing or implausible net one, and never conflicts:
+
+| Set (IFC2X3: `BaseQuantities` on the class) | `length_m` | `height_m` | `width_m` | `area_m2` | `perimeter_m` | `volume_m3` |
+|---|---|---|---|---|---|---|
+| `Qto_WallBaseQuantities` | Length | Height | Width (thickness) | NetSideArea, else GrossSideArea | | NetVolume, else GrossVolume |
+| `Qto_SlabBaseQuantities` | | | Width (thickness) | GrossArea (never NetArea) | Perimeter | NetVolume, else GrossVolume |
+| `Qto_SpaceBaseQuantities` | | Height | | NetFloorArea, else GrossFloorArea | NetPerimeter, else GrossPerimeter | NetVolume, else GrossVolume |
+| `Qto_DoorBaseQuantities`, `Qto_WindowBaseQuantities` | | Height | Width | Area | | |
+| `Qto_ColumnBaseQuantities`, `Qto_BeamBaseQuantities`, `Qto_MemberBaseQuantities`, `Qto_StairFlightBaseQuantities` | Length | | | | | NetVolume, else GrossVolume |
+| `Qto_RailingBaseQuantities` | Length | | | | | |
+| `Qto_CoveringBaseQuantities` (since re-check R2) | | | Width (thickness) | NetArea, else GrossArea, else Revit 2019's GrossCeilingArea | | |
+
+Some of the values are not measurements. `ingest/plausibility.py` checks every set
+against IFC's own ties ([ADR 7](adr/0007-quantity-set-plausibility.md)):
+
+| Defect | Revit | Files | Handling |
+|---|---|---|---|
+| A wall's `NetSideArea` and `NetVolume` written twice, the first unscaled (10⁶, 10⁹) | 2021 | A: 47 walls, C: 133 | the plausible value wins; `conflicting_property` names both |
+| A slab's `NetArea` is the whole solid's surface (about 2× the plan) | 2021 | A: 33 slabs, C: 6 (and every slab without a `GrossArea`) | flagged where `GrossArea` is present; never mapped |
+| A slab's `GrossVolume` is `GrossArea` (m²) × `Width` (mm) | 2019, 2021 | A: 33, C: 2, E: 100 (and 4 stair landings of C, about 19 times their `NetVolume`) | flagged; `NetVolume` is used |
+| A sloped roof slab's `GrossArea` is a tenth of the roof | 2021 | A: 1 | flagged; the slab has no area |
+| A space's `GrossVolume` is floor area (m²) × height (mm) | 2019, 2021 | C: 163 spaces, E: 307 | flagged; the space has no volume |
+| A space's `GrossPerimeter` is in feet, labelled millimetres | 2021 | C: 163 | flagged; the space has no perimeter |
+
+A flagged value stays in `ifc.property` as written, with `is_implausible`. It becomes no
+quantity, and `implausible_quantity` reports it with the bound it broke.
 
 ## Decisions at a glance
 

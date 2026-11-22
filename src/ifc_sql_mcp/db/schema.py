@@ -28,6 +28,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Computed,
     DateTime,
     Double,
     ForeignKey,
@@ -72,10 +73,11 @@ IFC_CLASS_PATTERN = r"^Ifc[A-Z][A-Za-z0-9]*$"
 # Discipline codes are supplied at ingest (IFC files do not state one): ARC, MEP, ELE...
 DISCIPLINE_PATTERN = r"^[A-Z]{2,8}$"
 
-QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m")
-QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "geometry")
+QUANTITY_NAMES = ("length_m", "area_m2", "volume_m3", "perimeter_m", "height_m", "width_m")
+QUANTITY_SOURCES = ("ifc_qto", "revit_pset", "ifc_attribute", "geometry")
 SEVERITIES = ("error", "warning", "info")
 DIMENSIONS = ("completeness", "validity", "consistency", "uniqueness")
+SCOPES = ("model_content", "loader_coverage")
 OBJECT_KINDS = ("spatial_element", "element")
 
 
@@ -113,6 +115,52 @@ def _run_status_checks(statuses: tuple[str, ...]) -> list[CheckConstraint]:
     ]
 
 
+REVIT_FAMILY_COMMENT = (
+    "Family part of a Revit Family:Type:ElementId name. NULL for feature elements "
+    "(openings), whose name is their host's: see host_revit_family."
+)
+REVIT_TYPE_COMMENT = (
+    "Type part of a Revit name: its second segment, so never containing ':'. In "
+    "Family:Type:Label:ElementId the third segment is an instance label, not part of the "
+    "type. NULL for feature elements (openings), whose name is their host's."
+)
+
+
+IMPLAUSIBLE_COMMENT = (
+    "True when a quantity-set value breaks a physical bound set by the other values of its "
+    "set (a wall's NetSideArea above twice Length x Height, a space volume 1,000 times its "
+    "floor area x height): it is stored as written but is not a measurement, and no "
+    "canonical quantity is made from it. Filter it out (NOT is_implausible) before summing "
+    "quantity-set values; the implausible_quantity finding says which bound it broke."
+)
+
+
+SCOPE_COMMENT = (
+    "model_content: the finding is about what the file contains, which its author or "
+    "Revit's exporter decided, so a re-export can change it. loader_coverage: something "
+    "in the file that this tool does not read or convert; the model is not at fault."
+)
+LAYER_INDEX_COMMENT = (
+    "1-based position in the element's material definition: the layer order of an "
+    "IfcMaterialLayerSet, or the order an IfcMaterialList, an IFC4 IfcMaterialConstituentSet "
+    "(a door's frame and panel) or an IfcMaterialProfileSet lists its materials in."
+)
+THICKNESS_COMMENT = (
+    "Layer thickness in metres; NULL when the material is not part of a layer set (a "
+    "single IfcMaterial, a list, a constituent or a profile set)."
+)
+QUANTITY_SOURCE_COMMENT = (
+    "Where the value came from: ifc_qto (IfcElementQuantity), revit_pset (Revit parameter "
+    "property set), ifc_attribute (an attribute of the entity, such as a door's "
+    "OverallWidth) or geometry (computed from the shape)."
+)
+QUANTITY_NAME_COMMENT = (
+    "Canonical quantity; the suffix is its unit: length_m, area_m2, volume_m3, perimeter_m, "
+    "height_m, width_m. width_m is IFC's Width: a door's or window's width, a wall's or "
+    "slab's thickness."
+)
+
+
 def _within_model(target: str) -> ForeignKey:
     """Foreign key between two rows of the same model, checked at commit instead of at once.
 
@@ -126,6 +174,18 @@ def _within_model(target: str) -> ForeignKey:
 
 
 # --------------------------------------------------------------------------- model, runs
+
+REVIT_PLACEHOLDER_PROJECT_NAMES = ("0001", "Project Number", "Project Name")
+"""What Revit writes as the project number or name until someone fills them in. Models with
+these share them by chance, so they never make two models one project (audit finding A12)."""
+
+_PLACEHOLDERS = ", ".join(f"'{name}'" for name in REVIT_PLACEHOLDER_PROJECT_NAMES)
+PROJECT_GROUP = (
+    "COALESCE(project_key, "
+    f"CASE WHEN btrim(project_name) NOT IN ('', {_PLACEHOLDERS}) THEN project_name END, "
+    f"CASE WHEN btrim(project_long_name) NOT IN ('', {_PLACEHOLDERS}) THEN project_long_name END)"
+)
+"""The generated ``model.project_group``: the project a model is grouped in, if any."""
 
 model = Table(
     "model",
@@ -190,6 +250,28 @@ model = Table(
         server_default=func.now(),
         comment="When the model was committed to the database.",
     ),
+    Column(
+        "project_key",
+        Text,
+        comment="Project the model belongs to, as given at ingest (ifc-sql ingest --project), "
+        "or inherited from the model it replaces. NULL when none was given.",
+    ),
+    Column(
+        "project_group",
+        Text,
+        Computed(PROJECT_GROUP, persisted=True),
+        comment="What project-wide views group models by: project_key, else project_name, "
+        "else project_long_name, leaving out Revit's placeholders (0001, Project Number, "
+        "Project Name). NULL: the model joins no project.",
+    ),
+    Column(
+        "replaces_model_id",
+        BigInteger,
+        ForeignKey("ifc.model.model_id", ondelete="SET NULL"),
+        unique=True,
+        comment="The earlier version of the same model that this one replaces (ifc-sql ingest "
+        "--replaces). A replaced model stays loaded but is not current: see v_model_current.",
+    ),
     _not_blank("file_name"),
     CheckConstraint("file_sha256 ~ '^[0-9a-f]{64}$'", name="file_sha256_hex"),
     CheckConstraint("file_size_bytes > 0", name="file_size_bytes_positive"),
@@ -197,6 +279,8 @@ model = Table(
     CheckConstraint(f"discipline ~ '{DISCIPLINE_PATTERN}'", name="discipline_format"),
     CheckConstraint(f"project_global_id ~ '{GLOBAL_ID_PATTERN}'", name="project_global_id_format"),
     _not_blank("length_unit"),
+    _not_blank("project_key"),
+    CheckConstraint("replaces_model_id <> model_id", name="replaces_model_id_not_itself"),
     comment="One row per ingested IFC file version. Deleting a model deletes everything "
     "loaded from it.",
 )
@@ -253,9 +337,16 @@ ingestion_run = Table(
         "filtered on, so a JSON object is simpler than a column per table.",
     ),
     Column("error", Text, comment="Error message of a failed run; NULL otherwise."),
+    Column(
+        "geometry_seconds",
+        Double,
+        comment="Seconds spent triangulating and measuring shapes (ifc-sql ingest "
+        "--geometry); NULL when the run did not measure geometry.",
+    ),
     _not_blank("file_name"),
     CheckConstraint("file_sha256 ~ '^[0-9a-f]{64}$'", name="file_sha256_hex"),
     CheckConstraint("jsonb_typeof(row_counts) = 'object'", name="row_counts_is_object"),
+    CheckConstraint("geometry_seconds >= 0", name="geometry_seconds_non_negative"),
     *_run_status_checks(("running", "succeeded", "failed", "skipped")),
     comment="Audit log of ingest attempts, one row per run, including failed and skipped "
     "runs. Written outside the load transaction so failures are recorded too.",
@@ -347,7 +438,31 @@ spatial_element = Table(
         comment="Storey elevation in metres, rounded to the millimetre so that storeys "
         "compare equal across discipline models. NULL for other spatial elements.",
     ),
+    Column(
+        "revit_category",
+        Text,
+        comment="Spaces: the Revit category the file states (Pset_SpaceCommon or Revit's "
+        "Other set): Rooms, Spaces or Areas. Areas are Revit's area plans, not rooms. NULL "
+        "when the file states none.",
+    ),
+    Column(
+        "footprint_m2",
+        Double,
+        comment="Spaces: area of the plan, the body seen from above, measured at ingest in "
+        "square metres. NULL when the space has no body that gives one.",
+    ),
+    Column(
+        "repeats_id",
+        BigInteger,
+        _within_model("spatial_element.object_id"),
+        index=True,
+        comment="Spaces: the larger space on the same storey whose floor this one covers "
+        "again (its plan lies at least 90 % inside larger ones): a room exported twice, as a "
+        "Revit Room and an MEP Space. NULL when it repeats none.",
+    ),
     CheckConstraint("parent_id <> object_id", name="parent_is_not_self"),
+    CheckConstraint("footprint_m2 > 0", name="footprint_m2_positive"),
+    CheckConstraint("repeats_id <> object_id", name="repeats_is_not_self"),
     comment="Site, building, storey and space details. The hierarchy follows IfcRelAggregates.",
 )
 
@@ -378,13 +493,35 @@ element = Table(
         "the element sits in a space. Resolved at ingest so queries need no recursion.",
     ),
     Column("tag", Text, comment="IFC Tag attribute; Revit writes the ElementId here."),
-    Column("revit_family", Text, comment="Family part of a Revit Family:Type:ElementId name."),
+    Column(
+        "is_feature",
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        comment="True for an IfcFeatureElement (opening, void, projection): it shapes another "
+        "element and is no building part of its own. Takeoffs leave such elements out unless "
+        "asked; their Revit name parts are in host_revit_family and host_revit_type.",
+    ),
+    Column(
+        "revit_family",
+        Text,
+        comment=REVIT_FAMILY_COMMENT,
+    ),
     Column(
         "revit_type",
         Text,
-        comment="Type part of a Revit name: its second segment, so never containing ':'. In "
-        "Family:Type:Label:ElementId the third segment is an instance label, not part of "
-        "the type.",
+        comment=REVIT_TYPE_COMMENT,
+    ),
+    Column(
+        "host_revit_family",
+        Text,
+        comment="Feature elements only: the family part of their Revit name, which is that of "
+        "the element they cut or add to (an opening in a wall is named after the wall).",
+    ),
+    Column(
+        "host_revit_type",
+        Text,
+        comment="Feature elements only: the type part of their Revit name, the host's type.",
     ),
     Column(
         "revit_element_id",
@@ -401,6 +538,15 @@ element = Table(
     ),
     CheckConstraint("revit_element_id > 0", name="revit_element_id_positive"),
     CheckConstraint("predefined_type ~ '^[A-Z][A-Z0-9_]*$'", name="predefined_type_format"),
+    # A feature element's name is its host's: it gets host_* parts and never its own.
+    CheckConstraint(
+        "is_feature OR (host_revit_family IS NULL AND host_revit_type IS NULL)",
+        name="host_revit_name_only_for_features",
+    ),
+    CheckConstraint(
+        "NOT is_feature OR (revit_family IS NULL AND revit_type IS NULL)",
+        name="features_have_no_revit_type",
+    ),
     comment="Physical element details (walls, doors, furniture, ducts...), including the "
     "parts of the Revit name.",
 )
@@ -441,6 +587,13 @@ property_ = Table(
         comment="True if the value describes the element's type rather than this instance: "
         "inherited from its IfcTypeObject, or a PSet_Revit_Type_* set copied onto it.",
     ),
+    Column(
+        "is_implausible",
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        comment=IMPLAUSIBLE_COMMENT,
+    ),
     PrimaryKeyConstraint("object_id", "pset_name", "prop_name"),
     Index(None, "pset_name", "prop_name"),
     _not_blank("pset_name"),
@@ -473,15 +626,13 @@ quantity = Table(
         "name",
         Text,
         nullable=False,
-        comment="Canonical quantity; the suffix is its unit: length_m, area_m2, volume_m3, "
-        "perimeter_m, height_m.",
+        comment=QUANTITY_NAME_COMMENT,
     ),
     Column(
         "source",
         Text,
         nullable=False,
-        comment="Where the value came from: ifc_qto (IfcElementQuantity), revit_pset (Revit "
-        "parameter property set) or geometry (computed from the shape).",
+        comment=QUANTITY_SOURCE_COMMENT,
     ),
     Column("value", Double, nullable=False, comment="Value in the unit named by the suffix."),
     Column(
@@ -537,8 +688,7 @@ element_material_layer = Table(
         "layer_index",
         SmallInteger,
         nullable=False,
-        comment="1-based position in the element's material definition: the layer order of "
-        "an IfcMaterialLayerSet, or the list order of an IfcMaterialList.",
+        comment=LAYER_INDEX_COMMENT,
     ),
     Column(
         "material_id",
@@ -551,8 +701,7 @@ element_material_layer = Table(
     Column(
         "thickness_m",
         Double,
-        comment="Layer thickness in metres; NULL when the material is not part of a layer "
-        "set (a single IfcMaterial or an IfcMaterialList).",
+        comment=THICKNESS_COMMENT,
     ),
     PrimaryKeyConstraint("element_id", "layer_index"),
     CheckConstraint("layer_index >= 1", name="layer_index_positive"),
@@ -662,6 +811,12 @@ dq_rule = Table(
         comment="Data quality dimension: completeness | validity | consistency | uniqueness.",
     ),
     Column(
+        "scope",
+        Text,
+        nullable=False,
+        comment=SCOPE_COMMENT,
+    ),
+    Column(
         "retired_at",
         DateTime(timezone=True),
         comment="When the rule was removed from the catalogue; NULL while it is in it and "
@@ -672,6 +827,7 @@ dq_rule = Table(
     _not_blank("description"),
     CheckConstraint(_in("severity", SEVERITIES), name="severity_valid"),
     CheckConstraint(_in("dimension", DIMENSIONS), name="dimension_valid"),
+    CheckConstraint(_in("scope", SCOPES), name="scope_valid"),
     comment="Catalogue of data quality rules, synchronised from the package file "
     "rules/dq_rules.yaml at the start of every `ifc-sql dq`. Rules removed from the file "
     "are kept, with retired_at set, while findings refer to them.",

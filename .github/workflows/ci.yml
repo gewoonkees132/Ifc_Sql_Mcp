@@ -49,8 +49,10 @@ jobs:
         with:
           enable-cache: true
 
+      # The embedded extra too: its tests (tests/integration/test_embedded.py) are part of
+      # the 100 % coverage gate.
       - name: Install (exactly as locked)
-        run: uv sync --locked
+        run: uv sync --locked --extra embedded
 
       - name: Lint
         run: |
@@ -73,3 +75,106 @@ jobs:
           name: coverage-xml
           path: coverage.xml
           if-no-files-found: ignore
+
+  # The real files: the four Duplex models and the audit's five Revit 2019-2022 exports,
+  # downloaded from pinned upstream commits and checked against their SHA-256. The audit's
+  # acceptance tests (tests/modern) pass where a finding is fixed and are strict xfails
+  # where it is still open, so this job is green exactly when the backlog is as recorded.
+  samples:
+    name: real files → Duplex and audit acceptance tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ifc
+          POSTGRES_PASSWORD: ifc-dev-only  # throwaway CI container, not a secret
+          POSTGRES_DB: ifc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ifc -d ifc"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      IFC_SQL_DATABASE_URL: postgresql+psycopg://ifc:ifc-dev-only@localhost:5432/ifc
+      IFC_SQL_READER_PASSWORD: ifc-reader-dev-only
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install (exactly as locked)
+        run: uv sync --locked
+
+      - name: Download the pinned sample files
+        run: |
+          uv run python scripts/download_samples.py
+          uv run python scripts/download_audit_samples.py
+
+      - name: Duplex and audit acceptance tests
+        run: uv run pytest -m "sample or modern" -p no:cacheprovider
+
+  # The Windows quick start (docs/windows.md), step by step, on the embedded PostgreSQL:
+  # no Docker and no database server, as for one architect on a Windows laptop (audit
+  # finding A18, item 4). It runs the commands as the page gives them, in PowerShell.
+  windows:
+    name: Windows → quick start on the embedded database
+    runs-on: windows-2025
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        shell: pwsh
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install, with the embedded database
+        run: uv sync --locked --extra embedded
+
+      # As docs/windows.md says: a folder the user's own account owns. initdb gives up
+      # administrator rights, and then may not set the permissions of a folder an
+      # administrator made, such as one in the runner's workspace (run 44).
+      - name: Choose the embedded database's folder
+        run: Add-Content -Path $env:GITHUB_ENV -Value "IFC_SQL_DATA_DIR=$env:LOCALAPPDATA\ifc-sql\data"
+
+      - name: Create the schema
+        run: uv run ifc-sql migrate
+
+      # $PSNativeCommandUseErrorActionPreference: a step of several commands fails at the
+      # first one that fails, not only when its last one does.
+      - name: Load and check one file
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          uv run python scripts/download_samples.py
+          uv run ifc-sql ingest data\samples\Duplex_A_20110907.ifc --discipline ARC --project duplex
+          uv run ifc-sql dq
+
+      - name: Keep a folder in step
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Path exports | Out-Null
+          Copy-Item data\samples\Duplex_MEP_20110907.ifc exports\
+          uv run ifc-sql watch exports --discipline MEP --project duplex --once
+
+      - name: Serve to an MCP client over stdio, as Claude Desktop does
+        run: uv run python scripts/mcp_smoke.py
+
+      - name: The embedded database's own tests
+        run: uv run pytest tests/integration/test_embedded.py -p no:cacheprovider

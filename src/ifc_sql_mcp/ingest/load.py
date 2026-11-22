@@ -29,14 +29,16 @@ keys into ids. A natural key it cannot translate is a bug upstream and raises
 ``KeyError``, which rolls the whole model back.
 """
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from psycopg import sql
-from sqlalchemy import Connection, Table, insert
+from sqlalchemy import Connection, Table, func, insert, select
 
 from ifc_sql_mcp.db import schema
 from ifc_sql_mcp.db.engine import psycopg_connection
+from ifc_sql_mcp.ingest.issues import IssueCode
 from ifc_sql_mcp.ingest.records import (
     MaterialRecord,
     ModelRecord,
@@ -61,18 +63,27 @@ class LoadResult:
     row_counts: dict[str, int]
 
 
-def load(connection: Connection, records: ModelRecords, discipline: str) -> LoadResult:
+def load(
+    connection: Connection,
+    records: ModelRecords,
+    discipline: str,
+    *,
+    project_key: str | None = None,
+    replaces_model_id: int | None = None,
+) -> LoadResult:
     """Insert one model and everything that belongs to it.
 
     Args:
         connection: A connection inside the transaction that should hold the model.
         records: The transform's output for one file.
         discipline: Discipline code for ``model.discipline``, e.g. ``ARC``.
+        project_key: ``model.project_key``, the project given at ingest.
+        replaces_model_id: ``model.replaces_model_id``, the model this one replaces.
 
     Returns:
         The new model's id and the number of rows written to each table.
     """
-    model_id = _insert_model(connection, records.model, discipline)
+    model_id = _insert_model(connection, records.model, discipline, project_key, replaces_model_id)
     object_ids = _insert_objects(connection, model_id, records.objects)
     material_ids = _insert_materials(connection, model_id, records.materials)
 
@@ -119,7 +130,13 @@ def copy_rows(connection: Connection, table: Table, rows: Sequence[Row]) -> None
 # --------------------------------------------------------------------------- tables with ids
 
 
-def _insert_model(connection: Connection, model: ModelRecord, discipline: str) -> int:
+def _insert_model(
+    connection: Connection,
+    model: ModelRecord,
+    discipline: str,
+    project_key: str | None,
+    replaces_model_id: int | None,
+) -> int:
     statement = (
         insert(schema.model)
         .values(
@@ -134,6 +151,8 @@ def _insert_model(connection: Connection, model: ModelRecord, discipline: str) -
             project_name=model.project_name,
             project_long_name=model.project_long_name,
             length_unit=model.length_unit,
+            project_key=project_key,
+            replaces_model_id=replaces_model_id,
         )
         .returning(schema.model.c.model_id)
     )
@@ -175,6 +194,62 @@ def _insert_materials(
     return dict(result.all())
 
 
+def add_geometry(connection: Connection, records: ModelRecords, model_id: int) -> dict[str, int]:
+    """Add what measuring the shapes found to a model already loaded from the same bytes.
+
+    ``ifc-sql ingest --geometry`` on a file that is loaded without it (re-check finding R4).
+    Everything else in ``records`` is in the model already, so only two things are written:
+    the quantities of source ``geometry``, and the ``geometry_not_measured`` issues the
+    model does not have yet, numbered after its last issue.
+
+    Returns:
+        Rows written per table.
+    """
+    obj = schema.object_
+    object_ids = {
+        row.global_id: row.object_id
+        for row in connection.execute(
+            select(obj.c.global_id, obj.c.object_id).where(obj.c.model_id == model_id)
+        )
+    }
+    issue = schema.ingest_issue
+    known = {
+        (row.code, row.global_id, row.message)
+        for row in connection.execute(
+            select(issue.c.code, issue.c.global_id, issue.c.message).where(
+                issue.c.model_id == model_id
+            )
+        )
+    }
+    last = connection.execute(
+        select(func.coalesce(func.max(issue.c.issue_index), 0)).where(issue.c.model_id == model_id)
+    ).scalar_one()
+    measured = dataclasses.replace(
+        records,
+        quantities=tuple(
+            q for q in records.quantities if q.source == "geometry" and q.global_id in object_ids
+        ),
+    )
+    new_issues = [
+        i
+        for i in records.issues
+        if i.code is IssueCode.GEOMETRY_NOT_MEASURED
+        and (i.code.value, i.global_id, i.message) not in known
+    ]
+    copied: dict[Table, list[Row]] = {
+        schema.quantity: _quantity_rows(measured, object_ids),
+        schema.ingest_issue: _issue_rows(
+            dataclasses.replace(records, issues=tuple(new_issues)),
+            model_id,
+            object_ids,
+            first=last + 1,
+        ),
+    }
+    for table, rows in copied.items():
+        copy_rows(connection, table, rows)
+    return {table.name: len(rows) for table, rows in copied.items()}
+
+
 # --------------------------------------------------------------------------- copied tables
 
 
@@ -190,6 +265,9 @@ def _spatial_element_rows(records: ModelRecords, object_ids: Ids) -> list[Row]:
             "parent_id": _optional(object_ids, s.parent_global_id),
             "long_name": s.long_name,
             "elevation_m": s.elevation_m,
+            "revit_category": s.revit_category,
+            "footprint_m2": s.footprint_m2,
+            "repeats_id": _optional(object_ids, s.repeats_global_id),
         }
         for s in records.spatial_elements
     ]
@@ -202,8 +280,11 @@ def _element_rows(records: ModelRecords, object_ids: Ids) -> list[Row]:
             "container_id": _optional(object_ids, e.container_global_id),
             "storey_id": _optional(object_ids, e.storey_global_id),
             "tag": e.tag,
+            "is_feature": e.is_feature,
             "revit_family": e.revit_family,
             "revit_type": e.revit_type,
+            "host_revit_family": e.host_revit_family,
+            "host_revit_type": e.host_revit_type,
             "revit_element_id": e.revit_element_id,
             "type_name": e.type_name,
             "predefined_type": e.predefined_type,
@@ -224,6 +305,7 @@ def _property_rows(records: ModelRecords, object_ids: Ids) -> list[Row]:
             "value_bool": p.value_bool,
             "unit": p.unit,
             "is_type_property": p.is_type_property,
+            "is_implausible": p.is_implausible,
         }
         for p in records.properties
     ]
@@ -266,8 +348,10 @@ def _classification_rows(records: ModelRecords, object_ids: Ids) -> list[Row]:
     ]
 
 
-def _issue_rows(records: ModelRecords, model_id: int, object_ids: Ids) -> list[Row]:
-    """Number the issues in the order reported and link each to its object, if loaded.
+def _issue_rows(
+    records: ModelRecords, model_id: int, object_ids: Ids, *, first: int = 1
+) -> list[Row]:
+    """Number the issues in the order reported, from ``first``, and link each to its object.
 
     Unlike every other reference, an issue's GlobalId may legitimately be unknown: an
     object with a malformed GlobalId is skipped, and the issue about it has no object to
@@ -283,5 +367,5 @@ def _issue_rows(records: ModelRecords, model_id: int, object_ids: Ids) -> list[R
             "global_id": issue.global_id,
             "message": issue.message,
         }
-        for index, issue in enumerate(records.issues, start=1)
+        for index, issue in enumerate(records.issues, start=first)
     ]

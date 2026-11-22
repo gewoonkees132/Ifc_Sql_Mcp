@@ -68,4 +68,6 @@ def test_each_view_file_creates_the_view_it_is_named_after() -> None:
     for path in (SQL_DIR / "views").iterdir():
         match = VIEW_FILE.match(path.name)
         assert match is not None
-        assert f"CREATE VIEW ifc.{match.group(1)} AS" in path.read_text(encoding="utf-8")
+        # A view others read from (v_quantity) is replaced in place, keeping its readers.
+        statement = re.compile(rf"CREATE (OR REPLACE )?VIEW ifc\.{match.group(1)} AS")
+        assert statement.search(path.read_text(encoding="utf-8")), path.name
