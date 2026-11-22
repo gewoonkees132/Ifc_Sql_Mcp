@@ -42,7 +42,8 @@ class WatchEvent:
         path: The file.
         ingest: The ingest, when the file was new.
         check: Its data quality check, when the ingest loaded a model.
-        error: Why the file could not be loaded or checked.
+        error: Why the file could not be loaded or checked, or (with ``--viewer``) its
+            scene not built.
     """
 
     path: Path
@@ -62,6 +63,7 @@ class Watcher:
         rules: The data quality rules, already synchronised into ``dq_rule``.
         project_key: The project every model loaded from the folder belongs to.
         geometry: Measure the shapes as well (``ingest --geometry``).
+        viewer: Build each new model's scene as well (``ingest --viewer``).
     """
 
     engine: Engine
@@ -70,6 +72,7 @@ class Watcher:
     rules: Sequence[Rule]
     project_key: str | None = None
     geometry: bool = False
+    viewer: bool = False
     _done: dict[str, Version] = field(default_factory=dict)
     _pending: dict[str, Version] = field(default_factory=dict)
 
@@ -123,6 +126,7 @@ class Watcher:
                 project_key=self.project_key,
                 replaces=previous,
                 geometry=self.geometry,
+                viewer=self.viewer,
             )
         except IngestError as exc:
             return WatchEvent(path=path, error=f"ingest run {exc.run_id}: {exc}")
@@ -132,4 +136,8 @@ class Watcher:
             check = check_model(self.engine, result.model_id, self.rules)
         except DqRunError as exc:
             return WatchEvent(path=path, ingest=result, error=f"dq run {exc.run_id}: {exc}")
-        return WatchEvent(path=path, ingest=result, check=check)
+        # The model is loaded and checked; only its scene is missing.
+        scene_error = None
+        if result.scene is not None and result.scene.status == "failed":
+            scene_error = f"its scene was not built: {result.scene.error}"
+        return WatchEvent(path=path, ingest=result, check=check, error=scene_error)

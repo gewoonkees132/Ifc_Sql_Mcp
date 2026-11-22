@@ -13,6 +13,7 @@ from pathlib import Path
 import make_revit_quirks
 import pytest
 from cli_output import plain
+from geometry_model import write_measured_model
 from sqlalchemy import Engine, text
 from typer.testing import CliRunner, Result
 
@@ -20,6 +21,7 @@ from ifc_sql_mcp import cli
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.dq.catalogue import load_catalogue
 from ifc_sql_mcp.dq.sync import sync_rules
+from ifc_sql_mcp.ingest import pipeline
 from ifc_sql_mcp.watch import Watcher
 
 FIXTURE = make_revit_quirks.OUTPUT
@@ -200,3 +202,34 @@ def test_ingest_warnings_are_passed_on(database: Engine, tmp_path: Path) -> None
 
     assert result.exit_code == 0
     assert "warning: the project number '0001' is Revit's default" in result.stderr
+
+
+def test_with_viewer_each_new_model_gets_its_scene(
+    database: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write_measured_model(tmp_path / "House.ifc", scene=True)
+
+    drawn = _watch_once(tmp_path, "--viewer")
+    _new_export_of_the_scene(tmp_path / "House.ifc")
+    monkeypatch.setattr(pipeline, "add_scene", _refuse)
+    failed = _watch_once(tmp_path, "--viewer")
+
+    assert drawn.exit_code == 0, drawn.output
+    assert "; scene built: 9 elements drawn," in drawn.stdout.splitlines()[0]
+    with database.connect() as connection:
+        assert connection.execute(text("SELECT count(*) FROM ifc_viewer.scene")).scalar_one() == 1
+    # The new export is loaded and checked; only its scene is missing, and the watch says so.
+    assert failed.exit_code == 1
+    assert failed.stdout.splitlines()[1].startswith("checked model 2 (ARC, House.ifc)")
+    assert "House.ifc failed: its scene was not built: RuntimeError: disk full" in plain(
+        failed.stderr
+    )
+
+
+def _new_export_of_the_scene(path: Path) -> None:
+    """Save another export over the scene file: the same shapes in other bytes."""
+    path.write_bytes(path.read_bytes() + b"\n")
+
+
+def _refuse(*args: object, **kwargs: object) -> dict[str, int]:
+    raise RuntimeError("disk full")

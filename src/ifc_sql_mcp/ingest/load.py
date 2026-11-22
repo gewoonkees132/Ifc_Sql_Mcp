@@ -34,7 +34,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from psycopg import sql
-from sqlalchemy import Connection, Table, func, insert, select
+from sqlalchemy import Connection, Table, delete, func, insert, select
 
 from ifc_sql_mcp.db import schema
 from ifc_sql_mcp.db.engine import psycopg_connection
@@ -45,6 +45,7 @@ from ifc_sql_mcp.ingest.records import (
     ModelRecords,
     ObjectRecord,
 )
+from ifc_sql_mcp.viewer.scene import Scene
 
 type Row = Mapping[str, object]
 type Ids = Mapping[str, int]
@@ -248,6 +249,76 @@ def add_geometry(connection: Connection, records: ModelRecords, model_id: int) -
     for table, rows in copied.items():
         copy_rows(connection, table, rows)
     return {table.name: len(rows) for table, rows in copied.items()}
+
+
+def add_scene(
+    connection: Connection,
+    model_id: int,
+    scene: Scene,
+    *,
+    format_version: int,
+    build_seconds: float,
+    ifcopenshell_version: str,
+) -> dict[str, int]:
+    """Write a model's scene into schema ``ifc_viewer``, replacing the one it has, if any.
+
+    ``ifc-sql ingest --viewer``, after the model is loaded (ADR 14). Nothing in schema
+    ``ifc`` is written. The caller holds the model row's lock.
+
+    Args:
+        connection: A connection inside the transaction that should hold the scene.
+        model_id: The model, already loaded.
+        scene: The scene, from ``viewer.scene.build_scene``.
+        format_version: The scene format it was built in.
+        build_seconds: How long triangulating and writing it took.
+        ifcopenshell_version: The IfcOpenShell release that triangulated it.
+
+    Returns:
+        Rows written per table.
+    """
+    obj = schema.object_
+    storeys = {chunk.storey_global_id for chunk in scene.chunks} - {None}
+    storey_ids = dict(
+        connection.execute(
+            select(obj.c.global_id, obj.c.object_id).where(
+                obj.c.model_id == model_id, obj.c.global_id.in_(storeys)
+            )
+        ).all()
+    )
+    connection.execute(delete(schema.scene).where(schema.scene.c.model_id == model_id))
+    x, y, z = scene.origin
+    connection.execute(
+        insert(schema.scene).values(
+            model_id=model_id,
+            format_version=format_version,
+            build_seconds=build_seconds,
+            ifcopenshell_version=ifcopenshell_version,
+            origin_x_m=x,
+            origin_y_m=y,
+            origin_z_m=z,
+            element_count=scene.element_count,
+            without_shape_count=scene.without_shape_count,
+            opening_count=scene.opening_count,
+            byte_count=scene.byte_count,
+        )
+    )
+    # An empty parameter list would execute the INSERT once with no values at all.
+    if scene.chunks:
+        connection.execute(
+            insert(schema.scene_chunk),
+            [
+                {
+                    "model_id": model_id,
+                    "chunk_no": chunk_no,
+                    "storey_id": _optional(storey_ids, chunk.storey_global_id),
+                    "kind": chunk.kind,
+                    "element_count": chunk.element_count,
+                    "glb": chunk.glb,
+                }
+                for chunk_no, chunk in enumerate(scene.chunks)
+            ],
+        )
+    return {schema.scene.name: 1, schema.scene_chunk.name: len(scene.chunks)}
 
 
 # --------------------------------------------------------------------------- copied tables

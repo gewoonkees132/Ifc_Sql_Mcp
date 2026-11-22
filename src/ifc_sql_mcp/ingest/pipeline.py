@@ -29,6 +29,13 @@ A new model can be given a project (``project_key``) and the model it replaces
 the Duplex's fifth model, and a weekly re-export was counted next to last week's (audit
 finding A12). A model given neither, whose project number or name is a Revit placeholder,
 gets a warning in the result.
+
+With ``viewer``, the file is triangulated for the viewer during step 4, and its scene is
+written after step 5, in a transaction of its own that holds the model row's lock (ADR
+14). The scene is not part of the run: it writes nothing to schema ``ifc``, and its own
+row records when it was built and how long it took. A scene that fails writes nothing
+and leaves the model loaded. On a file already loaded, ``viewer`` builds the scene in
+place, as ``geometry`` measures in place (ADR 12); a scene of the current format is kept.
 """
 
 import dataclasses
@@ -47,9 +54,12 @@ from sqlalchemy.exc import IntegrityError
 from ifc_sql_mcp.db import schema
 from ifc_sql_mcp.db.engine import describe_error
 from ifc_sql_mcp.ingest.extract import read_model, sha256_file
-from ifc_sql_mcp.ingest.load import add_geometry, load
+from ifc_sql_mcp.ingest.geometry import IFCOPENSHELL_VERSION
+from ifc_sql_mcp.ingest.load import add_geometry, add_scene, load
+from ifc_sql_mcp.ingest.raw import RawModel
 from ifc_sql_mcp.ingest.records import ModelRecords
 from ifc_sql_mcp.ingest.transform import transform
+from ifc_sql_mcp.viewer import scene as viewer_scene
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +90,31 @@ class ReplacesError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class SceneOutcome:
+    """What ``ingest --viewer`` did with the model's scene (``viewer/scene.py``).
+
+    Attributes:
+        status: ``built`` (the model had none), ``replaced`` (it had one of an older
+            format), ``kept`` (it has a current one, perhaps built by another ingest
+            meanwhile) or ``failed`` (nothing was written; the model stays loaded).
+        element_count: Elements drawn, aggregates drawn through their parts included.
+        without_shape_count: Elements not drawn, openings left out.
+        opening_count: Feature elements, never drawn.
+        chunk_count: Chunks the scene is stored in.
+        byte_count: Their bytes together.
+        error: Why the scene failed.
+    """
+
+    status: Literal["built", "replaced", "kept", "failed"]
+    element_count: int = 0
+    without_shape_count: int = 0
+    opening_count: int = 0
+    chunk_count: int = 0
+    byte_count: int = 0
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class IngestResult:
     """What one ingest did.
 
@@ -87,7 +122,8 @@ class IngestResult:
         run_id: The ``ingestion_run`` row that records it.
         status: ``succeeded`` (this run loaded the model), ``measured`` (the file was
             loaded without ``--geometry``, and this run added its shapes' quantities) or
-            ``skipped`` (the file was already loaded, and nothing was written).
+            ``skipped`` (the file was already loaded, and nothing of the model was
+            written; with ``--viewer``, its scene may have been built).
         model_id: The model this run loaded, or the one it found.
         discipline: That model's discipline.
         row_counts: Rows written per table; empty when skipped.
@@ -96,6 +132,7 @@ class IngestResult:
             while this one was running.
         warnings: What the user should know: the project is a Revit placeholder, or
             ``project_key`` and ``replaces`` were not applied to a file already loaded.
+        scene: What became of the model's scene, with ``--viewer``; ``None`` without it.
     """
 
     run_id: int
@@ -106,6 +143,7 @@ class IngestResult:
     issue_counts: dict[str, int] = field(default_factory=dict)
     concurrent: bool = False
     warnings: tuple[str, ...] = ()
+    scene: SceneOutcome | None = None
 
 
 def check_discipline(value: str) -> str:
@@ -128,6 +166,7 @@ def ingest_file(
     project_key: str | None = None,
     replaces: int | None = None,
     geometry: bool = False,
+    viewer: bool = False,
 ) -> IngestResult:
     """Load the IFC file at ``path`` unless the same bytes are already loaded.
 
@@ -140,9 +179,12 @@ def ingest_file(
         replaces: The model this one is a new version of (``model.replaces_model_id``).
         geometry: Also measure the shapes, for quantities of source ``geometry``
             (``ingest/geometry.py``). The time it takes is recorded in the run.
+        viewer: Also build the model's scene for the viewer (``viewer/scene.py``), unless
+            it has one of the current format. Its outcome is in the result's ``scene``.
 
     Returns:
-        What the run did: loaded the file, or found it already loaded.
+        What the run did: loaded the file, or found it already loaded. A scene that
+        failed is in the result, not raised: the model is loaded all the same.
 
     Raises:
         ValueError: if ``discipline`` is not a valid code or ``project_key`` is blank;
@@ -164,25 +206,38 @@ def ingest_file(
 
     with engine.begin() as connection:
         existing = _loaded_model(connection, sha256)
-        if existing is not None and geometry and not _measured(connection, existing[0]):
-            run_id = _insert_run(connection, path.name, sha256, "running", existing[0])
-        elif existing is not None:
-            run_id = _insert_run(connection, path.name, sha256, "skipped", existing[0])
-            result = _skipped(run_id, path, discipline, existing, concurrent=False)
-            if project_key is None and replaces is None and not geometry:
-                return result
-            unchanged = (
-                f"{path.name} is already loaded as model {result.model_id}, so --project, "
-                "--replaces and --geometry were not applied: that model is unchanged"
+        if existing is not None:
+            measure = geometry and not _measured(connection, existing[0])
+            current = _current_scene(connection, existing[0]) if viewer else None
+            run_id = _insert_run(
+                connection, path.name, sha256, "running" if measure else "skipped", existing[0]
             )
-            return dataclasses.replace(result, warnings=(unchanged,))
     if existing is not None:
-        return _measure_in_place(engine, path, sha256, run_id, existing, project_key, replaces)
+        draw = viewer and current is None
+        if measure:
+            measured = _measure_in_place(
+                engine, path, sha256, run_id, existing, project_key, replaces, viewer=draw
+            )
+            return measured if draw else dataclasses.replace(measured, scene=current)
+        result = _skipped(run_id, path, discipline, existing, concurrent=False)
+        if draw:
+            return _draw_in_place(engine, path, sha256, result, project_key, replaces)
+        result = dataclasses.replace(result, scene=current)
+        # A current scene is what --viewer asks for: the summary says it was kept, and
+        # make dq-samples, which passes --viewer, warns of nothing when run again.
+        if project_key is None and replaces is None and not geometry:
+            return result
+        unchanged = (
+            f"{path.name} is already loaded as model {result.model_id}, so --project, "
+            "--replaces and --geometry were not applied: that model is unchanged"
+        )
+        return dataclasses.replace(result, warnings=(unchanged,))
 
     with engine.begin() as connection:
         run_id = _insert_run(connection, path.name, sha256, "running")
     try:
-        records, geometry_seconds = _extract_and_transform(path, sha256, run_id, geometry)
+        raw, records = _extract_and_transform(path, sha256, run_id, geometry, viewer)
+        geometry_seconds = raw.geometry_seconds
         started = time.perf_counter()
         with engine.begin() as connection:
             loaded = load(
@@ -232,6 +287,7 @@ def ingest_file(
         row_counts=loaded.row_counts,
         issue_counts=dict(sorted(Counter(i.code.value for i in records.issues).items())),
         warnings=(warning,) if warning else (),
+        scene=_store_scene(engine, loaded.model_id, raw, records) if viewer else None,
     )
 
 
@@ -260,41 +316,45 @@ def _measure_in_place(
     existing: tuple[int, str],
     project_key: str | None,
     replaces: int | None,
+    *,
+    viewer: bool,
 ) -> IngestResult:
     """Measure the shapes of a file loaded without ``--geometry``, into its model (R4).
 
     A file is identified by its bytes (ADR 4), so it cannot be loaded twice. Its model is
     kept, with its id, its data quality runs and its versions. This run only adds the
     quantities measured from the shapes, which rank last (ADR 10). The model row is locked,
-    so two runs on one file cannot both add them.
+    so two runs on one file cannot both add them. With ``viewer``, the same pass gives the
+    scene, written after the measures.
     """
     model_id, discipline = existing
     try:
-        records, geometry_seconds = _extract_and_transform(path, sha256, run_id, True)
+        raw, records = _extract_and_transform(path, sha256, run_id, True, viewer)
         with engine.begin() as connection:
-            connection.execute(
-                select(schema.model.c.model_id)
-                .where(schema.model.c.model_id == model_id)
-                .with_for_update()
-            )
+            _lock_model(connection, model_id)
             if _measured(connection, model_id):
                 _finish_run(connection, run_id, "skipped", model_id)
-                return _skipped(run_id, path, discipline, existing, concurrent=True)
-            counts = add_geometry(connection, records, model_id)
-            _finish_run(
-                connection,
-                run_id,
-                "succeeded",
-                model_id,
-                counts,
-                geometry_seconds=geometry_seconds,
-            )
+                counts = None
+            else:
+                counts = add_geometry(connection, records, model_id)
+                _finish_run(
+                    connection,
+                    run_id,
+                    "succeeded",
+                    model_id,
+                    counts,
+                    geometry_seconds=raw.geometry_seconds,
+                )
     except Exception as exc:
         message = describe_error(exc)
         logger.error("measuring failed", extra={"run_id": run_id, "error": message})
         with engine.begin() as connection:
             _finish_run(connection, run_id, "failed", model_id, error=message)
         raise IngestError(run_id, message) from exc
+    scene = _store_scene(engine, model_id, raw, records) if viewer else None
+    if counts is None:
+        result = _skipped(run_id, path, discipline, existing, concurrent=True)
+        return dataclasses.replace(result, scene=scene)
     logger.info("measured in place", extra={"run_id": run_id, "model_id": model_id} | counts)
     warnings: tuple[str, ...] = ()
     if project_key is not None or replaces is not None:
@@ -313,6 +373,142 @@ def _measure_in_place(
             {"geometry_not_measured": counts["ingest_issue"]} if counts["ingest_issue"] else {}
         ),
         warnings=warnings,
+        scene=scene,
+    )
+
+
+def _draw_in_place(
+    engine: Engine,
+    path: Path,
+    sha256: str,
+    skipped: IngestResult,
+    project_key: str | None,
+    replaces: int | None,
+) -> IngestResult:
+    """Build the scene of a file already loaded, into its model, as ADR 12 measures in place.
+
+    The run stays the skipped run it was recorded as: nothing of the model is written,
+    only schema ``ifc_viewer``. A file that cannot be read again fails the scene alone.
+    """
+    try:
+        raw, records = _extract_and_transform(path, sha256, skipped.run_id, False, True)
+    except Exception as exc:
+        scene = _failed_scene(skipped.model_id, exc)
+    else:
+        scene = _store_scene(engine, skipped.model_id, raw, records)
+    warnings: tuple[str, ...] = ()
+    if project_key is not None or replaces is not None:
+        warnings = (
+            f"{path.name} is already loaded as model {skipped.model_id}, so --project and "
+            "--replaces were not applied",
+        )
+    return dataclasses.replace(skipped, scene=scene, warnings=warnings)
+
+
+def _lock_model(connection: Connection, model_id: int) -> None:
+    """Lock the model's row until the transaction ends, so two runs on it take turns."""
+    connection.execute(
+        select(schema.model.c.model_id).where(schema.model.c.model_id == model_id).with_for_update()
+    )
+
+
+# --------------------------------------------------------------------------- scenes
+
+
+def _store_scene(
+    engine: Engine, model_id: int, raw: RawModel, records: ModelRecords
+) -> SceneOutcome:
+    """Build the model's scene and write it, unless it has a current one; never raise.
+
+    The model row is locked first, so of two builds at once the second finds the first's
+    scene and keeps it. A scene that fails is logged and returned, with nothing written.
+    """
+    started = time.perf_counter()
+    try:
+        scene = viewer_scene.build_scene(
+            viewer_scene.scene_objects(raw, records),
+            raw.meshes,
+            storeys=viewer_scene.storeys_upwards(records),
+        )
+        seconds = (raw.scene_seconds or 0.0) + time.perf_counter() - started
+        with engine.begin() as connection:
+            _lock_model(connection, model_id)
+            older = _scene_version(connection, model_id)
+            current = _current_scene(connection, model_id)
+            if current is not None:
+                return current
+            add_scene(
+                connection,
+                model_id,
+                scene,
+                format_version=viewer_scene.FORMAT_VERSION,
+                build_seconds=seconds,
+                ifcopenshell_version=IFCOPENSHELL_VERSION,
+            )
+    except Exception as exc:
+        return _failed_scene(model_id, exc)
+    outcome = SceneOutcome(
+        status="built" if older is None else "replaced",
+        element_count=scene.element_count,
+        without_shape_count=scene.without_shape_count,
+        opening_count=scene.opening_count,
+        chunk_count=len(scene.chunks),
+        byte_count=scene.byte_count,
+    )
+    logger.info(
+        "scene written",
+        extra={
+            "model_id": model_id,
+            "status": outcome.status,
+            "chunks": outcome.chunk_count,
+            "bytes": outcome.byte_count,
+            "seconds": round(seconds, 3),
+        },
+    )
+    return outcome
+
+
+def _failed_scene(model_id: int, exc: Exception) -> SceneOutcome:
+    message = describe_error(exc)
+    logger.error("scene failed", extra={"model_id": model_id, "error": message})
+    return SceneOutcome(status="failed", error=message)
+
+
+def _scene_version(connection: Connection, model_id: int) -> int | None:
+    """The format version of the model's scene; ``None`` if it has none."""
+    scene = schema.scene
+    version = connection.execute(
+        select(scene.c.format_version).where(scene.c.model_id == model_id)
+    ).scalar_one_or_none()
+    return None if version is None else int(version)
+
+
+def _current_scene(connection: Connection, model_id: int) -> SceneOutcome | None:
+    """The model's scene as ``kept``, if it is of the current format; else ``None``.
+
+    A scene of a newer format, written by a newer release, is kept too.
+    """
+    version = _scene_version(connection, model_id)
+    if version is None or version < viewer_scene.FORMAT_VERSION:
+        return None
+    scene, chunk = schema.scene, schema.scene_chunk
+    chunks = select(func.count()).where(chunk.c.model_id == model_id).scalar_subquery()
+    row = connection.execute(
+        select(
+            scene.c.element_count,
+            scene.c.without_shape_count,
+            scene.c.opening_count,
+            scene.c.byte_count,
+            chunks.label("chunk_count"),
+        ).where(scene.c.model_id == model_id)
+    ).one()
+    return SceneOutcome(
+        status="kept",
+        element_count=row.element_count,
+        without_shape_count=row.without_shape_count,
+        opening_count=row.opening_count,
+        chunk_count=row.chunk_count,
+        byte_count=row.byte_count,
     )
 
 
@@ -357,15 +553,14 @@ def _placeholder_warning(records: ModelRecords, model_id: int) -> str | None:
 
 
 def _extract_and_transform(
-    path: Path, sha256: str, run_id: int, geometry: bool
-) -> tuple[ModelRecords, float | None]:
+    path: Path, sha256: str, run_id: int, geometry: bool, viewer: bool
+) -> tuple[RawModel, ModelRecords]:
     """Parse the file into records, logging how long each stage took and what it found.
 
-    Returns the records, and the seconds spent measuring shapes (``None`` without
-    ``geometry``).
+    Returns what was read, with the measures and meshes asked for, and the records.
     """
     started = time.perf_counter()
-    raw = read_model(path, geometry=geometry)
+    raw = read_model(path, geometry=geometry, viewer=viewer)
     if raw.file.sha256 != sha256:
         raise FileChangedError(f"{path.name} changed while it was being ingested; try again")
     extracted = time.perf_counter()
@@ -397,9 +592,18 @@ def _extract_and_transform(
                 "seconds": round(raw.geometry_seconds, 3),
             },
         )
+    if raw.scene_seconds is not None:
+        logger.info(
+            "triangulated the scene",
+            extra={
+                "run_id": run_id,
+                "meshes": len(raw.meshes),
+                "seconds": round(raw.scene_seconds, 3),
+            },
+        )
     for code, count in sorted(Counter(i.code.value for i in records.issues).items()):
         logger.info("transform issues", extra={"run_id": run_id, "code": code, "count": count})
-    return records, raw.geometry_seconds
+    return raw, records
 
 
 def _skipped(
