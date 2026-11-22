@@ -1,8 +1,10 @@
 # ADR 14: A viewer for the loaded models and the MCP server's calls
 
-- Status: **draft**. It holds the Phase 0 spike's findings; Phases 1–3 of
-  [the plan](../plans/2026-11-ifc-viewer.md) complete it.
+- Status: **draft**. It holds the Phase 0 spike's findings and decision 1 (Phase 1:
+  scenes in the pipeline); Phases 2 and 3 of [the plan](../plans/2026-11-ifc-viewer.md)
+  complete it.
 - Date: 2026-11-22
+- Amends: [ADR 1](0001-postgresql.md) (a second schema, `ifc_viewer`)
 
 ## Context
 
@@ -159,16 +161,135 @@ Two things the implementation must handle:
 Not run: NOTIFY on Linux. There is no Linux machine or Docker here. Phase 3's listener
 tests run against PostgreSQL 16 on Linux in CI.
 
-## Decisions 1–7
+## Decisions
 
-To be recorded by Phases 1 to 3, as the plan's "Design, to record in ADR 14" gives them,
-with the changes above.
+Decisions 2–7 are recorded by Phases 2 and 3, as the plan's "Design, to record in ADR
+14" gives them, with the changes above.
+
+### 1. A scene per model, built at ingest, in its own schema
+
+`ifc-sql ingest --viewer` triangulates the model while the file is open and stores the
+result. The database keeps the file's name, size and SHA-256, never its bytes, so this is
+the only time the geometry can be had.
+
+**Storage: schema `ifc_viewer`** (migration 0020), outside `ifc`, because a scene is
+derived from the file and can be rebuilt at any time:
+
+- `scene`, one row per model (`ON DELETE CASCADE` from `ifc.model`): `format_version`,
+  `built_at`, `build_seconds`, `ifcopenshell_version`, the origin (`origin_x_m`, `_y_m`,
+  `_z_m`, float64) and the counts: `element_count` (drawn), `without_shape_count`,
+  `opening_count`, `byte_count`.
+- `scene_chunk`, primary key `(model_id, chunk_no)`: `storey_id`, `kind` (`elements`,
+  `spaces`, `space_copies` or `areas`), `element_count`, `glb` (`bytea`) and `glb_sha256`.
+  - `storey_id` references `ifc.spatial_element` deferrably, checked at commit as the
+    references inside schema `ifc` are, so one `DELETE` on `ifc.model` removes the model
+    and its scene, while a storey that a chunk is on cannot be deleted on its own.
+  - `glb_sha256` is a generated column, `encode(sha256(glb), 'hex')`: the database
+    computes the chunk's future ETag, so the two cannot disagree.
+  - A CHECK requires the GLB's magic bytes, `glTF`.
+- `ifc_reader` gets `USAGE` on the schema and `SELECT` on the two tables, as explicit
+  grants: `ifc-sql view` will read them as that role. No default privileges, so a later
+  table there is unreadable unless its migration grants it.
+- `run_sql`'s validator reads only schema `ifc`, so a query cannot pull megabytes of
+  geometry through the MCP server, and `describe_schema` does not list the scenes.
+- The downgrade drops the schema.
+
+**What is drawn.** Every `IfcElement` with a body, except feature elements: IfcOpenShell
+cuts the openings out of their hosts (`disable-opening-subtractions` stays off). Every
+`IfcSpace` with a body too, in chunks the page shows only when a selection holds one: the
+rooms in `spaces`, a space that repeats a room (`spatial_element.repeats_id`) in
+`space_copies`, and Revit area plans (category `Areas`) in `areas`.
+
+**Aggregates.** When an element aggregates parts that are drawn (`IfcRelAggregates`), the
+parts' nodes are children of the aggregate's node, and the aggregate's own body, if any,
+is left out: selecting a stair's GlobalId selects its flights. No aggregate in the nine
+files has a body of its own; the synthetic fixture tests the rule.
+
+**The counts** add up to the elements of `ifc.element`:
+
+- drawn: the elements with a body of their own, and the aggregates drawn through their
+  parts;
+- without shape: the elements that are neither;
+- openings: the feature elements, never drawn.
+
+**Format: glTF 2.0 binary**, written by our own pure module, `viewer/glb.py`:
+
+- Y up, metres. Positions are float32, relative to the scene's origin: the centre of the
+  drawn elements' bounding box, rounded to whole metres (of the spaces', for a model with
+  no element drawn). File B's origin is 1,507,997 m, 5,039,599 m, 37 m.
+- POSITION and indices only: no normals, textures or compression, so the page needs no
+  WASM decoder.
+- One node per element: `name` is its GlobalId, `extras` its IFC class.
+- One primitive per IfcOpenShell material, with its colour and transparency, and with
+  **its own vertices** (P6). The positions' buffer view has a `byteStride` of 12, as glTF
+  requires when several accessors share one.
+- Fixed bytes: the meshes are taken by STEP id, whatever order IfcOpenShell's threads
+  finish them in, and the JSON is written with sorted keys.
+
+**Chunks follow the storeys**: at most 2,000 elements (aggregates included) or 16 MiB
+each (P3). An aggregate stays whole, on its own storey. A run of elements above the byte
+cap is halved until it fits. The chunks are numbered kind by kind and storey by storey from
+the lowest; within a storey the elements come by GlobalId.
+
+**In the pipeline.**
+
+- `extract.read_model(…, viewer=True)` makes the one pass of P1:
+  `geometry.triangulate_scene` triangulates every element and space in local coordinates,
+  moves the vertices to world coordinates with the placement matrix, and gives the space
+  plans and, with `--geometry`, the measures from the same shapes.
+- The scene is written after the load commits, in a transaction of its own that locks the
+  model row. Of two builds at once, the second finds the first's scene and keeps it.
+- On a file already loaded, `--viewer` builds the scene in place, as ADR 12 measures in
+  place. The run is the skipped run every repeat records; nothing of the model is written.
+- A scene of the current `format_version` is kept, and the summary says so; an older one
+  is replaced when `ingest --viewer` runs on its file. Nothing rebuilds a scene on its own.
+- A scene that fails writes nothing and exits 1; the model stays loaded.
+- `watch --viewer` passes the flag on.
+
+**Not an ingestion run, and no data quality rule.** A scene writes nothing to schema
+`ifc`; its own row says when it was built and how long it took. The page shows its counts.
+
+**The nine files**, as `ingest --viewer` builds them (pinned by
+`tests/samples/test_duplex_scenes.py` and `tests/modern/test_audit_scenes.py`; the bytes
+within 5 %, because OpenCASCADE may triangulate a curved face differently on Linux):
+
+| File | Drawn (own + through parts) | No shape | Openings | Chunks: elements, spaces, copies, areas | Bytes: elements + spaces |
+|---|---:|---:|---:|---|---:|
+| Duplex ARC | 218 (215 + 3) | 0 | 50 | 4, 3, 0, 0 | 462,272 + 18,184 |
+| Duplex MEP | 926 (926 + 0) | 0 | 0 | 3, 3, 3, 0 | 4,703,808 + 35,152 |
+| Duplex ELE | 103 (103 + 0) | 0 | 0 | 3, 1, 0, 0 | 423,568 + 1,064 |
+| Duplex PLU | 498 (498 + 0) | 0 | 0 | 3, 1, 0, 0 | 4,648,992 + 1,064 |
+| A, house | 454 (442 + 12) | 0 | 35 | 6, 0, 0, 0 | 4,545,068 |
+| B, tower | 11,297 (11,123 + 174) | 1 | 3,314 | 28, 0, 0, 0 | 25,154,068 |
+| C, office | 6,824 (6,787 + 37) | 0 | 131 | 5, 3, 3, 0 | 15,418,460 + 353,244 |
+| D, A re-exported | 454 (442 + 12) | 0 | 35 | 6, 0, 0, 0 | 4,545,068 |
+| E, school | 4,530 (4,459 + 71) | 0 | 789 | 6, 4, 0, 4 | 20,214,868 + 299,356 |
+
+Every count is Phase 0's. The elements' bytes are 0.0 to 2.9 % more than the sketch's (file
+B 1.4 %): each primitive now has its own vertices, and the JSON carries an accessor per
+primitive and the stride.
 
 ## Alternatives considered
 
-To be completed with the decisions. Phase 0 rejected:
+To be completed with decisions 2–7. Phase 0 rejected:
 
 - **Triangulating in world coordinates** (`use-world-coords`): 1.4 to 4 times slower, and
   `--geometry` would need a second pass in local coordinates (P1).
 - **three.js r185.1, the newest release with minified builds** (0.75 MB in place of
   2.1 MB): it would pin a release four months older than the rule allows (P5).
+
+Decision 1 rejected:
+
+- **Parsing the IFC file in the browser with web-ifc.** The database keeps no copy of the
+  file, so the page would need the user's file again, and a WASM module of several MB.
+  The page would also count and group elements differently from the database it shows.
+- **IfcOpenShell's glTF serializer.** It is compiled into the locked wheel, but it writes
+  only to a file path, writes no `extras`, and makes one file per run, so chunks per
+  storey would need one run each.
+- **A file cache keyed by SHA-256.** A second store beside the database, with its own
+  location, clean-up and backups. In the database, a scene is deleted with its model, and
+  `ifc-sql view` needs nothing but the database.
+- **Building scenes when `view` starts.** It would need the file, which is not kept, and
+  the first page would wait for the triangulation: 27 s for file B on 4 threads.
+- **A `scene_seconds` column on `ingestion_run`.** A scene is not a load of the model: it
+  is built, kept or replaced on its own, so its own row records its time.

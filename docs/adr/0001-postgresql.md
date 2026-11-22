@@ -1,6 +1,6 @@
 # ADR 1: PostgreSQL as the store, accessed through SQLAlchemy Core and psycopg 3
 
-- Status: accepted
+- Status: accepted; amended by [ADR 14](0014-viewer.md): a second schema, `ifc_viewer`
 - Date: 2026-11-16
 
 ## Context

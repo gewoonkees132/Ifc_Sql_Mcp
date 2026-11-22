@@ -53,6 +53,11 @@ user", and the first round deferred it. Two things rule out another database eng
   left that box unticked.
 - A command that starts the server pays its start-up, about 1.5 s (initdb on first use
   included), unless another command or the MCP server is running.
+- **On Windows, a server that stopped and starts again listens on another free port**
+  (found in the viewer's Phase 0, [ADR 14](0014-viewer.md) P7). `serve` resolves the URL
+  once, when it starts, so a `serve` still running after the database stopped under it
+  keeps the old port, and its calls fail until the client restarts it. `docs/windows.md`
+  says so; the coming `ifc-sql view` will need the same restart.
 - **Trust authentication.**
   - On Linux and macOS, with the socket in the data folder, only its user connects. With
     the socket under the temporary directory, other local users may reach it.
