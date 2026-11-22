@@ -5,6 +5,9 @@ without Docker would: migrate, ingest, check, and serve to an MCP client as ifc_
 Needs the ``embedded`` extra (``uv sync --extra embedded``), which CI installs.
 """
 
+import os
+import sys
+import uuid
 from pathlib import Path
 
 import make_revit_quirks
@@ -25,8 +28,16 @@ pytestmark = pytest.mark.anyio
 
 @pytest.fixture
 def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """An empty folder for the embedded database, and an environment that points at it."""
-    folder = tmp_path / "ifc-sql-data"
+    """An empty folder for the embedded database, and an environment that points at it.
+
+    On Windows, PostgreSQL's tools give up administrator rights and then cannot open
+    pytest's temporary folders (CI run 45). A folder in the user's own profile works, as
+    docs/windows.md says, so the tests use one there.
+    """
+    base = tmp_path
+    if sys.platform == "win32":
+        base = Path(os.environ["LOCALAPPDATA"]) / "ifc-sql-tests" / uuid.uuid4().hex[:12]
+    folder = base / "ifc-sql-data"
     monkeypatch.delenv("IFC_SQL_DATABASE_URL", raising=False)
     monkeypatch.setenv("IFC_SQL_DATA_DIR", str(folder))
     return folder
