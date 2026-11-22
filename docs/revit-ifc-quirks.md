@@ -298,8 +298,14 @@ the defect it is supposed to report.
 | of which entity attributes (a door's `OverallWidth`, a style's `OperationType`) | 90 | 0 | 0 | 0 |
 
 One `IfcPropertySet` can be related to many elements, so there are more rows than
-property entities. All of them are single values; other property kinds (lists, tables,
-enumerations, complex properties) would be reported as `unsupported_property`.
+property entities. All of them are single values.
+
+Revit 2021 also writes enumerated values: the audit's file C has 724, each a duct
+segment's `Pset_DuctSegmentTypeCommon.Shape`, all `Undefined`. An
+`IfcPropertyEnumeratedValue` is read as the value it chose, with its type and the
+enumeration's unit. A multiple choice becomes one text, joined with `", "` in the file's
+order (re-check finding R3). Other property kinds (lists, tables, bounded values, complex
+properties) are reported as `unsupported_property`.
 
 Quantity sets are stored as property rows too, under their set name, so that every value
 in the file can be queried and every `quantity.source_ref` names an existing property

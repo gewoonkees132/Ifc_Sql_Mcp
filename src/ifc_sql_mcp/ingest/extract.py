@@ -584,6 +584,14 @@ class _Extractor:
             if isinstance(value, str | int | float | bool):
                 return str(nominal.is_a()), value, self._unit(member.Unit)
             what = f"an {nominal.is_a()} value"  # e.g. IfcComplexNumber, a pair of numbers
+        elif member.is_a("IfcPropertyEnumeratedValue"):
+            chosen = list(member.EnumerationValues or ())
+            values = [value.wrappedValue for value in chosen]
+            if not values:
+                return None, None, None
+            if all(isinstance(value, str | int | float | bool) for value in values):
+                return self._enumerated(member, chosen, values)
+            what = "an IfcPropertyEnumeratedValue whose values are not all plain values"
         elif ifc_class in _QUANTITY_VALUE_TYPES:
             value = member[_QUANTITY_VALUE_INDEX]
             if isinstance(value, int | float) and not isinstance(value, bool):
@@ -592,6 +600,22 @@ class _Extractor:
         message = f"{set_name!r}.{_text(member.Name)!r} is {what}, which is not read"
         self.issues.append(Issue(IssueCode.UNSUPPORTED_PROPERTY, global_id, message))
         return None
+
+    def _enumerated(
+        self, member: Entity, chosen: list[Entity], values: list[Scalar]
+    ) -> tuple[str, Scalar, RawUnit | None]:
+        """The value an ``IfcPropertyEnumeratedValue`` chose from its enumeration (R3).
+
+        One value is kept as it is, with its type and the enumeration's unit, if any.
+        Several (IFC allows a multiple choice) become one text, joined with ``", "`` in the
+        file's order. Revit 2021 writes ``Pset_DuctSegmentTypeCommon.Shape`` this way, on
+        724 duct segments of the audit's file C.
+        """
+        if len(values) == 1:
+            reference = member.EnumerationReference
+            unit = self._unit(reference.Unit) if reference is not None else None
+            return str(chosen[0].is_a()), values[0], unit
+        return "IfcLabel", ", ".join(str(value) for value in values), None
 
     # ----------------------------------------------------------------- classifications
 

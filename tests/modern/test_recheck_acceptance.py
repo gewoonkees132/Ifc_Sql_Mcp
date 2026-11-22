@@ -69,7 +69,6 @@ def test_r2_ceilings_have_their_areas(modern: Modern) -> None:
     assert sources == [("Qto_CoveringBaseQuantities.NetArea",)]
 
 
-@_open("R3", 25)
 def test_r3_enumerated_property_values_are_read(modern: Modern) -> None:
     shapes = modern.rows(
         "SELECT p.value_text, p.value_type, count(DISTINCT o.object_id) "

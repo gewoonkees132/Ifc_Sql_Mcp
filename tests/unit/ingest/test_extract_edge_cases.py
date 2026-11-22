@@ -224,24 +224,75 @@ def test_derived_units_have_a_factor_only_when_coherent_si(tmp_path: Path) -> No
 # --------------------------------------------------------------------------- property values
 
 
-def test_property_kinds_other_than_single_values_are_reported(tmp_path: Path) -> None:
+def test_property_kinds_other_than_single_and_enumerated_values_are_reported(
+    tmp_path: Path,
+) -> None:
     tiny = Tiny()
     wall = tiny.wall()
-    label = tiny.model.create_entity("IfcLabel", "A")
     tiny.pset(
         wall,
         "Pset_Test",
         tiny.single("Kept", tiny.model.create_entity("IfcLabel", "yes")),
         tiny.single("Empty", None),
-        tiny.model.create_entity(
-            "IfcPropertyEnumeratedValue", Name="Choice", EnumerationValues=[label]
-        ),
         tiny.single("Complex", tiny.model.create_entity("IfcComplexNumber", (1.0, 2.0))),
+        tiny.model.create_entity(
+            "IfcPropertyListValue",
+            Name="List",
+            ListValues=[tiny.model.create_entity("IfcLabel", "x")],
+        ),
     )
     raw = tiny.read(tmp_path)
     values = {v.name: (v.value_type, v.value) for v in only_element(raw).values}
     assert values == {"Kept": ("IfcLabel", "yes"), "Empty": (None, None)}
     assert codes(raw) == [IssueCode.UNSUPPORTED_PROPERTY] * 2
+
+
+def test_an_enumerated_value_is_the_value_chosen(tmp_path: Path) -> None:
+    # Revit 2021 writes a duct's Shape so (re-check finding R3, file C).
+    tiny = Tiny()
+    wall = tiny.wall()
+    label = tiny.model.create_entity("IfcLabel", "Undefined")
+    metre = tiny.model.create_entity("IfcSIUnit", UnitType="LENGTHUNIT", Name="METRE")
+    sizes = tiny.model.create_entity(
+        "IfcPropertyEnumeration",
+        Name="Sizes",
+        EnumerationValues=[tiny.model.create_entity("IfcLengthMeasure", 0.1)],
+        Unit=metre,
+    )
+
+    def enumerated(name: str, *chosen: object, reference: object = None) -> object:
+        return tiny.model.create_entity(
+            "IfcPropertyEnumeratedValue",
+            Name=name,
+            EnumerationValues=list(chosen) or None,
+            EnumerationReference=reference,
+        )
+
+    tiny.pset(
+        wall,
+        "Pset_DuctSegmentTypeCommon",
+        enumerated("Shape", label),
+        enumerated(
+            "Both",
+            tiny.model.create_entity("IfcLabel", "ROUND"),
+            tiny.model.create_entity("IfcLabel", "FLATOVAL"),
+        ),
+        enumerated("Size", tiny.model.create_entity("IfcLengthMeasure", 0.1), reference=sizes),
+        enumerated("Nothing"),
+        enumerated("Complex", tiny.model.create_entity("IfcComplexNumber", (1.0, 2.0))),
+    )
+    raw = tiny.read(tmp_path)
+    values = {v.name: v for v in only_element(raw).values}
+
+    assert {name: (v.value_type, v.value) for name, v in values.items()} == {
+        "Shape": ("IfcLabel", "Undefined"),
+        "Both": ("IfcLabel", "ROUND, FLATOVAL"),
+        "Size": ("IfcLengthMeasure", 0.1),
+        "Nothing": (None, None),
+    }
+    assert values["Size"].unit is not None
+    assert values["Shape"].unit is None
+    assert codes(raw) == [IssueCode.UNSUPPORTED_PROPERTY]
 
 
 def test_quantities_keep_their_measure_type_and_own_unit(tmp_path: Path) -> None:
