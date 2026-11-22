@@ -33,7 +33,11 @@ CASES = [
         records.SpatialElementRecord,
         schema.spatial_element,
         set(),
-        {"global_id": "object_id", "parent_global_id": "parent_id"},
+        {
+            "global_id": "object_id",
+            "parent_global_id": "parent_id",
+            "repeats_global_id": "repeats_id",
+        },
     ),
     (
         records.ElementRecord,

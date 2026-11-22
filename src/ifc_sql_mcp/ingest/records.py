@@ -52,12 +52,18 @@ class ObjectRecord:
 
 @dataclass(frozen=True, slots=True)
 class SpatialElementRecord:
-    """A row for ``ifc.spatial_element``; ``parent_global_id`` becomes ``parent_id``."""
+    """A row for ``ifc.spatial_element``; the two ``*_global_id`` fields become ``*_id``.
+
+    The last three are for spaces only (re-check finding R1, ``footprints.py``).
+    """
 
     global_id: str
     parent_global_id: str | None
     long_name: str | None
     elevation_m: Decimal | None
+    revit_category: str | None = None
+    footprint_m2: float | None = None
+    repeats_global_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

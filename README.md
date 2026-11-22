@@ -49,7 +49,7 @@ loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property va
 loaded Duplex_Electrical_20121207.ifc as model 3 (ELE): 109 objects, 6,862 property values, 88 issues (run 3)
 loaded Duplex_Plumbing_20121113.ifc as model 4 (PLU): 504 objects, 41,649 property values, 550 issues (run 4)
 checked model 1 (ARC, Duplex_A_20110907.ifc) in dq run 1: 0 error, 7,651 warning, 551 info findings (model content 0 / 7,651 / 551, loader coverage 0 / 0 / 0)
-checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,014 warning, 1,961 info findings (model content 0 / 30,014 / 1,961, loader coverage 0 / 0 / 0)
+checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,035 warning, 1,961 info findings (model content 0 / 30,035 / 1,961, loader coverage 0 / 0 / 0)
 checked model 3 (ELE, Duplex_Electrical_20121207.ifc) in dq run 3: 0 error, 90 warning, 3,291 info findings (model content 0 / 90 / 3,291, loader coverage 0 / 0 / 0)
 checked model 4 (PLU, Duplex_Plumbing_20121113.ifc) in dq run 4: 0 error, 1,472 warning, 13,223 info findings (model content 0 / 1,472 / 13,223, loader coverage 0 / 0 / 0)
 ```
@@ -62,7 +62,7 @@ repeat is recorded as a skipped run (the check runs again, as a new recorded run
 connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 11 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
   model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
-  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
+  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,035 warning, 1,961 info
   …
 ```
 
@@ -84,12 +84,12 @@ PostgreSQL listens on loopback. Anywhere else, set your own (`.env.example`,
 | File | Discipline | Unit declared | Elements | Spaces | Property values | Transform issues | Findings (warning / info) |
 |---|---|---|---:|---:|---:|---:|---:|
 | `Duplex_A_20110907.ifc` | ARC | m | 268 | 21 | 13,545 | 0 | 7,651 / 551 |
-| `Duplex_MEP_20110907.ifc` | MEP | m | 926 | 42 | 63,683 | 46 | 30,014 / 1,961 |
+| `Duplex_MEP_20110907.ifc` | MEP | m | 926 | 42 | 63,683 | 46 | 30,035 / 1,961 |
 | `Duplex_Electrical_20121207.ifc` | ELE | ft | 103 | 1 | 6,862 | 88 | 90 / 3,291 |
 | `Duplex_Plumbing_20121113.ifc` | PLU | mm | 498 | 1 | 41,649 | 550 | 1,472 / 13,223 |
 
 - **No errors.** The rules keep the error severity for something in the file that did
-  not reach the database, such as a skipped object; none of the 58,253 findings is one, and none is a gap in the loader's coverage.
+  not reach the database, such as a skipped object; none of the 58,274 findings is one, and none is a gap in the loader's coverage.
 - **Units are normalised.** The four files declare metres, feet and millimetres; every
   length, area and volume is stored in m, m² and m³, and Level 2 sits at 3.100 m in all
   four ([data-model.md](docs/data-model.md#storeys-across-disciplines)).

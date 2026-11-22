@@ -98,6 +98,9 @@ erDiagram
         bigint parent_id FK
         text long_name
         numeric elevation_m "numeric(9,3)"
+        text revit_category "spaces: Rooms, Spaces or Areas"
+        double footprint_m2 "spaces: area of the plan"
+        bigint repeats_id FK "spaces: the one it covers again"
     }
     element {
         bigint object_id PK, FK
@@ -190,7 +193,7 @@ erDiagram
 | `model` | one IFC file version | Identified by `file_sha256`, so loading the same bytes twice is impossible. `discipline` is supplied at ingest; IFC files do not state it. |
 | `ingestion_run` | one ingest attempt | Written outside the load transaction, so failed and skipped runs are recorded too. Keeps `file_sha256` because `model_id` is NULL when no model was committed. |
 | `object` | one IFC product | Shared supertype of spatial elements and physical elements (class-table inheritance, ADR 2). |
-| `spatial_element` | site, building, storey, space | `parent_id` follows `IfcRelAggregates`. |
+| `spatial_element` | site, building, storey, space | `parent_id` follows `IfcRelAggregates`. Spaces also carry Revit's `revit_category` (`Rooms`, `Spaces` or `Areas`), the area of their plan, `footprint_m2`, measured at every ingest, and `repeats_id`, the larger space whose floor they cover again (re-check finding R1, migration 0019). |
 | `element` | wall, door, duct, chair... | `container_id` is the direct `IfcRelContainedInSpatialStructure` target; `storey_id` is resolved at ingest. |
 | `property` | one value per object, set and name | Typed entity-attribute-value table (ADR 2). |
 | `quantity` | one value per object, quantity and source | Canonical names whose suffix is the unit. Several sources can coexist. |
@@ -290,7 +293,7 @@ name parts of openings in models already loaded.
 |---|---|---|
 | `v_quantity` | object and quantity | Picks one value when several sources supply it, in the order `ifc_qto`, then `revit_pset`, then `ifc_attribute`, then `geometry`: an IFC quantity set written by the exporter, then Revit's own parameter, then a door's or window's attribute, then a value measured from the shape (`--geometry`). The other views read quantities through it. |
 | `v_element` | element | Identity, Revit name parts (a feature element's are its host's, in `host_revit_*`), `is_feature`, storey and elevation, the containing room, the six canonical quantities as columns (`width_m` since v4), and materials in layer order (`Plasterboard / Metal - Stud Layer / Plasterboard`). Openings are rows too: filter `NOT is_feature` to count building elements. |
-| `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height, the OmniClass Table 13 code and title, and `duplicate_of` (v2): an earlier space with the same number, name, storey and floor area, as a model exporting both Revit Rooms and MEP Spaces writes. |
+| `v_space_schedule` | space | Number, name, storey, area, perimeter, volume, height, the OmniClass Table 13 code and title, Revit's `category` and the plan's `footprint_m2` (v3), and `duplicate_of`: the space whose floor this one covers again, as a model exporting both Revit Rooms and MEP Spaces writes. Since v3 it comes from the plans (`spatial_element.repeats_id`); a space without a plan keeps v2's key, the same number, name, storey and floor area. Spaces of category `Areas` are Revit's area plans, not rooms. |
 | `v_takeoff` | model × storey × `ifc_class_base` × material | Element count and summed length, area and volume. A layered material covers the element's face once per layer, so its area is element area × layer count and its volume is element area × total thickness. Plasterboard on both faces of a 10 m² wall is 20 m² and 0.32 m³. Materials without layers take the element's own quantities. |
 | `v_model_summary` | model | File and project metadata, row counts, and the findings of the latest successful data-quality run. The finding counts are NULL, not 0, for a model never checked. |
 | `v_dq_finding` | finding of each model's latest successful data-quality run | The rule's dimension and scope (model content or loader coverage, v2) and the object's GlobalId, class and name next to each finding, for the run `v_model_summary` counts ([data-quality.md](data-quality.md#reading-the-findings)). |

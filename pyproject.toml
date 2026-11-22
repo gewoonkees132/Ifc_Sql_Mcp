@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.2,<4",
     "pydantic>=2.14,<3",
     "pyyaml>=6.0.3,<7",
+    "shapely>=2.2,<3",
     "sqlalchemy>=2.0,<3",
     "sqlglot>=30.33,<31",
     "typer>=0.16",
@@ -95,6 +96,12 @@ warn_unreachable = true
 [[tool.mypy.overrides]]
 module = ["ifcopenshell", "ifcopenshell.*"]
 follow_imports = "skip"
+
+# shapely ships no complete type hints either. ingest/footprints.py, which compares the
+# plans of spaces, is the one module that uses it, and it returns only floats and strings.
+[[tool.mypy.overrides]]
+module = ["shapely", "shapely.*"]
+ignore_missing_imports = true
 
 # --------------------------------------------------------------------------- pytest
 [tool.pytest]

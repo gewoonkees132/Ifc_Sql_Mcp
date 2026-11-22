@@ -3,7 +3,8 @@
 Built with ``ifcopenshell.api`` in metres: a 5 x 3 x 0.2 m wall, a 4 x 4 x 0.25 m slab, a
 3 x 2 m space 2.5 m high, a 0.4 x 0.4 x 3 m column, an opening in the wall (never
 measured), and a beam whose body is a single point, which IfcOpenShell cannot
-triangulate. The measures each should give follow from those sizes.
+triangulate. The measures each should give follow from those sizes. With
+``only_unmeasurable``, the file holds just the beam and a space whose body is a point.
 """
 
 from pathlib import Path
@@ -18,6 +19,7 @@ SLAB = "Floor:Generic 250mm:102"
 SPACE = "101"
 COLUMN = "M_Concrete-Square-Column:400 x 400mm:103"
 BEAM = "M_W-Wide Flange:W310X60:104"
+UNPLANNED_SPACE = "102"
 
 
 def write_measured_model(path: Path, *, only_unmeasurable: bool = False) -> Path:
@@ -69,6 +71,21 @@ def write_measured_model(path: Path, *, only_unmeasurable: bool = False) -> Path
     if only_unmeasurable:
         ifcopenshell.api.run(
             "spatial.assign_container", model, products=[beam], relating_structure=storey
+        )
+        # A space whose body is a point too: it gives no plan (re-check finding R1).
+        unplanned = shaped(
+            "IfcSpace",
+            UNPLANNED_SPACE,
+            model.create_entity(
+                "IfcShapeRepresentation",
+                ContextOfItems=body,
+                RepresentationIdentifier="Body",
+                RepresentationType="Point",
+                Items=[model.create_entity("IfcCartesianPoint", Coordinates=(0.0, 0.0, 0.0))],
+            ),
+        )
+        ifcopenshell.api.run(
+            "aggregate.assign_object", model, products=[unplanned], relating_object=storey
         )
         model.write(str(path))
         return path

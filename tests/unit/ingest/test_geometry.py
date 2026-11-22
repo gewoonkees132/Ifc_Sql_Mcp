@@ -9,7 +9,7 @@ from pathlib import Path
 
 import ifcopenshell.util.shape
 import pytest
-from geometry_model import BEAM, COLUMN, SLAB, SPACE, WALL, write_measured_model
+from geometry_model import BEAM, COLUMN, SLAB, SPACE, UNPLANNED_SPACE, WALL, write_measured_model
 
 from ifc_sql_mcp.ingest import geometry
 from ifc_sql_mcp.ingest.extract import read_model
@@ -85,15 +85,49 @@ def test_a_model_where_nothing_triangulates_reports_each_body(tmp_path: Path) ->
 
     raw = read_model(path, geometry=True)
 
-    assert raw.shapes == ()
-    assert [issue.code for issue in raw.issues] == [IssueCode.GEOMETRY_NOT_MEASURED]
+    assert (raw.shapes, raw.footprints) == ((), ())
+    # The beam has no geometry quantity; the space (also measured) has none, and no plan.
+    assert [(issue.code, issue.message) for issue in raw.issues if "plan" in issue.message] == [
+        (
+            IssueCode.GEOMETRY_NOT_MEASURED,
+            f"IfcSpace {UNPLANNED_SPACE!r} has a body that gives no plan; a copy of it is "
+            "found by its number, name, storey and area only",
+        )
+    ]
+    assert len(raw.issues) == 3
 
 
 def test_a_model_with_nothing_to_measure_takes_no_time_to_say_so(tmp_path: Path) -> None:
-    shapes, issues, seconds = geometry.measure_shapes(ifcopenshell.file(schema="IFC4"))
+    empty = ifcopenshell.file(schema="IFC4")
+    shapes, issues, seconds = geometry.measure_shapes(empty)
+    plans, plan_issues, plan_seconds = geometry.measure_space_plans(empty)
 
-    assert (shapes, issues) == ((), [])
+    assert (shapes, issues, plans, plan_issues) == ((), [], (), [])
     assert seconds >= 0
+    assert plan_seconds >= 0
+
+
+def test_a_space_seen_only_edge_on_from_above_gets_no_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(geometry, "plan_from_triangles", lambda verts, faces: None)
+
+    raw = read_model(write_measured_model(tmp_path / "measured.ifc"))
+
+    assert raw.footprints == ()
+    assert [issue.message for issue in raw.issues] == [
+        f"IfcSpace {SPACE!r} has a body that gives no plan; a copy of it is found by its "
+        "number, name, storey and area only"
+    ]
+
+
+def test_every_space_gets_its_plan_without_geometry(tmp_path: Path) -> None:
+    raw = read_model(write_measured_model(tmp_path / "measured.ifc"))
+    names = {s.global_id: s.name for s in raw.spatial_elements}
+
+    [footprint] = raw.footprints
+    assert names[footprint.global_id] == SPACE
+    assert footprint.plan.area == pytest.approx(6.0)
 
 
 # --------------------------------------------------------------------------- quantities

@@ -9,13 +9,16 @@ The same input always gives the same output, in the same order: every choice bet
 candidates is made by a stated rule, never by dictionary or set iteration order.
 """
 
+import dataclasses
 import math
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from decimal import Decimal
+from typing import Any
 
 from ifc_sql_mcp.db.schema import GLOBAL_ID_PATTERN
 from ifc_sql_mcp.ingest.classifications import collect_classifications
+from ifc_sql_mcp.ingest.footprints import REVIT_AREAS, space_plans
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.properties import resolve_properties
 from ifc_sql_mcp.ingest.quantities import derive_quantities, geometry_quantities
@@ -51,6 +54,11 @@ _CASE_SUFFIXES = ("StandardCase", "ElementedCase")
 STOREY_CLASS = "IfcBuildingStorey"
 FEATURE_CLASS = "IfcFeatureElement"
 """Supertype of openings, voids and projections: elements that shape another element."""
+SPACE_CLASS = "IfcSpace"
+REVIT_CATEGORY_SETS = ("Pset_SpaceCommon", "Other", "PSet_Revit_Other")
+"""Where Revit writes the category of a space (``Rooms``, ``Spaces`` or ``Areas``), in order
+of preference. With Revit property sets ticked, Revit 2019 writes it in both of the first
+two; Revit 2011 prefixes its parameter sets with ``PSet_Revit_``."""
 
 
 class TransformError(ValueError):
@@ -306,6 +314,62 @@ def _spatial_record(
     return record, issues
 
 
+def space_categories(
+    properties: Iterable[PropertyRecord], spaces: Collection[str]
+) -> dict[str, str]:
+    """The Revit category each space states, from the first of :data:`REVIT_CATEGORY_SETS`.
+
+    Revit exports its area plans as spaces too, with the category ``Areas``: the audit's
+    file E has 25 of them, 22,905.9 m² of gross area, beside its 282 rooms. A space whose
+    file states no category has none here.
+    """
+    found: dict[str, tuple[int, str]] = {}
+    for record in properties:
+        text = (record.value_text or "").strip()
+        if (
+            record.global_id in spaces
+            and record.prop_name == "Category"
+            and record.pset_name in REVIT_CATEGORY_SETS
+            and text
+        ):
+            rank = REVIT_CATEGORY_SETS.index(record.pset_name)
+            if record.global_id not in found or rank < found[record.global_id][0]:
+                found[record.global_id] = (rank, text)
+    return {global_id: text for global_id, (_, text) in found.items()}
+
+
+def _with_space_plans(
+    spatial: Sequence[SpatialElementRecord],
+    raw: RawModel,
+    categories: Mapping[str, str],
+) -> list[SpatialElementRecord]:
+    """Add each space's category, the area of its plan, and the space it repeats (R1)."""
+    known = {s.global_id for s in spatial}
+    # A GlobalId used twice keeps its first object (_accept_objects), and so its first plan.
+    plans: dict[str, Any] = {}
+    for footprint in raw.footprints:
+        if footprint.global_id in known:
+            plans.setdefault(footprint.global_id, footprint.plan)
+    compared = space_plans(
+        list(plans.items()),
+        {s.global_id: s.parent_global_id for s in spatial},
+        {global_id for global_id, category in categories.items() if category == REVIT_AREAS},
+    )
+    found = {plan.global_id: plan for plan in compared}
+    records = []
+    for record in spatial:
+        plan = found.get(record.global_id)
+        records.append(
+            dataclasses.replace(
+                record,
+                revit_category=categories.get(record.global_id),
+                footprint_m2=plan.footprint_m2 if plan is not None else None,
+                repeats_global_id=plan.repeats_global_id if plan is not None else None,
+            )
+        )
+    return records
+
+
 def _element_records(
     elements: Sequence[RawElement],
     spatial: Sequence[SpatialElementRecord],
@@ -406,6 +470,8 @@ def transform(raw: RawModel) -> ModelRecords:
         for record in objects
         if record.object_kind == "spatial_element"
     }
+    space_ids = {global_id for global_id, base in spatial_classes.items() if base == SPACE_CLASS}
+    spatial = _with_space_plans(spatial, raw, space_categories(properties, space_ids))
     elements, layers, element_issues = _element_records(
         [obj for obj in accepted if isinstance(obj, RawElement)],
         spatial,

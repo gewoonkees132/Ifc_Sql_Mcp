@@ -34,6 +34,8 @@ MAX_ELEMENT_FINDINGS = 100
 MAX_GROUPS = 200
 SPACE_PAGE_SIZE = 150
 """Most spaces per space_schedule page: about 225 characters each, 34,000 in all (A11)."""
+REVIT_AREAS = "Areas"
+"""The category of Revit's area-plan spaces, which room totals leave out (re-check R1)."""
 DEFAULT_SAMPLES = 3
 MAX_SAMPLES = 20
 
@@ -919,9 +921,14 @@ class Space(BaseModel):
     height_m: float | None
     omniclass_code: IfcText | None = Field(description="OmniClass Table 13 code.")
     omniclass_title: IfcText | None
+    category: IfcText | None = Field(
+        description="Revit category, when the file states it: Rooms, Spaces (MEP) or Areas. "
+        "Areas are Revit's area plans, not rooms, and are left out of the totals."
+    )
     duplicate_of: int | None = Field(
-        description="object_id of an earlier space with the same number, name, storey and "
-        "area: this one repeats it (Rooms and MEP Spaces both exported). Null for the first."
+        description="object_id of the space whose floor this one covers again: its plan lies "
+        "inside that larger one (or, with no plan, it has the same number, name, storey and "
+        "area). Rooms and MEP Spaces both exported. Null for the first or only one."
     )
 
 
@@ -935,13 +942,23 @@ class SpaceSchedule(ToolResult):
     limit: int
     next_offset: int | None = Field(description="Offset of the next page; null on the last.")
     total_area_m2: float | None = Field(
-        description="Sum of area_m2 over all the model's spaces, not only this page; null, not "
-        "0, when none has one. Counts a room exported twice twice: see "
+        description="Sum of area_m2 over all the model's spaces, not only this page, except "
+        "Revit Areas; null, not 0, when none has one. Counts a room exported twice twice: see "
         "total_area_without_duplicates_m2."
     )
-    duplicate_spaces: int = Field(description="Spaces that repeat an earlier one (duplicate_of).")
+    duplicate_spaces: int = Field(
+        description="Spaces that cover the floor of another again (duplicate_of)."
+    )
     total_area_without_duplicates_m2: float | None = Field(
-        description="Sum of area_m2 over the spaces that repeat no other: each room once."
+        description="Sum of area_m2 over the spaces that repeat no other, except Revit Areas: "
+        "each room once."
+    )
+    revit_area_spaces: int = Field(
+        description="Spaces Revit marks as Areas, its area plans (category Areas): listed, but "
+        "left out of both totals."
+    )
+    revit_area_total_m2: float | None = Field(
+        description="Sum of area_m2 over the Revit Areas; null when there are none."
     )
     spaces_without_area: int
     note: str | None = Field(description="A warning when some or all spaces have no area.")
@@ -964,21 +981,29 @@ def space_schedule(
     totals = connection.execute(
         text(
             """
-            SELECT count(*) AS spaces, count(area_m2) AS with_area, sum(area_m2) AS area,
+            SELECT count(*) AS spaces, count(area_m2) AS with_area,
+                   sum(area_m2) FILTER (WHERE NOT is_area_plan) AS area,
                    count(*) FILTER (WHERE duplicate_of IS NOT NULL) AS duplicates,
-                   sum(area_m2) FILTER (WHERE duplicate_of IS NULL) AS unique_area
-            FROM ifc.v_space_schedule
-            WHERE model_id = :model_id
+                   sum(area_m2) FILTER (WHERE duplicate_of IS NULL AND NOT is_area_plan)
+                       AS unique_area,
+                   count(*) FILTER (WHERE is_area_plan) AS area_plans,
+                   sum(area_m2) FILTER (WHERE is_area_plan) AS area_plan_area
+            FROM (
+                SELECT area_m2, duplicate_of,
+                       coalesce(category = :areas, false) AS is_area_plan
+                FROM ifc.v_space_schedule
+                WHERE model_id = :model_id
+            ) AS s
             """
         ),
-        {"model_id": model_id},
+        {"model_id": model_id, "areas": REVIT_AREAS},
     ).one()
     rows = connection.execute(
         text(
             """
             SELECT s.object_id, s.global_id, s.number, s.name, s.storey_name, s.area_m2,
                    s.perimeter_m, s.volume_m3, s.height_m, s.omniclass_code, s.omniclass_title,
-                   s.duplicate_of
+                   s.category, s.duplicate_of
             FROM ifc.v_space_schedule AS s
             LEFT JOIN ifc.spatial_element AS storey ON s.storey_id = storey.object_id
             WHERE s.model_id = :model_id
@@ -1000,11 +1025,19 @@ def space_schedule(
         note = f"{without:,} of {totals.spaces:,} spaces have no area; the total covers the others."
     if totals.duplicates:
         repeat = (
-            f"{totals.duplicates:,} spaces repeat an earlier one with the same number, name, "
-            "storey and area (Revit Rooms and MEP Spaces both exported): total_area_m2 counts "
-            "those rooms twice, total_area_without_duplicates_m2 once."
+            f"{totals.duplicates:,} spaces cover the floor of a larger one again (duplicate_of): "
+            "Revit Rooms and MEP Spaces both exported. total_area_m2 counts that floor twice, "
+            "total_area_without_duplicates_m2 once."
         )
         note = f"{note} {repeat}" if note else repeat
+    if totals.area_plans:
+        plans = (
+            f"{totals.area_plans:,} spaces are Revit Areas (category {REVIT_AREAS}), Revit's area "
+            "plans, not rooms: they are listed, and left out of both totals"
+        )
+        if totals.area_plan_area is not None:
+            plans += f" ({totals.area_plan_area:,.1f} m²)"
+        note = f"{note} {plans}." if note else f"{plans}."
     following = offset + len(spaces)
     return SpaceSchedule(
         model_id=model_id,
@@ -1016,6 +1049,8 @@ def space_schedule(
         total_area_m2=totals.area,
         duplicate_spaces=totals.duplicates,
         total_area_without_duplicates_m2=totals.unique_area,
+        revit_area_spaces=totals.area_plans,
+        revit_area_total_m2=totals.area_plan_area,
         spaces_without_area=without,
         note=note,
     )

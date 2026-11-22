@@ -24,9 +24,11 @@ attributes of the door or window, and are always loaded (1,458 of 1,458 doors of
   model in no project, says so at ingest, and reports `placeholder_project_info`. Or
   give the project with `ifc-sql ingest --project` or `ifc-sql watch --project`
   ([data-model.md](data-model.md#projects-and-versions)).
-- **Export Rooms or MEP Spaces, not both.** A model that has both writes each room twice:
-  file C has 163 spaces for 116 rooms. The tool finds the repeats (`duplicate_space`)
-  and gives a total without them, but the room list still holds both.
+- **Export Rooms or MEP Spaces, not both.** A model that has both writes each room twice,
+  often under another number or name: 75 of file C's 163 spaces repeat another. The tool
+  finds the repeats from their plans (`duplicate_space`) and gives a total without them,
+  but the room list still holds both. Revit's area plans are exported as spaces too
+  (category `Areas`); the tool lists them apart and leaves them out of room totals.
 - **Export each model under the same file name every time**, and into one folder. With
   `ifc-sql watch`, a new export of `House.ifc` is then loaded as the new version of the
   previous `House.ifc`, and `compare_models` shows what changed.

@@ -672,6 +672,7 @@ async def test_space_schedule_lists_the_rooms(server: MCPServer) -> None:
                 "height_m": 2.6,
                 "omniclass_code": "13-51 24 17",
                 "omniclass_title": "Kitchen Space",
+                "category": None,
                 "duplicate_of": None,
             },
             {
@@ -686,6 +687,7 @@ async def test_space_schedule_lists_the_rooms(server: MCPServer) -> None:
                 "height_m": None,
                 "omniclass_code": None,
                 "omniclass_title": None,
+                "category": None,
                 "duplicate_of": None,
             },
         ],
@@ -696,6 +698,8 @@ async def test_space_schedule_lists_the_rooms(server: MCPServer) -> None:
         "total_area_m2": 12.499999999999998,
         "duplicate_spaces": 0,
         "total_area_without_duplicates_m2": 12.499999999999998,
+        "revit_area_spaces": 0,
+        "revit_area_total_m2": None,
         "spaces_without_area": 1,
         "note": "1 of 2 spaces have no area; the total covers the others.",
     }

@@ -438,7 +438,31 @@ spatial_element = Table(
         comment="Storey elevation in metres, rounded to the millimetre so that storeys "
         "compare equal across discipline models. NULL for other spatial elements.",
     ),
+    Column(
+        "revit_category",
+        Text,
+        comment="Spaces: the Revit category the file states (Pset_SpaceCommon or Revit's "
+        "Other set): Rooms, Spaces or Areas. Areas are Revit's area plans, not rooms. NULL "
+        "when the file states none.",
+    ),
+    Column(
+        "footprint_m2",
+        Double,
+        comment="Spaces: area of the plan, the body seen from above, measured at ingest in "
+        "square metres. NULL when the space has no body that gives one.",
+    ),
+    Column(
+        "repeats_id",
+        BigInteger,
+        _within_model("spatial_element.object_id"),
+        index=True,
+        comment="Spaces: the larger space on the same storey whose floor this one covers "
+        "again (its plan lies at least 90 % inside larger ones): a room exported twice, as a "
+        "Revit Room and an MEP Space. NULL when it repeats none.",
+    ),
     CheckConstraint("parent_id <> object_id", name="parent_is_not_self"),
+    CheckConstraint("footprint_m2 > 0", name="footprint_m2_positive"),
+    CheckConstraint("repeats_id <> object_id", name="repeats_is_not_self"),
     comment="Site, building, storey and space details. The hierarchy follows IfcRelAggregates.",
 )
 

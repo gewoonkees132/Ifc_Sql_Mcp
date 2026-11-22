@@ -61,7 +61,7 @@ client, as an MCP client would, and checks every model. On the four Duplex files
 connected to ifc-sql-mcp 0.1.0 over stdio (protocol 2026-07-28): 11 tools, 1 resource, 1 resource template, 1 prompt
 list_models: 4 models
   model 1 ARC Duplex_A_20110907.ifc: elements 268, spaces 21; dq run 1: 0 error, 7,651 warning, 551 info
-  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,014 warning, 1,961 info
+  model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,035 warning, 1,961 info
   model 3 ELE Duplex_Electrical_20121207.ifc: elements 103, spaces 1; dq run 3: 0 error, 90 warning, 3,291 info
   model 4 PLU Duplex_Plumbing_20121113.ifc: elements 498, spaces 1; dq run 4: 0 error, 1,472 warning, 13,223 info
 run_sql: SELECT discipline, count(*) AS elements FROM v_element GROUP BY 1 ORDER BY 1
@@ -189,7 +189,7 @@ left out unless `include_replaced`, and `replaced_left_out` counts those
   "property_values": 63683, "quantities": 643, "materials": 0,
   "data_quality": {"status": "checked", "dq_run_id": 2,
                    "finished_at": "2026-11-17T19:52:09.538699Z",
-                   "errors": 0, "warnings": 30014, "info": 1961}
+                   "errors": 0, "warnings": 30035, "info": 1961}
 }
 ```
 
@@ -398,19 +398,23 @@ the elements that lack a value, so `elements_with_value` is null by material. On
 | `limit` | 1–150, default 150 | page size |
 | `offset` | integer ≥ 0, default 0 | `next_offset` of the previous page |
 
-One page of the spaces, each with number, name, storey, area, perimeter, volume, height
-and its OmniClass Table 13 code and title, lowest storey first. `space_count`,
-`total_area_m2`, `duplicate_spaces`, `total_area_without_duplicates_m2`,
-`spaces_without_area` and `note` cover **every** space of the model, whichever page is
-asked for, so the first page gives the totals of a schedule of any size. A space is
+One page of the spaces, each with number, name, storey, area, perimeter, volume, height,
+its OmniClass Table 13 code and title, and its Revit `category`, lowest storey first.
+`space_count`, `total_area_m2`, `duplicate_spaces`, `total_area_without_duplicates_m2`,
+`revit_area_spaces`, `revit_area_total_m2`, `spaces_without_area` and `note` cover
+**every** space of the model, whichever page is asked for, so the first page gives the totals of a schedule of any size. A space is
 about 225 characters, so a page of 150 is about 34,000; the 500 spaces returned at once
 before were about 112,000, past the budget below (audit finding A11). `next_offset` is
 null on the last page.
 `total_area_m2` is null, not 0, when no space has an area, and `note` then warns of it.
-A Revit model that exports both its Rooms and its MEP Spaces writes each room twice:
-`duplicate_of` marks the repeat (same number, name, storey and floor area), and the total
-without duplicates counts each room once. On the audit's file C, that is 6,124.8 m²
-against 8,090.7 m² (finding A7).
+A Revit model that exports both its Rooms and its MEP Spaces writes each room twice,
+often under another number or name. `duplicate_of` marks the repeat: a space whose plan,
+measured at ingest, lies at least 90 % inside larger spaces on its storey (a space
+without a plan: the same number, name, storey and floor area). The total without
+duplicates counts each room once: 4,721.4 m² against 8,090.7 m² on the audit's file C
+(findings A7 and R1). Revit's area plans are spaces too, of `category` `Areas`: they are
+listed, counted in `revit_area_spaces`, and left out of both totals. On the audit's file
+E they are 25 spaces of 22,905.9 m², beside 7,438.8 m² of rooms.
 
 ```jsonc
 // space_schedule {"model_id": 1}
@@ -425,7 +429,8 @@ against 8,090.7 m² (finding A7).
   ],
   "space_count": 21, "offset": 0, "limit": 150, "next_offset": null,
   "total_area_m2": 422.0465663999985, "duplicate_spaces": 0,
-  "total_area_without_duplicates_m2": 422.0465663999985, "spaces_without_area": 0, "note": null
+  "total_area_without_duplicates_m2": 422.0465663999985,
+  "revit_area_spaces": 0, "revit_area_total_m2": null, "spaces_without_area": 0, "note": null
 }
 ```
 
@@ -514,8 +519,8 @@ findings is the view `v_dq_finding`, through `run_sql`.
 {
   "model_id": 2, "status": "checked", "dq_run_id": 2,
   "finished_at": "2026-11-17T19:52:09.538699Z",
-  "findings": {"error": 0, "warning": 30014, "info": 1961},
-  "findings_by_scope": {"model_content": {"error": 0, "warning": 30014, "info": 1961},
+  "findings": {"error": 0, "warning": 30035, "info": 1961},
+  "findings_by_scope": {"model_content": {"error": 0, "warning": 30035, "info": 1961},
                         "loader_coverage": {"error": 0, "warning": 0, "info": 0}},
   "rules": [
     {"rule_id": "value_is_property_name", "severity": "warning", "dimension": "validity",
@@ -526,6 +531,7 @@ findings is the view `v_dq_finding`, through `run_sql`.
                   "ifc_class": "IfcFlowSegment", "object_name": "Pipe Types:Waste:582956",
                   "message": "PSet_Revit_Other.AssetIdentifier = 'AssetIdentifier', the parameter's own name: a placeholder, not a value"}]},
     {"rule_id": "quantity_not_a_measure", …, "findings": 44, …},
+    {"rule_id": "duplicate_space", …, "findings": 21, …},
     {"rule_id": "conflicting_property", …, "findings": 2, …},
     {"rule_id": "placeholder_project_info", …, "findings": 1, …},
     {"rule_id": "value_is_empty", "severity": "info", …, "findings": 1961, …}

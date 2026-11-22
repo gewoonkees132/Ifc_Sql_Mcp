@@ -25,7 +25,6 @@ def _open(finding: str, issue: int) -> pytest.MarkDecorator:
     return pytest.mark.xfail(strict=True, reason=f"re-check finding {finding}, issue #{issue}")
 
 
-@_open("R1", 23)
 def test_r1_each_room_is_counted_once(modern: Modern) -> None:
     with modern.engine.connect() as connection:
         c, e, mep, arc = (

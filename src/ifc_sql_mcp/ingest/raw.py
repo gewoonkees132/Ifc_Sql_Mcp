@@ -10,6 +10,7 @@ way on every run.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from ifc_sql_mcp.ingest.issues import Issue
 
@@ -217,6 +218,19 @@ class RawShape:
 
 
 @dataclass(frozen=True, slots=True)
+class RawFootprint:
+    """A space's plan: its body seen from above, in world coordinates (``footprints.py``).
+
+    Attributes:
+        global_id: The space.
+        plan: A shapely (multi)polygon, in metres.
+    """
+
+    global_id: str
+    plan: Any
+
+
+@dataclass(frozen=True, slots=True)
 class RawModel:
     """Everything extracted from one IFC file.
 
@@ -229,6 +243,7 @@ class RawModel:
         issues: Problems found while reading (e.g. unsupported property kinds).
         shapes: Shapes measured on request (``geometry.measure_shapes``); empty otherwise.
         geometry_seconds: How long measuring them took; ``None`` when not asked for.
+        footprints: The plan of every space with a body (``geometry.measure_space_plans``).
     """
 
     file: RawFile
@@ -239,3 +254,4 @@ class RawModel:
     issues: tuple[Issue, ...]
     shapes: tuple[RawShape, ...] = ()
     geometry_seconds: float | None = None
+    footprints: tuple[RawFootprint, ...] = ()

@@ -20,6 +20,10 @@ is decided by ``quantities.geometry_quantities``, and every geometry quantity ra
 the result agrees with them: file A's walls are 964.6 m² measured against 946.0 m² of
 ``NetSideArea`` (which deducts the openings), and file B's 6,095 walls are 103,057.7 m².
 
+It also gives every space its plan, in world coordinates (:func:`measure_space_plans`).
+That runs on every ingest, not only with ``--geometry``: comparing plans is how rooms
+exported twice are found (``footprints.py``, re-check finding R1), and spaces are few.
+
 This module and ``extract`` are the only ones that touch IfcOpenShell.
 """
 
@@ -33,8 +37,9 @@ import ifcopenshell
 import ifcopenshell.geom
 import ifcopenshell.util.shape
 
+from ifc_sql_mcp.ingest.footprints import plan_from_triangles
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
-from ifc_sql_mcp.ingest.raw import RawShape
+from ifc_sql_mcp.ingest.raw import RawFootprint, RawShape
 
 type Entity = Any
 
@@ -91,12 +96,45 @@ def measure_shapes(
     return tuple(shapes), issues, time.perf_counter() - started
 
 
+def measure_space_plans(
+    model: Entity, threads: int | None = None
+) -> tuple[tuple[RawFootprint, ...], list[Issue], float]:
+    """Give every space with a body its plan: the body seen from above, in world coordinates.
+
+    Args:
+        model: The open IfcOpenShell file.
+        threads: Worker threads; by default one per CPU.
+
+    Returns:
+        The plans in file order, the spaces whose body gave none (``geometry_not_measured``:
+        a copy of such a space is then found by its number, name, storey and area only), and
+        the seconds it took.
+    """
+    started = time.perf_counter()
+    targets = {
+        entity.id(): entity
+        for entity in model.by_type("IfcSpace")
+        if entity.Representation is not None
+    }
+    plans: dict[int, RawFootprint] = {}
+    if targets:
+        for shape, entity in _triangulated(model, targets, threads, world=True):
+            plan = plan_from_triangles(shape.geometry.verts, shape.geometry.faces)
+            if plan is not None:
+                plans[entity.id()] = RawFootprint(global_id=str(entity.GlobalId), plan=plan)
+    issues = [
+        _plan_not_measured(targets[entity_id]) for entity_id in sorted(set(targets) - set(plans))
+    ]
+    ordered = tuple(plans[entity_id] for entity_id in sorted(plans))
+    return ordered, issues, time.perf_counter() - started
+
+
 def _triangulated(
-    model: Entity, targets: dict[int, Entity], threads: int | None
+    model: Entity, targets: dict[int, Entity], threads: int | None, *, world: bool = False
 ) -> Iterable[tuple[Any, Entity]]:
     """Each target IfcOpenShell triangulates, with its shape; the others are left out."""
     settings = ifcopenshell.geom.settings()
-    settings.set("use-world-coords", False)
+    settings.set("use-world-coords", world)
     iterator = ifcopenshell.geom.iterator(
         settings, model, threads or os.cpu_count() or 1, include=list(targets.values())
     )
@@ -127,4 +165,13 @@ def _measure(entity: Entity, geometry: Any) -> RawShape:
 def _not_measured(entity: Entity, what: str) -> Issue:
     name = entity.Name if entity.Name is not None else "(no name)"
     message = f"{entity.is_a()} {name!r} has a body that {what}; no geometry quantity"
+    return Issue(IssueCode.GEOMETRY_NOT_MEASURED, str(entity.GlobalId), message)
+
+
+def _plan_not_measured(entity: Entity) -> Issue:
+    name = entity.Name if entity.Name is not None else "(no name)"
+    message = (
+        f"{entity.is_a()} {name!r} has a body that gives no plan; a copy of it is found by "
+        "its number, name, storey and area only"
+    )
     return Issue(IssueCode.GEOMETRY_NOT_MEASURED, str(entity.GlobalId), message)

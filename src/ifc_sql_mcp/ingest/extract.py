@@ -51,7 +51,7 @@ import ifcopenshell.util.classification
 import ifcopenshell.util.element
 import ifcopenshell.util.unit
 
-from ifc_sql_mcp.ingest.geometry import measure_shapes
+from ifc_sql_mcp.ingest.geometry import measure_shapes, measure_space_plans
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
 from ifc_sql_mcp.ingest.raw import (
     RawElement,
@@ -156,6 +156,9 @@ def read_model(path: Path, *, geometry: bool = False) -> RawModel:
     except ifcopenshell.Error as exc:
         raise ExtractError(f"{path.name}: not a readable IFC file ({exc})") from exc
     raw = _Extractor(model, path.name, sha256, size_bytes).run()
+    footprints, plan_issues, plan_seconds = measure_space_plans(model)
+    logger.debug("measured space plans", extra={"plans": len(footprints), "seconds": plan_seconds})
+    raw = dataclasses.replace(raw, footprints=footprints, issues=raw.issues + tuple(plan_issues))
     if not geometry:
         return raw
     shapes, issues, seconds = measure_shapes(model)

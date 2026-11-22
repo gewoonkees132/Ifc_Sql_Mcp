@@ -37,6 +37,8 @@ EXPECTED_FINDINGS = {
         "value_is_empty": 1_961,
         "conflicting_property": 2,
         "quantity_not_a_measure": 44,
+        # Each of the 21 rooms has an "MEP Space" over it (re-check finding R1).
+        "duplicate_space": 21,
         "placeholder_project_info": 1,
     },
     "ele": {
@@ -61,7 +63,7 @@ EXPECTED_FINDINGS = {
 }
 EXPECTED_SEVERITIES = {
     "arc": {"error": 0, "warning": 7_651, "info": 551},
-    "mep": {"error": 0, "warning": 30_014, "info": 1_961},
+    "mep": {"error": 0, "warning": 30_035, "info": 1_961},
     "ele": {"error": 0, "warning": 90, "info": 3_291},
     "plu": {"error": 0, "warning": 1_472, "info": 13_223},
 }

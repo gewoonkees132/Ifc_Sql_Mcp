@@ -207,6 +207,9 @@ def _spatial_element_rows(records: ModelRecords, object_ids: Ids) -> list[Row]:
             "parent_id": _optional(object_ids, s.parent_global_id),
             "long_name": s.long_name,
             "elevation_m": s.elevation_m,
+            "revit_category": s.revit_category,
+            "footprint_m2": s.footprint_m2,
+            "repeats_id": _optional(object_ids, s.repeats_global_id),
         }
         for s in records.spatial_elements
     ]

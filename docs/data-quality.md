@@ -37,7 +37,7 @@ be compared over time ([Reading the findings](#reading-the-findings)).
 
 | Outcome | Run | Exit | Output |
 |---|---|---|---|
-| Checked | `succeeded` | 0 | `checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,014 warning, 1,961 info findings (model content 0 / 30,014 / 1,961, loader coverage 0 / 0 / 0)` |
+| Checked | `succeeded` | 0 | `checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,035 warning, 1,961 info findings (model content 0 / 30,035 / 1,961, loader coverage 0 / 0 / 0)` |
 | A rule failed | `failed` | 1 | `dq of model 1 failed (dq run 1): RuleError: rule fails_for_model_1 failed: DivisionByZero: division by zero`; the other models are still checked |
 | No model loaded | none | 0 | `no models are loaded; nothing to check` |
 | Unknown model id | none | 2 | Usage error: `Invalid value for MODEL_ID: no model with id 7` |
@@ -162,7 +162,7 @@ The sixteen SQL rules check stored values:
 | `wall_area_inconsistent` | warning | consistency | A wall whose `area_m2` is more than 5 % above `length_m` × `height_m`. |
 | `slab_volume_inconsistent` | warning | consistency | A slab whose `volume_m3` is not between 0.75 and 1.1 × `area_m2` × `width_m` (its thickness). Below 0.91 or above 1.0, the audit's files have only defects: a 150 mm foundation slab of `Width` 25.4 m, pile caps of 600 × 600 × 900 mm with a 0.6 m `Width` and a third of their volume. |
 | `space_volume_inconsistent` | warning | consistency | A space whose `volume_m3` is more than 10 % above `area_m2` × `height_m`. Only above: a room's volume follows its ceiling, so 16 of the Duplex's 21 rooms are 7–26 % below their area × unbounded height, correctly. |
-| `duplicate_space` | warning | uniqueness | A space with the same number, name, storey and floor area as an earlier one: a Revit model that exports both Rooms and MEP Spaces writes each room twice (47 of the 163 spaces of the audit's file C). `v_space_schedule.duplicate_of` marks the repeat. Export rooms or spaces, not both. |
+| `duplicate_space` | warning | uniqueness | A space that covers the floor of another again: its plan lies at least 90 % inside larger spaces on its storey, whatever its number or name (without a plan: the same number, name, storey and floor area). A Revit model that exports both Rooms and MEP Spaces writes each room twice: 75 of the 163 spaces of the audit's file C, and the 21 "MEP Space" copies of the Duplex MEP model (re-check finding R1). `v_space_schedule.duplicate_of` marks the repeat. Export rooms or spaces, not both. |
 | `space_perimeter_implausible` | warning | validity | A space whose `perimeter_m` is shorter than a circle's of the same area, 2√(π · `area_m2`). |
 | `model_without_quantities` | warning | completeness | One finding for a model whose elements have no quantity from IFC base quantities or Revit parameters (a door's overall size alone does not count): the file was exported without "Export base quantities". |
 | `model_without_spaces` | warning | completeness | One finding for an architectural model without a single space: room schedules and areas by room are empty. |
@@ -293,7 +293,7 @@ NULL, not 0, for a model that was never checked. After the `make dq-samples` abo
  model_id | discipline | dq_run_id | errors | warnings | info
 ----------+------------+-----------+--------+----------+-------
         1 | ARC        |         1 |      0 |     7651 |   551
-        2 | MEP        |         2 |      0 |    30014 |  1961
+        2 | MEP        |         2 |      0 |    30035 |  1961
         3 | ELE        |         3 |      0 |       90 |  3291
         4 | PLU        |         4 |      0 |     1472 | 13223
 ```

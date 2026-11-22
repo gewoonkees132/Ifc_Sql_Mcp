@@ -219,22 +219,28 @@ rules:
 
   - rule_id: duplicate_space
     description: >-
-      A space repeats an earlier one: the same number, name, storey and floor area. A
-      Revit model that holds both Rooms and MEP Spaces exports each room twice, and
-      summing the schedule counts its area twice. v_space_schedule.duplicate_of points at the space it repeats;
-      leave those rows out of totals, or export rooms or spaces, not both.
+      A space covers the floor of another again. Its plan lies at least 90 % inside larger
+      spaces on its storey, whatever its number or name; a space without a plan repeats
+      one with the same number, name, storey and floor area. A Revit model that holds both
+      Rooms and MEP Spaces exports each room twice, and summing the schedule counts its
+      area twice. v_space_schedule.duplicate_of points at the space it repeats; leave those
+      rows out of totals, or export rooms or spaces, not both.
     severity: warning
     dimension: uniqueness
     scope: model_content
     sql: |
       SELECT s.object_id,
-             format('space %s %L on %s repeats space %s (object %s): the same number, name, '
-                    'storey and floor area, a room exported twice',
+             format('space %s %L on %s repeats space %s %L (object %s): %s, a room '
+                    'exported twice',
                     coalesce(s.number, '(unnumbered)'), s.name,
-                    coalesce(s.storey_name, 'no storey'), first.global_id, s.duplicate_of)
+                    coalesce(s.storey_name, 'no storey'), coalesce(first.name, '(unnumbered)'),
+                    first_space.long_name, s.duplicate_of,
+                    CASE WHEN s.footprint_m2 IS NOT NULL THEN 'its plan lies inside that one'
+                         ELSE 'the same number, name, storey and floor area' END)
                  AS message
       FROM ifc.v_space_schedule AS s
       JOIN ifc.object AS first ON first.object_id = s.duplicate_of
+      JOIN ifc.spatial_element AS first_space ON first_space.object_id = s.duplicate_of
       WHERE s.model_id = :model_id
 
   # ---------------------------------------------------------- what the model lacks (A9)
