@@ -4,6 +4,11 @@
 **Files, harness and questions:** the [audit's](2026-11-modern-revit-exports.md), unchanged ·
 **Evidence:** [`evidence/recheck/`](evidence/recheck/) · **Tracking issue:** [#22](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/22)
 
+> **Status, after round 2:** R1–R4 and A18.4 are done. Each was proven on the real files
+> and closed with its figures; the record is in the implementation log's
+> [Round 2](2026-11-implementation.md#round-2-the-re-check-and-what-it-found). This page
+> is left as the re-check found things on `513fe97`.
+
 The [implementation log](2026-11-implementation.md) proves each of A1–A18 against its own
 acceptance figure. This re-check asks a broader question: **with all eighteen fixes in,
 does the architect's workflow of the audit's [Part B](2026-11-modern-revit-exports.md#part-b--the-example-workflow-what-works-and-what-does-not)

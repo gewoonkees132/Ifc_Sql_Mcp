@@ -6,7 +6,9 @@ finding, the GitHub issue, the commits, the decision taken where the audit left 
 and the figure measured on the audit's own files before and after the fix.
 
 - **Status:** all 18 findings done; one sub-item, A18's embedded database, deferred
-  ([After](#after-every-finding-done)).
+  ([After](#after-every-finding-done)). **Round 2** re-checked the workflow on the fixed
+  tool, fixed the four findings it made (R1–R4) and did the deferred item (A18.4):
+  [Round 2](#round-2-the-re-check-and-what-it-found).
 - **Tracking issue:** [#2](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/2), with one
   sub-issue per finding (A1 → #3 … A18 → #20), each closed with its before and after
   figures and its CI run.
@@ -647,3 +649,176 @@ as the issue proposed.
 | Docs on which Revit export options matter | none | **one page**, with the audit's figures per option |
 | Windows set-up without `make` | not documented | **one page** |
 
+
+---
+
+## Round 2: the re-check, and what it found
+
+The eighteen fixes were each proven against their own figure. Round 2 asked whether the
+architect's workflow as a whole now holds. It repeated the audit's Part B on the fixed
+code and fixed what that turned up, with the same method as round 1. It also did A18's
+deferred item.
+
+- **Status:** R1–R4 and A18.4 done. Two follow-ups are recorded as open issues
+  ([Next](#next)).
+- **Tracking issue:** [#22](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/22), with
+  one sub-issue per finding (R1 → #23, R2 → #24, R3 → #25, R4 → #26, A18.4 → #27). Each
+  is closed with its before and after figures and its CI run.
+- **Branch:** `ccr-9b6ac756-08mrxw`, which continues `ccr-010fe6a4-5gswo3` from `513fe97`,
+  the end of round 1.
+- **The re-check:** [2026-11-recheck.md](2026-11-recheck.md), with its evidence in
+  [evidence/recheck/](evidence/recheck/).
+
+### How round 2 was proven
+
+1. **Baseline first.** On `513fe97` the gate passed (1,057 tests at 100 % branch
+   coverage), and so did the 126 sample and acceptance tests. `harness/figures.py` gave
+   every A1–A18 figure as round 1 recorded it.
+2. **The re-check** loaded the audit's files and ran its MCP driver and its six Claude
+   questions. It compared the answers with new ground truth from IfcOpenShell and
+   shapely alone (`harness/space_truth.py`, `harness/quantity_sets.py`).
+   - The audit's scorecard: every ❌ is gone.
+   - The sessions: 72 → 29 tool calls, 20 → 2 failed, $1.42 → $1.01.
+   - Four new findings, R1–R4, and an erratum to the audit.
+3. **Acceptance tests before any fix.** `tests/modern/test_recheck_acceptance.py` held one
+   strict `xfail` per finding. Each failed on its "before" figure. Each fix removed its
+   marker in the same commit, and none is left.
+4. **Figures measured twice, the same way.** `harness/figures.py` gained the R rows and
+   measured two databases loaded as the audit's README says:
+   - one with `513fe97`'s code ([before](evidence/recheck/figures_round2_before.md));
+   - one with this round's ([after](evidence/recheck/figures_round2_after.md)).
+
+### Before → after
+
+Measured with `harness/figures.py`:
+
+| # | Figure | Before (`513fe97`) | After | Ground truth |
+|---|---|---:|---:|---:|
+| R1 | C: rooms, each once, m² | 6,124.8 (47 copies) | **4,721.4 (75 copies)** | 4,721.4 |
+| R1 | E: room total, m² | 30,344.7, Revit Areas counted as rooms | **7,438.8; 25 Revit Areas (22,905.9) apart** | 7,438.8 |
+| R1 | Duplex MEP: rooms, each once, m² | 797.8 (0 copies) | **386.3 (21 copies)** | 386.3 |
+| R2 | A: ceilings with an area | 0 of 2 | **2 of 2 (154.3 m²)** | 154.3 |
+| R2 | C: ceilings with an area | 0 of 43 | **43 of 43 (1,755.4 m²)** | 1,755.4 |
+| R3 | C: `unsupported_property` findings (errors) | 724 | **0** | 0 |
+| R3 | C: duct segments with `Pset_DuctSegmentTypeCommon.Shape` | 0 | **724** | 724 |
+| R4 | B: takeoff warning / no-quantities finding name `ingest --geometry` | no / no | **yes / yes** | yes |
+| A18.4 | Windows set-up without Docker, run by CI | not possible | **the Windows job, on every push** | — |
+
+Of the A1–A18 figures, only A7's count changes: 47 → 75, since the plans find the copies
+A7's key missed. Every other one is as round 1 left it.
+
+### Ledger
+
+| # | What | Issue | Commit | CI | Proof |
+|---|---|---|---|---|---|
+| — | The re-check, its evidence and four findings | [#22](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/22) | [`688a519`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/688a519) | [run 37](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45008741802) | `docs/audit/2026-11-recheck.md` |
+| — | R3's evidence corrected: the 724 values are all `Undefined` | [#25](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/25) | [`49083b5`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/49083b5) | (superseded by run 38) | the issue and the re-check say so |
+| — | Acceptance tests, before any fix | [#22](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/22) | [`5f5ed09`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/5f5ed09) | [run 38](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45009213840) | four strict `xfail`s, each failing on its before figure |
+| R1 | Room totals count the same floor two to four times | [#23](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/23) | [`3dac515`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/3dac515) | [run 39](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45010862616) | `test_r1_each_room_is_counted_once` |
+| R2 | Ceilings' IFC base quantities are not read | [#24](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/24) | [`c028e4f`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/c028e4f) | [run 40](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45011310518) | `test_r2_ceilings_have_their_areas` |
+| R3 | Enumerated property values are not read | [#25](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/25) | [`27d348b`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/27d348b) | [run 41](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45011722261) | `test_r3_enumerated_property_values_are_read` |
+| R4 | The no-quantities warning does not mention `--geometry` | [#26](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/26) | [`0ba8718`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/0ba8718) | [run 42](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45012493584) | `test_r4_the_no_quantities_warning_names_ingest_geometry`; `test_geometry_on_a_file_loaded_without_it_measures_the_same_model` |
+| A18.4 | The embedded database, so one user needs no Docker | [#27](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/27) | [`c4eed1c`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/c4eed1c), fixes from CI [`15abb8e`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/15abb8e), [`d2c134e`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/d2c134e) and [`8186b1e`](https://github.com/gewoonkees132/Ifc_Sql_Mcp/commit/8186b1e) | [run 46](https://github.com/gewoonkees132/Ifc_Sql_Mcp/actions/runs/45013742843) | the Windows job ([its output](evidence/recheck/windows_quickstart.txt)); `tests/integration/test_embedded.py` |
+
+### Per finding
+
+#### R1: room totals count the same floor two to four times
+
+- **Decision: compare plans, not names.**
+  - Every space gets its plan at every ingest: its body seen from above, in world
+    coordinates (`geometry.measure_space_plans`).
+  - The plans are compared storey by storey, largest first (`ingest/footprints.py`). A
+    space whose plan lies at least 90 % inside those before it repeats them.
+  - The audit's files gave the threshold: overlapping rooms always lie 90 % or more
+    inside one another, and never overlap only partly.
+  - A7's key stays the fallback for a space without a plan.
+- **Decision: Revit Areas are not rooms.**
+  - Revit writes its area plans as spaces of `Category` `Areas`. They are left out of
+    the comparison and out of `space_schedule`'s totals, and listed with their own count
+    and total.
+  - The category is read from `Pset_SpaceCommon`, else Revit's `Other` or
+    `PSet_Revit_Other` set.
+- **Cost:** 1.2 s on C's 163 spaces and 0.6 s on E's 307, at every ingest. It is the only
+  geometry a plain ingest computes.
+- **Recorded in** migration 0019 (`spatial_element.revit_category`, `footprint_m2`,
+  `repeats_id`), `v_space_schedule` v3 and ADR 11.
+  - The pinned Duplex MEP figures gain its 21 `duplicate_space` warnings (30,014 → 30,035).
+  - A7's acceptance test now checks that its 47 same-key copies are all still marked.
+
+#### R2: ceilings' IFC base quantities are not read
+
+- `Qto_CoveringBaseQuantities` is mapped: `NetArea`, then `GrossArea`, and `Width` as
+  the thickness.
+- IFC2X3 `BaseQuantities` on a covering is read as that set, with Revit 2019's
+  `GrossCeilingArea` as a further fallback; on all 259 of E's coverings it equals Revit's
+  own `Area`.
+- Both IFC4 files' `NetArea` equal the ceilings' measured footprints to the square
+  centimetre.
+
+#### R3: enumerated property values are not read
+
+- **Corrected before the fix.** Writing the acceptance test showed that every one of C's
+  724 values is the label `Undefined`, so the file lost nothing of value. The re-check
+  had said the shapes were lost. The issue and the re-check were corrected in
+  `49083b5`, and the finding stands for what it is: 724 of C's errors were the loader's.
+- An `IfcPropertyEnumeratedValue` is read as the value it chose, with its type and the
+  enumeration's unit. A multiple choice becomes one text, joined with `", "`.
+
+#### R4: the no-quantities warning does not mention `--geometry`
+
+- **Scope widened while implementing.** Naming `ingest --geometry` was not enough. The
+  three texts are about a model that is already loaded, and an ingest of the same bytes
+  was skipped. The advice would have failed for exactly the file it is about.
+- **Decision:** `ingest --geometry` on a file loaded without it measures it in place
+  (ADR 12, superseding ADR 10's "delete and load again").
+  - It adds the geometry quantities, and any new `geometry_not_measured` issue, to the
+    same model, which keeps its id, versions and data quality runs.
+  - The model is measured once, under a row lock.
+
+#### A18.4: the embedded database
+
+- **Decision:** embed PostgreSQL itself, not another engine (ADR 13).
+  - `pixeltable-pgserver` (the `embedded` extra) ships PostgreSQL 16.15 for Linux, macOS
+    and Windows.
+  - `IFC_SQL_DATA_DIR` replaces `IFC_SQL_DATABASE_URL`. The commands that need the
+    database start it, or attach to it, and the last one to exit stops it.
+  - Every view, migration and the read-only role are unchanged.
+- **Proven on Windows.** A new CI job runs `docs/windows.md`'s steps on `windows-2025`:
+  migrate, ingest, dq, `watch --once`, the MCP smoke test over stdio, and the embedded
+  database's tests. That ticks the box round 1's test plan left open. In run 46 the
+  embedded server ran under `%LOCALAPPDATA%` and served the MCP client on
+  `127.0.0.1:51038`. The MEP model loaded by `watch` showed R1's 21 copies there too
+  ([output](evidence/recheck/windows_quickstart.txt)).
+- **What CI found on the way:**
+  - The job's first form was rejected: the `runner` context is not available in a job's
+    `env` (`15abb8e`).
+  - Then initdb could not set the permissions of a folder in the runner's workspace,
+    because PostgreSQL gives up administrator rights on Windows (`d2c134e`).
+  - The page already put the folder under `%LOCALAPPDATA%`. CI now does the same, and
+    the page says why.
+  - With that, every step of the page passed (run 45). Only the embedded database's own
+    tests failed, for the same reason: they kept the folder in pytest's temporary
+    folders. On Windows they now use one under `%LOCALAPPDATA%` (`8186b1e`).
+- **Known limit, recorded:** the embedded database takes no passwords. On Windows any
+  local user can connect to its port. SECURITY.md says so, and
+  [#28](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/28) tracks the hardening.
+
+### What round 2 added
+
+- **Schema:** migration 0019 and `v_space_schedule` v3.
+- **ADRs 11, 12 and 13.**
+- **The `embedded` extra and `IFC_SQL_DATA_DIR`.**
+- **`space_schedule`'s** `category`, `revit_area_spaces` and `revit_area_total_m2`.
+- **`ingest --geometry` in place.**
+- **CI:** a Windows job.
+- **Tests:** 1,087 unit and integration tests at 100 % branch coverage (1,057 before).
+  130 sample and acceptance tests (126 before), with no `xfail` left.
+- **Harness:** `space_truth.py`, `quantity_sets.py`, and the R rows of `figures.py`.
+
+### Next
+
+Two items left for later, each recorded as an open issue:
+- [#28](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/28): passwords and a private
+  socket for the embedded database.
+- [#29](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/29): a buildingSMART IDS file
+  as the requirements a model is checked against (A9's "left for later").

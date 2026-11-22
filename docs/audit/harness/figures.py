@@ -9,7 +9,9 @@ tool functions where the figure is about a tool's answer. A figure that the vers
 measured cannot produce (a column or tool it does not have yet) prints as "n/a".
 
 The same script measured the code before the fixes and after them, so the two tables in
-docs/audit/2026-11-implementation.md compare like with like.
+docs/audit/2026-11-implementation.md compare like with like. The R rows are the
+re-check's findings (docs/audit/2026-11-recheck.md), measured the same way for round 2;
+they need the Duplex MEP model too, which README.md loads as model 2.
 """
 
 # ruff: noqa: T201
@@ -29,6 +31,7 @@ FILES = {
     "c": "Ifc4_Revit_MEP.ifc",
     "d": "Ifc4_Revit_ARC_FireRatingAdded.ifc",
     "e": "ARK_NUS_skolebygg.ifc",
+    "duplex_mep": "Duplex_MEP_20110907.ifc",
 }
 CV003 = "Basic Wall:1AR_MUR_CV003 _Interno_Esterno Poroton Ventilata"
 
@@ -119,6 +122,54 @@ def fire_ratings_added(c: Connection, m: dict[str, int]) -> Any:
     return f"{changes['Pset_WallCommon']} / {changes['Pset_CurtainWallCommon']}"
 
 
+def schedule_of(key: str) -> Callable[[Connection, dict[str, int]], Any]:
+    """space_schedule's totals for one file's model, all pages together."""
+    return lambda c, m: tools.space_schedule(c, m[key])
+
+
+def rooms_once(key: str) -> Measure:
+    """space_schedule's total with each room once, and how many spaces repeat another (R1)."""
+
+    def measure(c: Connection, m: dict[str, int]) -> Any:
+        schedule = schedule_of(key)(c, m)
+        total = schedule.total_area_without_duplicates_m2
+        return f"{total:,.1f} ({schedule.duplicate_spaces} copies)"
+
+    return measure
+
+
+def room_total(c: Connection, m: dict[str, int]) -> Any:
+    """File E's room total, and its Revit Areas when the tool tells them apart (R1)."""
+    schedule = schedule_of("e")(c, m)
+    total = f"{schedule.total_area_m2:,.1f}"
+    areas = getattr(schedule, "revit_area_spaces", None)  # absent before R1
+    if areas is None:
+        return f"{total}; Revit Areas not told apart"
+    return f"{total}; {areas} Revit Areas apart ({schedule.revit_area_total_m2:,.1f})"
+
+
+COVERINGS = """
+SELECT count(area_m2) || ' of ' || count(*) || ' (' || coalesce(to_char(sum(area_m2),
+       'FM999,990.0'), '0') || ' m²)'
+FROM ifc.v_element WHERE model_id = :m AND ifc_class_base = 'IfcCovering'
+"""
+
+
+def names_geometry(c: Connection, m: dict[str, int]) -> Any:
+    """Whether B's takeoff warning and its no-quantities finding name ingest --geometry (R4)."""
+    note = tools.quantity_takeoff(c, m["b"], "revit_type", "area_m2").note or ""
+    finding = c.execute(
+        text(
+            "SELECT message FROM ifc.v_dq_finding WHERE model_id = :m "
+            "AND rule_id = 'model_without_quantities'"
+        ),
+        {"m": m["b"]},
+    ).scalar()
+    return " / ".join(
+        "yes" if "ingest --geometry" in text_ else "no" for text_ in (note, finding or "")
+    )
+
+
 WITH_WIDTH = """
 SELECT count(DISTINCT q.object_id) FROM ifc.quantity AS q JOIN ifc.object AS o USING (object_id)
 WHERE o.model_id = :m AND o.ifc_class_base = :class AND q.name = 'width_m'
@@ -196,7 +247,12 @@ FIGURES: list[tuple[str, str, str, Measure]] = [
             "b",
         ),
     ),
-    ("A7", "C: duplicate_space findings", "47", findings("duplicate_space", "c")),
+    (
+        "A7",
+        "C: duplicate_space findings",
+        "47 by A7's key; 75 by the plans (R1)",
+        findings("duplicate_space", "c"),
+    ),
     ("A8", "B: area takeoff by Revit type, total", "null", takeoff_total),
     ("A9", "B: findings error / warning / info", "(model gaps, not loader gaps)", severities),
     ("A9", "B: the same, by scope", "(model gaps apart from loader gaps)", scopes),
@@ -250,6 +306,39 @@ FIGURES: list[tuple[str, str, str, Measure]] = [
             r"WHERE o.model_id = :m AND e.revit_type ~ '[\x01-\x1f]'",
             "b",
         ),
+    ),
+    ("R1", "C: rooms, each once, m² (space_schedule)", "4,721.4 (75 copies)", rooms_once("c")),
+    (
+        "R1",
+        "E: room total, m² (space_schedule)",
+        "7,438.8; 25 Revit Areas apart (22,905.9)",
+        room_total,
+    ),
+    (
+        "R1",
+        "Duplex MEP: rooms, each once, m²",
+        "386.3 (21 copies)",
+        rooms_once("duplex_mep"),
+    ),
+    ("R2", "A: ceilings with an area", "2 of 2 (154.3 m²)", sql(COVERINGS, "a")),
+    ("R2", "C: ceilings with an area", "43 of 43 (1,755.4 m²)", sql(COVERINGS, "c")),
+    ("R3", "C: unsupported_property findings (errors)", "0", findings("unsupported_property", "c")),
+    (
+        "R3",
+        "C: duct segments with Pset_DuctSegmentTypeCommon.Shape",
+        "724",
+        sql(
+            "SELECT count(DISTINCT o.object_id) FROM ifc.object AS o JOIN ifc.property AS p "
+            "USING (object_id) WHERE o.model_id = :m AND o.ifc_class = 'IfcDuctSegment' "
+            "AND p.pset_name = 'Pset_DuctSegmentTypeCommon' AND p.prop_name = 'Shape'",
+            "c",
+        ),
+    ),
+    (
+        "R4",
+        "B: takeoff warning / no-quantities finding name ingest --geometry",
+        "yes / yes",
+        names_geometry,
     ),
 ]
 

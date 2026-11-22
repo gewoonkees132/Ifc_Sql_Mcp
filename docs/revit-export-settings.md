@@ -10,7 +10,7 @@ Revit 2019 to 2022 exports ([the audit](audit/2026-11-modern-revit-exports.md), 
 | In Revit's IFC export setup | What the tool reads from it | Without it |
 |---|---|---|
 | **Export base quantities** (Property Sets) | The IFC base quantities (`Qto_*BaseQuantities`, or `BaseQuantities` in IFC2X3): wall, slab and room areas, lengths, heights, thicknesses and volumes. They rank first ([ADR 8](adr/0008-ifc-base-quantities.md)). File A: 946.0 m² of walls, 47 of 47. File C: an area for 163 of 163 spaces. | No areas or volumes, unless Revit property sets are exported or the file is measured with `--geometry` (below). |
-| **Export Revit property sets** (Property Sets) | Revit's own parameters, among them `Dimensions` (Area, Volume, Length). They are a second quantity source. File E: 4,836 areas, including all 1,057 walls and all 307 rooms (30,344.7 m²). | Revit's parameters are not in the file. |
+| **Export Revit property sets** (Property Sets) | Revit's own parameters, among them `Dimensions` (Area, Volume, Length). They are a second quantity source. File E: 4,836 areas, including all 1,057 walls and its 282 rooms (7,438.8 m²; its other 25 spaces are Revit Areas, which the tool keeps apart). | Revit's parameters are not in the file. |
 | **Export IFC common property sets** (Property Sets) | `Pset_WallCommon`, `Pset_DoorCommon` and the rest: `FireRating`, `IsExternal`, `LoadBearing`, `ThermalTransmittance`. The `missing_fire_rating` rule and the `schedule` tool read them. | No fire ratings, and nothing to tell external from internal walls. |
 | **IFC version**: IFC2X3 Coordination View 2.0, or IFC4 Reference View | Both are read and tested (file B is IFC2X3, file A IFC4). | — |
 

@@ -184,15 +184,18 @@ DELETE statement`.
 
 ## Quality
 
-- **Tests**: 869 unit and integration tests, plus 102 on the four real files
-  (`make test-samples`), with 100 % branch coverage. Integration tests run against real
+- **Tests**: 1,087 unit and integration tests at 100 % branch coverage, plus 130 on the
+  real files: the four Duplex models (`make test-samples`) and the audit's five Revit
+  2019–2022 exports, whose acceptance tests pin every audit and re-check finding
+  (`make test-modern`, [docs/audit/](docs/audit/2026-11-implementation.md)). Integration tests run against real
   PostgreSQL in throwaway databases they create and migrate, never against the development
   database, and nothing in the safety layers is mocked. Races (two ingests of one file,
   two catalogue syncs at once) are staged with real blocked transactions.
 - **Checks**: ruff (with the bandit rules and Google docstrings), mypy `--strict`, and
   pytest with warnings as errors, run by `make check` and by
-  [CI](.github/workflows/ci.yml) on GitHub Actions with a PostgreSQL 16 service; ruff and
-  mypy also run as pre-commit hooks.
+  [CI](.github/workflows/ci.yml) on GitHub Actions with a PostgreSQL 16 service. A
+  Windows job runs [the Windows quick start](docs/windows.md) on the embedded database on
+  every push. ruff and mypy also run as pre-commit hooks.
 - **Reproducible**: dependencies locked in `uv.lock`, CI actions pinned to commit SHAs,
   sample files pinned to an upstream commit and verified by SHA-256.
 
