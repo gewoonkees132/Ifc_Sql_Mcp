@@ -760,9 +760,10 @@ MATERIAL_NOT_FEATURE = (
 NO_QUANTITIES_NOTE = (
     "WARNING: no element in this takeoff has {metric}, so there is no total (null, not 0). "
     "The model holds no IFC base quantities and no Revit dimension parameters (at most a "
-    "door's or window's size): the IFC file was exported without them. In "
-    'Revit\'s IFC export setup, tick "Export base quantities" (or "Export Revit property '
-    'sets") and export again.'
+    "door's or window's size): the IFC file was exported without them. Two ways to get "
+    'them: in Revit\'s IFC export setup, tick "Export base quantities" (or "Export Revit '
+    'property sets") and export again; or, with no new export, run "ifc-sql ingest '
+    '--geometry" on this same file, which measures its shapes.'
 )
 NO_METRIC_NOTE = (
     "WARNING: no element in this takeoff has {metric}, so there is no total (null, not 0). "
@@ -1019,7 +1020,8 @@ def space_schedule(
     if totals.spaces and not totals.with_area:
         note = (
             f"WARNING: none of the {totals.spaces:,} spaces has an area, so there is no total "
-            '(null, not 0). Export the IFC from Revit with "Export base quantities" ticked.'
+            '(null, not 0). Export the IFC from Revit with "Export base quantities" ticked, '
+            'or run "ifc-sql ingest --geometry" on this same file to measure the spaces.'
         )
     elif without:
         note = f"{without:,} of {totals.spaces:,} spaces have no area; the total covers the others."

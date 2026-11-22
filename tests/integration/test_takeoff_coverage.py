@@ -38,6 +38,8 @@ def test_a_model_without_quantities_has_no_total_and_says_why(
     )
     assert takeoff.note.startswith("WARNING: no element in this takeoff has area_m2")
     assert "Export base quantities" in takeoff.note
+    # The second way, with no new export (re-check finding R4).
+    assert 'run "ifc-sql ingest --geometry" on this same file' in takeoff.note
 
 
 def test_a_door_size_alone_still_means_the_export_had_no_quantities(conn: Connection) -> None:
@@ -120,6 +122,7 @@ def test_spaces_without_any_area_have_no_total(conn: Connection) -> None:
     assert (schedule.total_area_m2, schedule.spaces_without_area) == (None, 2)
     assert schedule.note is not None
     assert schedule.note.startswith("WARNING: none of the 2 spaces has an area")
+    assert 'or run "ifc-sql ingest --geometry" on this same file' in schedule.note
 
 
 def test_spaces_all_measured_have_a_total_and_no_note(conn: Connection) -> None:

@@ -29,14 +29,16 @@ keys into ids. A natural key it cannot translate is a bug upstream and raises
 ``KeyError``, which rolls the whole model back.
 """
 
+import dataclasses
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from psycopg import sql
-from sqlalchemy import Connection, Table, insert
+from sqlalchemy import Connection, Table, func, insert, select
 
 from ifc_sql_mcp.db import schema
 from ifc_sql_mcp.db.engine import psycopg_connection
+from ifc_sql_mcp.ingest.issues import IssueCode
 from ifc_sql_mcp.ingest.records import (
     MaterialRecord,
     ModelRecord,
@@ -192,6 +194,62 @@ def _insert_materials(
     return dict(result.all())
 
 
+def add_geometry(connection: Connection, records: ModelRecords, model_id: int) -> dict[str, int]:
+    """Add what measuring the shapes found to a model already loaded from the same bytes.
+
+    ``ifc-sql ingest --geometry`` on a file that is loaded without it (re-check finding R4).
+    Everything else in ``records`` is in the model already, so only two things are written:
+    the quantities of source ``geometry``, and the ``geometry_not_measured`` issues the
+    model does not have yet, numbered after its last issue.
+
+    Returns:
+        Rows written per table.
+    """
+    obj = schema.object_
+    object_ids = {
+        row.global_id: row.object_id
+        for row in connection.execute(
+            select(obj.c.global_id, obj.c.object_id).where(obj.c.model_id == model_id)
+        )
+    }
+    issue = schema.ingest_issue
+    known = {
+        (row.code, row.global_id, row.message)
+        for row in connection.execute(
+            select(issue.c.code, issue.c.global_id, issue.c.message).where(
+                issue.c.model_id == model_id
+            )
+        )
+    }
+    last = connection.execute(
+        select(func.coalesce(func.max(issue.c.issue_index), 0)).where(issue.c.model_id == model_id)
+    ).scalar_one()
+    measured = dataclasses.replace(
+        records,
+        quantities=tuple(
+            q for q in records.quantities if q.source == "geometry" and q.global_id in object_ids
+        ),
+    )
+    new_issues = [
+        i
+        for i in records.issues
+        if i.code is IssueCode.GEOMETRY_NOT_MEASURED
+        and (i.code.value, i.global_id, i.message) not in known
+    ]
+    copied: dict[Table, list[Row]] = {
+        schema.quantity: _quantity_rows(measured, object_ids),
+        schema.ingest_issue: _issue_rows(
+            dataclasses.replace(records, issues=tuple(new_issues)),
+            model_id,
+            object_ids,
+            first=last + 1,
+        ),
+    }
+    for table, rows in copied.items():
+        copy_rows(connection, table, rows)
+    return {table.name: len(rows) for table, rows in copied.items()}
+
+
 # --------------------------------------------------------------------------- copied tables
 
 
@@ -290,8 +348,10 @@ def _classification_rows(records: ModelRecords, object_ids: Ids) -> list[Row]:
     ]
 
 
-def _issue_rows(records: ModelRecords, model_id: int, object_ids: Ids) -> list[Row]:
-    """Number the issues in the order reported and link each to its object, if loaded.
+def _issue_rows(
+    records: ModelRecords, model_id: int, object_ids: Ids, *, first: int = 1
+) -> list[Row]:
+    """Number the issues in the order reported, from ``first``, and link each to its object.
 
     Unlike every other reference, an issue's GlobalId may legitimately be unknown: an
     object with a malformed GlobalId is skipped, and the issue about it has no object to
@@ -307,5 +367,5 @@ def _issue_rows(records: ModelRecords, model_id: int, object_ids: Ids) -> list[R
             "global_id": issue.global_id,
             "message": issue.message,
         }
-        for index, issue in enumerate(records.issues, start=1)
+        for index, issue in enumerate(records.issues, start=first)
     ]

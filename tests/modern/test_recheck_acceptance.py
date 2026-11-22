@@ -83,7 +83,6 @@ def test_r3_enumerated_property_values_are_read(modern: Modern) -> None:
     assert shapes == [("Undefined", "IfcLabel", 724)]
 
 
-@_open("R4", 26)
 def test_r4_the_no_quantities_warning_names_ingest_geometry(modern: Modern) -> None:
     with modern.engine.connect() as connection:
         takeoff = tools.quantity_takeoff(connection, modern.model("b"), "revit_type", "area_m2")

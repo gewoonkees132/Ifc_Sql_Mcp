@@ -258,3 +258,19 @@ def test_geometry_is_measured_on_request_and_logged(database: Engine, tmp_path: 
     assert result.stdout.startswith("loaded measured.ifc as model 1 (ARC)")
     assert 'msg="measured geometry" run_id=1 shapes=4' in result.stderr
     assert "code=geometry_not_measured count=1" in result.stderr
+
+
+def test_geometry_on_a_file_already_loaded_measures_it_in_place(
+    database: Engine, tmp_path: Path
+) -> None:
+    path = write_measured_model(tmp_path / "measured.ifc")
+    runner = CliRunner()
+    runner.invoke(cli.app, ["ingest", str(path), "--discipline", "ARC"])
+
+    result = runner.invoke(cli.app, ["ingest", str(path), "--discipline", "ARC", "--geometry"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == (
+        "measured the shapes of measured.ifc, already loaded as model 1 (ARC): 7 quantities "
+        "and 1 issues added (run 2); check it again with ifc-sql dq 1\n"
+    )

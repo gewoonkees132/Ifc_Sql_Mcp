@@ -250,8 +250,9 @@ rules:
       The model has elements but no quantity from IFC base quantities or Revit
       parameters (a door's or window's size, written whatever the export options, does not
       count). Revit exported it with neither "Export base quantities" nor "Export Revit
-      property sets" ticked, so no area, volume or length can be given; tick one and
-      export again.
+      property sets" ticked, so no area, volume or length can be given. Tick one and
+      export again, or run ifc-sql ingest --geometry on the same file: it measures the
+      shapes, with no new export.
     severity: warning
     dimension: completeness
     scope: model_content
@@ -259,7 +260,8 @@ rules:
       SELECT CAST(NULL AS bigint) AS object_id,
              format('none of the model''s %s elements has a quantity from IFC base '
                     'quantities or Revit parameters: export again with "Export base '
-                    'quantities" ticked', count(*)) AS message
+                    'quantities" ticked, or measure the shapes of this file with '
+                    'ifc-sql ingest --geometry', count(*)) AS message
       FROM ifc.element AS e
       JOIN ifc.object AS o ON o.object_id = e.object_id
       WHERE o.model_id = :model_id

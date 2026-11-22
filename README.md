@@ -236,7 +236,8 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
   A file exported without quantities can be measured instead, with
   `ifc-sql ingest --geometry` ([ADR 10](docs/adr/0010-geometry-quantities.md)): about a
   minute for 15,000 objects on 4 cores, and only for walls, slabs, spaces and other
-  solids.
+  solids. A file already loaded is measured into the same model
+  ([ADR 12](docs/adr/0012-measure-in-place.md)).
 - A changed file is a new model version. `--replaces` marks the current one, and
   `compare_models` lists what changed between two; versions are not merged, and old data
   quality runs are kept until deleted.

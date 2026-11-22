@@ -156,6 +156,13 @@ def _summary(file_name: str, result: IngestResult) -> str:
             f"{counts['property']:,} property values, {counts['ingest_issue']:,} issues "
             f"(run {result.run_id})"
         )
+    if result.status == "measured":
+        counts = result.row_counts
+        return (
+            f"measured the shapes of {file_name}, already loaded as {model}: "
+            f"{counts['quantity']:,} quantities and {counts['ingest_issue']:,} issues added "
+            f"(run {result.run_id}); check it again with ifc-sql dq {result.model_id}"
+        )
     skipped = f"run {result.run_id}, skipped"
     if result.concurrent:
         return (
@@ -205,7 +212,8 @@ def ingest(
             "--geometry",
             help="Also measure the shapes, for files exported without quantities: wall side "
             "areas, slab and space footprints, solid volumes. They rank after the file's "
-            "own quantities. Takes about a minute for a 15,000-object file on 4 cores.",
+            "own quantities. Takes about a minute for a 15,000-object file on 4 cores. A "
+            "file already loaded without it is measured into the same model.",
         ),
     ] = False,
 ) -> None:

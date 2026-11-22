@@ -17,3 +17,4 @@ new record supersedes the old one.
 | [9](0009-schema-discovery-tool.md) | The schema as a `describe_schema` tool next to the resource, and `run_sql` errors about an unknown relation or column that list what exists |
 | [10](0010-geometry-quantities.md) | Quantities measured from the geometry with IfcOpenShell, on request (`ingest --geometry`): wall side areas, slab and space footprints, solid volumes, ranked last |
 | [11](0011-space-plans.md) | Every space's plan measured at ingest: a space whose plan lies 90 % inside larger ones repeats them; Revit Areas kept apart from rooms |
+| [12](0012-measure-in-place.md) | `ingest --geometry` on a file already loaded without it measures it into the same model, once; supersedes ADR 10's "delete and load again" |

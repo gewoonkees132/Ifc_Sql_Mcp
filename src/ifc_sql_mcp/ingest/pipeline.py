@@ -47,7 +47,7 @@ from sqlalchemy.exc import IntegrityError
 from ifc_sql_mcp.db import schema
 from ifc_sql_mcp.db.engine import describe_error
 from ifc_sql_mcp.ingest.extract import read_model, sha256_file
-from ifc_sql_mcp.ingest.load import load
+from ifc_sql_mcp.ingest.load import add_geometry, load
 from ifc_sql_mcp.ingest.records import ModelRecords
 from ifc_sql_mcp.ingest.transform import transform
 
@@ -85,8 +85,9 @@ class IngestResult:
 
     Attributes:
         run_id: The ``ingestion_run`` row that records it.
-        status: ``succeeded`` (this run loaded the model) or ``skipped`` (the file was
-            already loaded, and nothing was written).
+        status: ``succeeded`` (this run loaded the model), ``measured`` (the file was
+            loaded without ``--geometry``, and this run added its shapes' quantities) or
+            ``skipped`` (the file was already loaded, and nothing was written).
         model_id: The model this run loaded, or the one it found.
         discipline: That model's discipline.
         row_counts: Rows written per table; empty when skipped.
@@ -98,7 +99,7 @@ class IngestResult:
     """
 
     run_id: int
-    status: Literal["succeeded", "skipped"]
+    status: Literal["succeeded", "measured", "skipped"]
     model_id: int
     discipline: str
     row_counts: dict[str, int] = field(default_factory=dict)
@@ -163,7 +164,9 @@ def ingest_file(
 
     with engine.begin() as connection:
         existing = _loaded_model(connection, sha256)
-        if existing is not None:
+        if existing is not None and geometry and not _measured(connection, existing[0]):
+            run_id = _insert_run(connection, path.name, sha256, "running", existing[0])
+        elif existing is not None:
             run_id = _insert_run(connection, path.name, sha256, "skipped", existing[0])
             result = _skipped(run_id, path, discipline, existing, concurrent=False)
             if project_key is None and replaces is None and not geometry:
@@ -173,6 +176,8 @@ def ingest_file(
                 "--replaces and --geometry were not applied: that model is unchanged"
             )
             return dataclasses.replace(result, warnings=(unchanged,))
+    if existing is not None:
+        return _measure_in_place(engine, path, sha256, run_id, existing, project_key, replaces)
 
     with engine.begin() as connection:
         run_id = _insert_run(connection, path.name, sha256, "running")
@@ -227,6 +232,87 @@ def ingest_file(
         row_counts=loaded.row_counts,
         issue_counts=dict(sorted(Counter(i.code.value for i in records.issues).items())),
         warnings=(warning,) if warning else (),
+    )
+
+
+def _measured(connection: Connection, model_id: int) -> bool:
+    """Whether a run has measured the shapes of the model (``ingest --geometry``)."""
+    run = schema.ingestion_run
+    return (
+        connection.execute(
+            select(run.c.ingestion_run_id)
+            .where(
+                run.c.model_id == model_id,
+                run.c.status == "succeeded",
+                run.c.geometry_seconds.is_not(None),
+            )
+            .limit(1)
+        ).first()
+        is not None
+    )
+
+
+def _measure_in_place(
+    engine: Engine,
+    path: Path,
+    sha256: str,
+    run_id: int,
+    existing: tuple[int, str],
+    project_key: str | None,
+    replaces: int | None,
+) -> IngestResult:
+    """Measure the shapes of a file loaded without ``--geometry``, into its model (R4).
+
+    A file is identified by its bytes (ADR 4), so it cannot be loaded twice. Its model is
+    kept, with its id, its data quality runs and its versions. This run only adds the
+    quantities measured from the shapes, which rank last (ADR 10). The model row is locked,
+    so two runs on one file cannot both add them.
+    """
+    model_id, discipline = existing
+    try:
+        records, geometry_seconds = _extract_and_transform(path, sha256, run_id, True)
+        with engine.begin() as connection:
+            connection.execute(
+                select(schema.model.c.model_id)
+                .where(schema.model.c.model_id == model_id)
+                .with_for_update()
+            )
+            if _measured(connection, model_id):
+                _finish_run(connection, run_id, "skipped", model_id)
+                return _skipped(run_id, path, discipline, existing, concurrent=True)
+            counts = add_geometry(connection, records, model_id)
+            _finish_run(
+                connection,
+                run_id,
+                "succeeded",
+                model_id,
+                counts,
+                geometry_seconds=geometry_seconds,
+            )
+    except Exception as exc:
+        message = describe_error(exc)
+        logger.error("measuring failed", extra={"run_id": run_id, "error": message})
+        with engine.begin() as connection:
+            _finish_run(connection, run_id, "failed", model_id, error=message)
+        raise IngestError(run_id, message) from exc
+    logger.info("measured in place", extra={"run_id": run_id, "model_id": model_id} | counts)
+    warnings: tuple[str, ...] = ()
+    if project_key is not None or replaces is not None:
+        warnings = (
+            f"{path.name} is already loaded as model {model_id}, so --project and --replaces "
+            "were not applied; its shapes were measured",
+        )
+    return IngestResult(
+        run_id=run_id,
+        status="measured",
+        model_id=model_id,
+        discipline=discipline,
+        row_counts=counts,
+        # The only issues this run adds are bodies it could not measure.
+        issue_counts=(
+            {"geometry_not_measured": counts["ingest_issue"]} if counts["ingest_issue"] else {}
+        ),
+        warnings=warnings,
     )
 
 

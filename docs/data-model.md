@@ -428,6 +428,13 @@ triangulate is reported as `geometry_not_measured`, and the run records the time
 `ingestion_run.geometry_seconds`. On the audit's tower (14,642 objects) it measured
 8,285 shapes in 54 s on 4 cores, and gave its 6,095 walls their 103,057.7 m².
 
+A file already loaded without `--geometry` is measured in place: `ingest --geometry` on
+the same file adds the measured quantities, and any body it could not measure, to the
+model it is loaded as, which keeps its id, versions and data quality runs. The run is
+recorded as `succeeded` with its `geometry_seconds`, and a model is measured only once.
+Its data quality is not checked again until `ifc-sql dq` runs (re-check finding R4,
+[ADR 12](adr/0012-measure-in-place.md)).
+
 `ifc-sql ingest` loads one file through `ingest/pipeline.py`. The steps, and why they
 come in this order, are in [ADR 4](adr/0004-idempotent-ingest.md):
 

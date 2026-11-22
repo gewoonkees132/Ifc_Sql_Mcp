@@ -52,6 +52,10 @@ source `geometry`, ranked after anything the file carries
 about a minute on 4 cores. On file A, which has its own quantities, the shapes give
 964.6 m² against the file's 946.0 m²; the file's figure is the one used.
 
+A file loaded already is measured in place: the same command adds the measured
+quantities to its model, which keeps its number and history. Then run `ifc-sql dq` on it
+again.
+
 ## What the tool says when something is missing
 
 - **`data_quality_report`** lists the model's gaps (`model_content`) apart from what
@@ -60,4 +64,5 @@ about a minute on 4 cores. On file A, which has its own quantities, the shapes g
   `placeholder_material` and `placeholder_project_info`
   ([data-quality.md](data-quality.md#scope-the-model-or-the-loader)).
 - **`quantity_takeoff`** gives a null total, never 0, when no element has the metric.
-  Its note then says to export with base quantities.
+  Its note then gives the two ways to get quantities: export with base quantities, or
+  measure the same file with `ifc-sql ingest --geometry`.

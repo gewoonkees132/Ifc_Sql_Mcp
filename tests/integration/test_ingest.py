@@ -14,7 +14,7 @@ from typing import Any
 import make_revit_quirks
 import pytest
 from counts import FIXTURE_ROWS, table_counts, total_rows
-from geometry_model import SLAB, WALL, write_measured_model
+from geometry_model import BEAM, SLAB, SPACE, WALL, write_measured_model
 from locks import wait_until_a_session_waits_on_a_lock
 from rows import add_model
 from sqlalchemy import Engine, RowMapping, text
@@ -347,6 +347,108 @@ def test_geometry_quantities_rank_last_and_the_run_records_the_time(
     assert seconds is not None
     assert seconds >= 0
     assert result.issue_counts["geometry_not_measured"] == 1  # the beam
+
+
+def _geometry_rows(engine: Engine, model_id: int) -> tuple[dict[str, float], list[str]]:
+    """Each element's geometry area, and the model's geometry_not_measured messages."""
+    with engine.connect() as connection:
+        areas = dict(
+            connection.execute(
+                text(
+                    "SELECT o.name, q.value FROM ifc.quantity AS q JOIN ifc.object AS o "
+                    "USING (object_id) WHERE o.model_id = :m AND q.source = 'geometry' "
+                    "AND q.name = 'area_m2'"
+                ),
+                {"m": model_id},
+            ).all()
+        )
+        issues = (
+            connection.execute(
+                text(
+                    "SELECT message FROM ifc.ingest_issue WHERE model_id = :m "
+                    "AND code = 'geometry_not_measured' ORDER BY issue_index"
+                ),
+                {"m": model_id},
+            )
+            .scalars()
+            .all()
+        )
+    return areas, list(issues)
+
+
+def test_geometry_on_a_file_loaded_without_it_measures_the_same_model(
+    ingest_engine: Engine, tmp_path: Path
+) -> None:
+    """Re-check finding R4: the advice "ingest --geometry" works on a model already loaded."""
+    path = write_measured_model(tmp_path / "measured.ifc")
+    plain = ingest_file(ingest_engine, path, "ARC")
+
+    measured = ingest_file(ingest_engine, path, "ARC", geometry=True)
+    again = ingest_file(ingest_engine, path, "ARC", geometry=True)
+
+    areas, issues = _geometry_rows(ingest_engine, plain.model_id)
+    assert (measured.status, measured.model_id) == ("measured", plain.model_id)
+    assert areas == pytest.approx({WALL: 13.0, SLAB: 16.0, SPACE: 6.0})
+    # Area and volume of the wall, slab and space, and the column's volume.
+    assert measured.row_counts == {"quantity": 7, "ingest_issue": 1}
+    assert measured.issue_counts == {"geometry_not_measured": 1}  # the beam
+    assert issues == [
+        f"IfcBeam {BEAM!r} has a body that could not be triangulated; no geometry quantity"
+    ]
+    runs = {r["ingestion_run_id"]: r for r in _runs(ingest_engine)}
+    assert runs[measured.run_id]["status"] == "succeeded"
+    assert runs[measured.run_id]["geometry_seconds"] is not None
+    # Measured once: a third run changes nothing.
+    assert again.status == "skipped"
+    assert again.warnings[0].endswith("that model is unchanged")
+
+
+def test_measuring_in_place_applies_no_project_and_says_so(
+    ingest_engine: Engine, tmp_path: Path
+) -> None:
+    path = write_measured_model(tmp_path / "measured.ifc")
+    plain = ingest_file(ingest_engine, path, "ARC")
+
+    measured = ingest_file(ingest_engine, path, "ARC", geometry=True, project_key="house")
+
+    assert measured.status == "measured"
+    assert measured.warnings == (
+        f"measured.ifc is already loaded as model {plain.model_id}, so --project and "
+        "--replaces were not applied; its shapes were measured",
+    )
+
+
+def test_a_model_measured_by_another_run_meanwhile_is_left_alone(
+    ingest_engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_measured_model(tmp_path / "measured.ifc")
+    plain = ingest_file(ingest_engine, path, "ARC")
+    answers = iter([False, True])  # not measured when the run starts; measured under the lock
+    monkeypatch.setattr(pipeline, "_measured", lambda connection, model_id: next(answers))
+
+    result = ingest_file(ingest_engine, path, "ARC", geometry=True)
+
+    assert (result.status, result.concurrent) == ("skipped", True)
+    assert _geometry_rows(ingest_engine, plain.model_id) == ({}, [])
+
+
+def test_a_failed_measure_is_recorded_and_the_model_is_unchanged(
+    ingest_engine: Engine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_measured_model(tmp_path / "measured.ifc")
+    plain = ingest_file(ingest_engine, path, "ARC")
+
+    def refuse(*args: object) -> dict[str, int]:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(pipeline, "add_geometry", refuse)
+
+    with pytest.raises(IngestError, match="disk full") as failure:
+        ingest_file(ingest_engine, path, "ARC", geometry=True)
+
+    run = next(r for r in _runs(ingest_engine) if r["ingestion_run_id"] == failure.value.run_id)
+    assert (run["status"], run["model_id"]) == ("failed", plain.model_id)
+    assert _geometry_rows(ingest_engine, plain.model_id) == ({}, [])
 
 
 def test_without_geometry_the_run_measures_nothing(ingest_engine: Engine, tmp_path: Path) -> None:
