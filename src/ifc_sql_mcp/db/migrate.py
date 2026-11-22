@@ -25,7 +25,7 @@ from sqlalchemy.pool import NullPool
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.engine import APPLICATION_NAME
 from ifc_sql_mcp.db.engine import psycopg_connection as psycopg_connection
-from ifc_sql_mcp.db.schema import SCHEMA
+from ifc_sql_mcp.db.schema import SCHEMA, VIEWER_SCHEMA
 
 MIGRATIONS_DIR = Path(__file__).parent / "migrations"
 SQL_DIR = Path(__file__).parent / "sql"
@@ -39,13 +39,13 @@ INSUFFICIENT_PRIVILEGE = "42501"
 
 
 def include_name(name: str | None, type_: str, parent_names: object) -> bool:
-    """Limit autogenerate to the ``ifc`` schema.
+    """Limit autogenerate to the ``ifc`` and ``ifc_viewer`` schemas.
 
     Without this filter, comparing the metadata with the database would also report every
     table in ``public`` (and any other schema) as "removed".
     """
     if type_ == "schema":
-        return name == SCHEMA
+        return name in (SCHEMA, VIEWER_SCHEMA)
     return True
 
 

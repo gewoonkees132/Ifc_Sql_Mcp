@@ -1,5 +1,9 @@
 """SQLAlchemy Core definition of the ``ifc`` schema: the single source of truth for its tables.
 
+It also defines the two tables of schema ``ifc_viewer``: the scenes that ``ifc-sql ingest
+--viewer`` builds (ADR 14). They are derived from the file and can be rebuilt at any time,
+so they live outside ``ifc``, which is all that ``run_sql`` may read.
+
 The Alembic migrations create these tables; ``tests/integration/test_migrations.py`` runs an
 autogenerate comparison against a migrated database and fails on any difference, so the
 two cannot drift apart. Views, the read-only role and its privileges live only in the
@@ -35,6 +39,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     Numeric,
     PrimaryKeyConstraint,
@@ -50,6 +55,9 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 SCHEMA = "ifc"
 """PostgreSQL schema holding every project table and view."""
+
+VIEWER_SCHEMA = "ifc_viewer"
+"""PostgreSQL schema of the viewer's scenes: derived data, kept out of ``run_sql``'s reach."""
 
 READER_ROLE = "ifc_reader"
 """Login role with SELECT-only access to ``SCHEMA``, created by migration 0003."""
@@ -919,4 +927,171 @@ dq_result = Table(
     CheckConstraint(_in("severity", SEVERITIES), name="severity_valid"),
     _not_blank("message"),
     comment="Data quality findings: one row per rule violation found by a run.",
+)
+
+# --------------------------------------------------------------------------- viewer scenes
+
+SCENE_CHUNK_KINDS = ("elements", "spaces", "space_copies", "areas")
+"""What a chunk holds: elements, rooms, the spaces that repeat a room, or Revit Areas."""
+
+GLB_MAGIC = r"'\x676c5446'::bytea"
+"""The first four bytes of every glTF binary file, ``glTF``, as a PostgreSQL literal."""
+
+scene = Table(
+    "scene",
+    metadata,
+    Column(
+        "model_id",
+        BigInteger,
+        ForeignKey(model.c.model_id, ondelete="CASCADE"),
+        primary_key=True,
+        comment="The model the scene shows. Deleting the model deletes its scene.",
+    ),
+    Column(
+        "format_version",
+        Integer,
+        nullable=False,
+        comment="Version of the scene's format. ifc-sql ingest --viewer replaces a scene of "
+        "an older version and keeps a current one.",
+    ),
+    Column(
+        "built_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        comment="When the scene was committed.",
+    ),
+    Column(
+        "build_seconds",
+        Double,
+        nullable=False,
+        comment="Seconds spent triangulating the file's bodies and writing the chunks. With "
+        "--geometry, the same pass also measured the shapes.",
+    ),
+    Column(
+        "ifcopenshell_version",
+        Text,
+        nullable=False,
+        comment="The IfcOpenShell release that triangulated the bodies.",
+    ),
+    Column(
+        "origin_x_m",
+        Double,
+        nullable=False,
+        comment="X of the scene's origin, in the file's world coordinates in metres: the "
+        "centre of the drawn elements' bounding box, rounded to whole metres. The chunks' "
+        "positions are relative to it.",
+    ),
+    Column("origin_y_m", Double, nullable=False, comment="Y of the scene's origin, in metres."),
+    Column(
+        "origin_z_m",
+        Double,
+        nullable=False,
+        comment="Z of the scene's origin (up, in IFC), in metres.",
+    ),
+    Column(
+        "element_count",
+        Integer,
+        nullable=False,
+        comment="Elements drawn: those with a body of their own, and aggregates drawn "
+        "through their parts (a stair through its flights). Openings are not counted.",
+    ),
+    Column(
+        "without_shape_count",
+        Integer,
+        nullable=False,
+        comment="Elements not drawn because they have no body that IfcOpenShell "
+        "triangulates, and no part that has one. Openings are not counted.",
+    ),
+    Column(
+        "opening_count",
+        Integer,
+        nullable=False,
+        comment="Feature elements (openings, voids), never drawn: IfcOpenShell cuts them "
+        "out of the elements they belong to. element_count + without_shape_count + "
+        "opening_count is the number of elements in ifc.element.",
+    ),
+    Column(
+        "byte_count",
+        BigInteger,
+        nullable=False,
+        comment="Bytes of all the scene's chunks together.",
+    ),
+    CheckConstraint("format_version >= 1", name="format_version_positive"),
+    _finite("build_seconds", non_negative=True),
+    _not_blank("ifcopenshell_version"),
+    _finite("origin_x_m"),
+    _finite("origin_y_m"),
+    _finite("origin_z_m"),
+    CheckConstraint("element_count >= 0", name="element_count_non_negative"),
+    CheckConstraint("without_shape_count >= 0", name="without_shape_count_non_negative"),
+    CheckConstraint("opening_count >= 0", name="opening_count_non_negative"),
+    CheckConstraint("byte_count >= 0", name="byte_count_non_negative"),
+    schema=VIEWER_SCHEMA,
+    comment="One 3D scene per model, built by ifc-sql ingest --viewer and shown by ifc-sql "
+    "view: what was drawn, and from where. Derived from the file, so it can be rebuilt.",
+)
+
+scene_chunk = Table(
+    "scene_chunk",
+    metadata,
+    Column(
+        "model_id",
+        BigInteger,
+        ForeignKey(scene.c.model_id, ondelete="CASCADE"),
+        nullable=False,
+        comment="The scene the chunk belongs to.",
+    ),
+    Column(
+        "chunk_no",
+        Integer,
+        nullable=False,
+        comment="0-based number of the chunk within its scene, in the order the page loads "
+        "them: elements, then spaces, copies and Areas, each storey by storey.",
+    ),
+    Column(
+        "storey_id",
+        BigInteger,
+        _within_model(f"{SCHEMA}.spatial_element.object_id"),
+        index=True,
+        comment="The storey whose elements or spaces the chunk holds; NULL for those on no "
+        "storey. A storey with more than 2,000 elements or 16 MiB is split into several.",
+    ),
+    Column(
+        "kind",
+        Text,
+        nullable=False,
+        comment="elements: the drawn elements. spaces: the rooms. space_copies: spaces that "
+        "repeat a room (spatial_element.repeats_id). areas: Revit area plans (category "
+        "Areas). Spaces are shown only when a selection holds one.",
+    ),
+    Column(
+        "element_count",
+        Integer,
+        nullable=False,
+        comment="Elements, or spaces, drawn in the chunk, aggregates included.",
+    ),
+    Column(
+        "glb",
+        LargeBinary,
+        nullable=False,
+        comment="The chunk as glTF 2.0 binary (GLB): Y up, metres, float32 positions "
+        "relative to the scene's origin. One node per element, named by its GlobalId, with "
+        "its IFC class in extras; an aggregate's parts are its children.",
+    ),
+    Column(
+        "glb_sha256",
+        Text,
+        Computed("encode(sha256(glb), 'hex')", persisted=True),
+        nullable=False,
+        comment="SHA-256 of glb (lower-case hex), computed by the database: the chunk's ETag.",
+    ),
+    PrimaryKeyConstraint("model_id", "chunk_no"),
+    CheckConstraint("chunk_no >= 0", name="chunk_no_non_negative"),
+    CheckConstraint(_in("kind", SCENE_CHUNK_KINDS), name="kind_valid"),
+    CheckConstraint("element_count >= 1", name="element_count_positive"),
+    CheckConstraint(f"substring(glb FROM 1 FOR 4) = {GLB_MAGIC}", name="glb_is_gltf_binary"),
+    schema=VIEWER_SCHEMA,
+    comment="A scene in parts the page loads and toggles one by one: per storey, and per "
+    "kind of object.",
 )

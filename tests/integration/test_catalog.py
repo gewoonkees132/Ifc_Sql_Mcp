@@ -1,11 +1,13 @@
 """Properties of the migrated catalogue that every future migration must keep."""
 
+import pytest
 from sqlalchemy import Engine, inspect, text
 
-from ifc_sql_mcp.db.schema import SCHEMA
+from ifc_sql_mcp.db.schema import SCHEMA, VIEWER_SCHEMA
 
 
-def test_every_table_view_and_column_has_a_comment(engine: Engine) -> None:
+@pytest.mark.parametrize("schema", [SCHEMA, VIEWER_SCHEMA])
+def test_every_table_view_and_column_has_a_comment(engine: Engine, schema: str) -> None:
     """The MCP ``ifc://schema`` resource is built from these comments; none may be missing."""
     with engine.connect() as connection:
         missing = (
@@ -23,7 +25,7 @@ def test_every_table_view_and_column_has_a_comment(engine: Engine) -> None:
                 ORDER BY 1
                 """
                 ),
-                {"schema": SCHEMA},
+                {"schema": schema},
             )
             .scalars()
             .all()
@@ -32,7 +34,8 @@ def test_every_table_view_and_column_has_a_comment(engine: Engine) -> None:
     assert missing == []
 
 
-def test_every_foreign_key_is_backed_by_an_index(engine: Engine) -> None:
+@pytest.mark.parametrize("schema", [SCHEMA, VIEWER_SCHEMA])
+def test_every_foreign_key_is_backed_by_an_index(engine: Engine, schema: str) -> None:
     """PostgreSQL does not index foreign keys itself.
 
     Without an index, joins along the key and every cascading delete from the parent
@@ -40,18 +43,20 @@ def test_every_foreign_key_is_backed_by_an_index(engine: Engine) -> None:
     """
     inspector = inspect(engine)
     unindexed = []
-    for table in inspector.get_table_names(schema=SCHEMA):
+    tables = inspector.get_table_names(schema=schema)
+    for table in tables:
         leading_columns = [
-            index["column_names"] for index in inspector.get_indexes(table, schema=SCHEMA)
+            index["column_names"] for index in inspector.get_indexes(table, schema=schema)
         ]
         leading_columns.append(
-            inspector.get_pk_constraint(table, schema=SCHEMA)["constrained_columns"]
+            inspector.get_pk_constraint(table, schema=schema)["constrained_columns"]
         )
-        for foreign_key in inspector.get_foreign_keys(table, schema=SCHEMA):
+        for foreign_key in inspector.get_foreign_keys(table, schema=schema):
             columns = foreign_key["constrained_columns"]
             if not any(indexed[: len(columns)] == columns for indexed in leading_columns):
                 unindexed.append(f"{table}({', '.join(columns)})")
 
+    assert tables
     assert unindexed == []
 
 

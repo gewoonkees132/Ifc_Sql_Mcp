@@ -14,7 +14,7 @@ from sqlalchemy.exc import DBAPIError, InternalError
 
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.migrate import alembic_config, current_revision, head_revision
-from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA
+from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA, VIEWER_SCHEMA
 
 INSUFFICIENT_PRIVILEGE = "42501"
 READ_ONLY_SQL_TRANSACTION = "25006"
@@ -84,6 +84,12 @@ def test_reader_sessions_start_with_safe_defaults(
         "UPDATE public.alembic_version SET version_num = '0001'",
         "CREATE TEMP TABLE scratch (a int)",
         "SET ROLE ifc",
+        "INSERT INTO ifc_viewer.scene_chunk (model_id, chunk_no, kind, element_count, glb) "
+        "VALUES (1, 0, 'elements', 1, 'glTF')",
+        "UPDATE ifc_viewer.scene SET byte_count = 0",
+        "DELETE FROM ifc_viewer.scene_chunk",
+        "TRUNCATE ifc_viewer.scene",
+        "CREATE TABLE ifc_viewer.scratch (a int)",
     ],
 )
 def test_reader_is_refused_everything_else_even_in_a_read_write_transaction(
@@ -168,10 +174,34 @@ def test_migration_refuses_a_reader_role_that_is_privileged(
             owner.commit()
 
 
+def test_reader_can_read_the_scenes_and_create_nothing_beside_them(
+    engine: Engine, reader_engine: Engine
+) -> None:
+    """Migration 0020: ``ifc-sql view`` reads the scenes as ifc_reader (ADR 14)."""
+    with reader_engine.connect() as reader:
+        for relation in ("scene", "scene_chunk"):
+            reader.execute(
+                select(literal_column("1")).select_from(table(relation, schema=VIEWER_SCHEMA))
+            )
+    with engine.connect() as owner:
+        privileges = owner.execute(
+            text(
+                "SELECT has_schema_privilege(:role, :schema, 'USAGE'), "
+                "has_schema_privilege(:role, :schema, 'CREATE')"
+            ),
+            {"role": READER_ROLE, "schema": VIEWER_SCHEMA},
+        ).one()
+
+    assert tuple(privileges) == (True, False)
+
+
 def test_reader_can_read_the_migration_revision_and_no_other_table_outside_ifc(
     engine: Engine, reader_engine: Engine
 ) -> None:
-    """Migration 0009: ``ifc-sql serve`` checks the revision without the owner's password."""
+    """Migration 0009: ``ifc-sql serve`` checks the revision without the owner's password.
+
+    Migration 0020 adds the viewer's two tables, which ``run_sql`` still cannot read.
+    """
     with reader_engine.connect() as reader:
         revision = reader.execute(text("SELECT version_num FROM public.alembic_version")).scalar()
     with engine.connect() as owner:
@@ -191,7 +221,11 @@ def test_reader_can_read_the_migration_revision_and_no_other_table_outside_ifc(
         )
 
     assert revision == head_revision()
-    assert readable == ["public.alembic_version"]
+    assert sorted(readable) == [
+        "ifc_viewer.scene",
+        "ifc_viewer.scene_chunk",
+        "public.alembic_version",
+    ]
 
 
 def test_reader_may_not_create_temporary_tables(engine: Engine) -> None:

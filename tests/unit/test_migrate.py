@@ -40,12 +40,13 @@ def test_pyproject_alembic_section_points_at_the_same_scripts() -> None:
     ("name", "type_", "included"),
     [
         ("ifc", "schema", True),
+        ("ifc_viewer", "schema", True),
         ("public", "schema", False),
         (None, "schema", False),
         ("model", "table", True),
     ],
 )
-def test_include_name_limits_autogenerate_to_the_ifc_schema(
+def test_include_name_limits_autogenerate_to_the_two_schemas(
     name: str | None, type_: str, included: bool
 ) -> None:
     assert include_name(name, type_, {}) is included
