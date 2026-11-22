@@ -30,6 +30,11 @@ uv run ifc-sql migrate
 The first command that needs the database starts it, and the last one to finish stops
 it. `ingest`, `watch` and the MCP server can run at once.
 
+Keep the folder in your own profile, as `%LOCALAPPDATA%` is. PostgreSQL gives up
+administrator rights when it creates the database. It may then not set the permissions
+of a folder that an administrator made, such as one directly on a drive, and the first
+command fails with `could not change permissions of directory … Permission denied`.
+
 It listens only on 127.0.0.1 and takes no password, so it is for a computer only you
 use ([SECURITY.md](../SECURITY.md#the-embedded-database)). It is the same PostgreSQL as
 the Docker one, with the same read-only role for Claude ([ADR 13](adr/0013-embedded-postgresql.md)).

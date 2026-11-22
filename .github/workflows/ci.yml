@@ -136,10 +136,6 @@ jobs:
       run:
         shell: pwsh
 
-    # The runner context is not available at job level; the workspace is.
-    env:
-      IFC_SQL_DATA_DIR: ${{ github.workspace }}\.ifc-sql-data
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -151,6 +147,12 @@ jobs:
 
       - name: Install, with the embedded database
         run: uv sync --locked --extra embedded
+
+      # As docs/windows.md says: a folder the user's own account owns. initdb gives up
+      # administrator rights, and then may not set the permissions of a folder an
+      # administrator made, such as one in the runner's workspace (run 44).
+      - name: Choose the embedded database's folder
+        run: Add-Content -Path $env:GITHUB_ENV -Value "IFC_SQL_DATA_DIR=$env:LOCALAPPDATA\ifc-sql\data"
 
       - name: Create the schema
         run: uv run ifc-sql migrate
