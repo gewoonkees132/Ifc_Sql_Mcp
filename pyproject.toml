@@ -7,10 +7,22 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.20,<2",
+    "ifcopenshell>=0.9.0.post1,<0.10",
+    "mcp>=2.3,<3",
     "psycopg[binary]>=3.2,<4",
+    "pydantic>=2.14,<3",
+    "pyyaml>=6.0.3,<7",
+    "shapely>=2.2,<3",
     "sqlalchemy>=2.0,<3",
+    "sqlglot>=30.33,<31",
     "typer>=0.16",
 ]
+
+[project.optional-dependencies]
+# PostgreSQL 16 itself, as a wheel, for one user without Docker (IFC_SQL_DATA_DIR; audit
+# finding A18, item 4). About 150 MB, so it is not installed unless asked for.
+embedded = ["pixeltable-pgserver>=0.7.2,<0.8"]
 
 [project.scripts]
 ifc-sql = "ifc_sql_mcp.cli:app"
@@ -21,12 +33,20 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "anyio>=4.16.0",
     "mypy>=2.4.1",
     "pre-commit>=4.7.0",
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.5",
+    "types-pyyaml>=6.0.12.20261113",
 ]
+
+# --------------------------------------------------------------------------- alembic
+# For the plain `alembic` CLI (history, new revisions). `make migrate` / `ifc-sql migrate`
+# build the same configuration in code; the database URL always comes from IFC_SQL_*.
+[tool.alembic]
+script_location = "%(here)s/src/ifc_sql_mcp/db/migrations"
 
 # --------------------------------------------------------------------------- ruff
 [tool.ruff]
@@ -61,7 +81,7 @@ ignore = [
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "D"]  # assert is the point of a test; test names are the docs
+"tests/**" = ["S101", "S105", "S106", "D"]  # asserts, fake test passwords; names are the docs
 "scripts/**" = ["T201"]      # scripts talk to the user with print()
 
 [tool.ruff.lint.isort]
@@ -74,22 +94,40 @@ files = ["src", "scripts"]
 strict = true
 warn_unreachable = true
 
+# IfcOpenShell ships partial type hints: entity attributes are resolved at run time, and
+# some signatures are narrower than the values they accept. Treat it as untyped, and only
+# here: ingest/extract.py is the one module that imports it, and it converts every value
+# it reads into a checked type, so everything downstream stays strictly typed.
+[[tool.mypy.overrides]]
+module = ["ifcopenshell", "ifcopenshell.*"]
+follow_imports = "skip"
+
+# shapely ships no complete type hints either. ingest/footprints.py, which compares the
+# plans of spaces, is the one module that uses it, and it returns only floats and strings.
+[[tool.mypy.overrides]]
+module = ["shapely", "shapely.*"]
+ignore_missing_imports = true
+
 # --------------------------------------------------------------------------- pytest
 [tool.pytest]
 minversion = "9.0"
 testpaths = ["tests"]
-# scripts/ is not a package; this lets tests `import download_samples`.
-pythonpath = ["scripts"]
+# None of these folders is a package; this lets tests `import download_samples`, the
+# fixture generator (`make_revit_quirks`) and shared helpers (`record_contract`).
+pythonpath = ["scripts", "tests/fixtures", "tests/support"]
 strict = true
-addopts = ["-ra", "-m", "not sample"]
+addopts = ["-ra", "-m", "not sample and not modern"]
 markers = [
-    "sample: downloads the real Duplex files over the network (deselected by default; run with -m sample)",
+    "sample: reads the real Duplex files, downloading them if needed (deselected by default; run with -m sample)",
+    "modern: reads the audit's Revit 2019-2022 exports, downloading them if needed (deselected by default; run with -m modern)",
 ]
 filterwarnings = ["error"]
 
 # --------------------------------------------------------------------------- coverage
 [tool.coverage.run]
-source = ["ifc_sql_mcp"]
+# A path, not the package name: Alembic loads env.py and the migration scripts by file
+# path under its own module names, and they should be measured too.
+source = ["src/ifc_sql_mcp"]
 branch = true
 
 [tool.coverage.report]

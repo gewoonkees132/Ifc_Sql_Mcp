@@ -1,0 +1,316 @@
+{
+ "file": "Ifc4_Revit_ARC.ifc",
+ "schema": "IFC4",
+ "open_seconds": 0.3,
+ "application": [
+  "Autodesk Revit 2021 (ENU) 2021"
+ ],
+ "length_unit_scale_to_m": 0.001,
+ "elements_by_class": {
+  "IfcMember": 144,
+  "IfcBuildingElementProxy": 66,
+  "IfcWall": 47,
+  "IfcPlate": 44,
+  "IfcSlab": 35,
+  "IfcOpeningElement": 35,
+  "IfcFurniture": 32,
+  "IfcWindow": 17,
+  "IfcDoor": 16,
+  "IfcRailing": 10,
+  "IfcLightFixture": 10,
+  "IfcCurtainWall": 9,
+  "IfcFlowTerminal": 9,
+  "IfcColumn": 3,
+  "IfcStair": 3,
+  "IfcSystemFurnitureElement": 3,
+  "IfcCovering": 2,
+  "IfcRoof": 2,
+  "IfcStairFlight": 2
+ },
+ "elements_total": 489,
+ "spaces": 0,
+ "zones": 0,
+ "storeys": [
+  {
+   "name": "Foundation",
+   "elevation_m": -0.8,
+   "elements": 29
+  },
+  {
+   "name": "Level 1 Living Rm.",
+   "elevation_m": -0.55,
+   "elements": 59
+  },
+  {
+   "name": "Level 1",
+   "elevation_m": 0.0,
+   "elements": 242
+  },
+  {
+   "name": "Ceiling",
+   "elevation_m": 2.7,
+   "elements": 10
+  },
+  {
+   "name": "Level 2",
+   "elevation_m": 3.0,
+   "elements": 146
+  },
+  {
+   "name": "Roof Line",
+   "elevation_m": 6.0,
+   "elements": 3
+  }
+ ],
+ "elements_without_storey": 0,
+ "IfcDoor": {
+  "count": 16,
+  "with_overall_width_and_height": 16,
+  "top_sizes_m": [
+   [
+    "0.8 x 2.1",
+    7
+   ],
+   [
+    "1.44 x 2.082",
+    3
+   ],
+   [
+    "1.89 x 2.027",
+    3
+   ],
+   [
+    "1.44 x 2.66",
+    2
+   ],
+   [
+    "1.73 x 2.134",
+    1
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    16
+   ]
+  ],
+  "is_external_values": [
+   [
+    "False",
+    13
+   ],
+   [
+    "True",
+    3
+   ]
+  ],
+  "per_storey_top": [
+   [
+    "Level 2",
+    10
+   ],
+   [
+    "Level 1",
+    4
+   ],
+   [
+    "Level 1 Living Rm.",
+    2
+   ]
+  ]
+ },
+ "IfcWindow": {
+  "count": 17,
+  "with_overall_width_and_height": 17,
+  "top_sizes_m": [
+   [
+    "1.5 x 2.7",
+    15
+   ],
+   [
+    "1.173 x 0.38",
+    2
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    17
+   ]
+  ],
+  "is_external_values": [
+   [
+    "True",
+    17
+   ]
+  ],
+  "per_storey_top": [
+   [
+    "Level 1 Living Rm.",
+    8
+   ],
+   [
+    "Level 2",
+    7
+   ],
+   [
+    "Roof Line",
+    2
+   ]
+  ]
+ },
+ "IfcWall": {
+  "count": 47,
+  "is_external_values": [
+   [
+    "True",
+    28
+   ],
+   [
+    "False",
+    19
+   ]
+  ],
+  "fire_rating_values": [
+   [
+    "None",
+    47
+   ]
+  ],
+  "load_bearing_values": [
+   [
+    "False",
+    35
+   ],
+   [
+    "True",
+    11
+   ],
+   [
+    "None",
+    1
+   ]
+  ],
+  "material_kinds": [
+   [
+    "IfcMaterialLayerSet",
+    47
+   ]
+  ]
+ },
+ "material_kinds_all_elements": [
+  [
+   "IfcMaterial",
+   255
+  ],
+  [
+   "IfcMaterialConstituentSet",
+   104
+  ],
+  [
+   null,
+   71
+  ],
+  [
+   "IfcMaterialLayerSet",
+   59
+  ]
+ ],
+ "qto_duplicate_quantity_names": 94,
+ "qto_space_totals": {},
+ "qto_wall_net_side_area_by_type_m2": [
+  [
+   "Basic Wall:CL_W1",
+   6,
+   228.51
+  ],
+  [
+   "Basic Wall:Retaining - 300mm Concrete",
+   10,
+   195.79
+  ],
+  [
+   "Basic Wall:Interior - Partition",
+   14,
+   186.54
+  ],
+  [
+   "Basic Wall:Wall - Timber Clad",
+   8,
+   162.91
+  ],
+  [
+   "Basic Wall:SIP 202mm Wall - conc clad",
+   4,
+   114.76
+  ],
+  [
+   "Basic Wall:Foundation - 300mm Concrete",
+   1,
+   30.9
+  ],
+  [
+   "Basic Wall:Interior - 165 Partition (1-hr)",
+   3,
+   17.25
+  ],
+  [
+   "Basic Wall:Cavity wall_sliders",
+   1,
+   9.37
+  ]
+ ],
+ "qto_wall_net_side_area_total_m2": 946.04,
+ "space_examples": [],
+ "geometry": {
+  "targets": 115,
+  "shapes": 115,
+  "measure_failures": 0,
+  "seconds": 0.3,
+  "wall_side_area_total_m2": 964.6,
+  "wall_side_area_by_type_m2": [
+   [
+    "Basic Wall:CL_W1",
+    6,
+    231.4
+   ],
+   [
+    "Basic Wall:Retaining - 300mm Concrete",
+    10,
+    195.8
+   ],
+   [
+    "Basic Wall:Interior - Partition",
+    14,
+    193.0
+   ],
+   [
+    "Basic Wall:Wall - Timber Clad",
+    8,
+    162.9
+   ],
+   [
+    "Basic Wall:SIP 202mm Wall - conc clad",
+    4,
+    123.3
+   ],
+   [
+    "Basic Wall:Foundation - 300mm Concrete",
+    1,
+    31.5
+   ],
+   [
+    "Basic Wall:Interior - 165 Partition (1-hr)",
+    3,
+    17.3
+   ],
+   [
+    "Basic Wall:Cavity wall_sliders",
+    1,
+    9.4
+   ]
+  ],
+  "slab_footprint_area_total_m2": 1089.8
+ },
+ "total_seconds": 0.8
+}

@@ -3,8 +3,12 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # The audit's evidence is recorded output (tool calls, transcripts, readings), kept
+      # byte for byte as it was written, so the whitespace fixers leave it alone.
       - id: trailing-whitespace
+        exclude: ^docs/audit/evidence/
       - id: end-of-file-fixer
+        exclude: ^docs/audit/evidence/
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict

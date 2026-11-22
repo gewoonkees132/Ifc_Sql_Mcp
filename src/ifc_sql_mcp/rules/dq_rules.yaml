@@ -1,0 +1,667 @@
+# The data quality rule catalogue.
+#
+# `ifc-sql dq` loads this file and checks it strictly (src/ifc_sql_mcp/dq/catalogue.py),
+# synchronises the rules into ifc.dq_rule, and evaluates every rule against each model it
+# checks. docs/data-quality.md explains the rules and their findings, and ADR 5 the design.
+#
+# Every rule has these four keys:
+#   rule_id      Stable snake_case id. Findings refer to it, so a rule whose meaning
+#                changes gets a new id instead of an edited query.
+#   description  What the rule checks and what a finding means. This is the text an LLM
+#                reads in ifc.dq_rule.
+#   severity     error | warning | info (below). Copied onto each finding when it is found.
+#   dimension    completeness | validity | consistency | uniqueness (below).
+#   scope        model_content | loader_coverage (below).
+# and exactly one of these two, which says how the rule is evaluated:
+#   issue_code   An IssueCode from src/ifc_sql_mcp/ingest/issues.py. Every ifc.ingest_issue
+#                row of the model with that code becomes a finding, with the issue's
+#                object and message. Each IssueCode has exactly one rule.
+#   sql          A SELECT that returns object_id (NULL for a finding about the whole model)
+#                and message, one row per finding, for the model whose id is :model_id.
+#                That is the only parameter allowed. SQLAlchemy reads ':' followed by a
+#                word as a parameter even inside a string literal, so the loader refuses
+#                any other.
+#
+# Severity says what a finding means for answers drawn from the data:
+#   error    Something in the file is not in the database: an object was skipped, or a
+#            value was dropped or left NULL, and nothing stored stands in for it.
+#   warning  What is stored may mislead: a value was chosen between two, assumed, could
+#            not be used as intended, or is a placeholder that looks like real data.
+#   info     Stored as written and plainly not a value ('N/A', an empty string). It
+#            misleads no one who reads it, but it is a gap worth counting.
+#
+# Scope says who can act on a finding (audit finding A9):
+#   model_content    what the file contains, as its author modelled it or Revit's exporter
+#                    wrote it: a re-export, or a change in Revit, can change it
+#   loader_coverage  something in the file that this tool does not read or convert; the
+#                    model is not at fault, and only a change to this tool fixes it
+#
+# Dimension says what kind of defect it is:
+#   completeness  something expected is missing
+#   validity      a value breaks a format, type or range, or a rule of IFC
+#   consistency   two pieces of data disagree
+#   uniqueness    something that must occur once occurs more than once
+
+rules:
+  # ---------------------------------------------------------- stored values, by SQL
+
+  - rule_id: value_is_property_name
+    description: >-
+      A text property holds its own name, e.g. BarCode = 'BarCode'. Revit 2011 fills
+      unset parameters this way. The value looks like data, so a query that groups or
+      filters on the property treats the placeholder as a real value.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    sql: |
+      SELECT p.object_id,
+             format('%s.%s = %L, the parameter''s own name: a placeholder, not a value',
+                    p.pset_name, p.prop_name, p.value_text) AS message
+      FROM ifc.property AS p
+      JOIN ifc.object AS o ON o.object_id = p.object_id
+      WHERE o.model_id = :model_id
+        AND p.value_text = p.prop_name
+
+  - rule_id: value_is_not_applicable
+    description: >-
+      A text property holds 'N/A', which Revit 2013 writes for parameters that have no
+      value. Recognisable as "no value", but the parameter is still unfilled.
+    severity: info
+    dimension: completeness
+    scope: model_content
+    sql: |
+      SELECT p.object_id,
+             format('%s.%s = %L: no value', p.pset_name, p.prop_name, p.value_text)
+                 AS message
+      FROM ifc.property AS p
+      JOIN ifc.object AS o ON o.object_id = p.object_id
+      WHERE o.model_id = :model_id
+        AND p.value_text = 'N/A'
+
+  - rule_id: value_is_empty
+    description: >-
+      A text property holds an empty or whitespace-only string. The property exists, but
+      it was never filled in.
+    severity: info
+    dimension: completeness
+    scope: model_content
+    sql: |
+      SELECT p.object_id,
+             format('%s.%s = %L: no value', p.pset_name, p.prop_name, p.value_text)
+                 AS message
+      FROM ifc.property AS p
+      JOIN ifc.object AS o ON o.object_id = p.object_id
+      WHERE o.model_id = :model_id
+        AND p.value_text !~ '\S'
+
+  - rule_id: element_without_storey
+    description: >-
+      A physical element has no storey: it is not contained in one, and neither its
+      container nor the element it is part of leads to one. Takeoffs and counts by storey
+      leave it out.
+    severity: warning
+    dimension: completeness
+    scope: model_content
+    sql: |
+      SELECT e.object_id,
+             'no storey: neither its container nor a host element leads to one' AS message
+      FROM ifc.element AS e
+      JOIN ifc.object AS o ON o.object_id = e.object_id
+      WHERE o.model_id = :model_id
+        AND e.storey_id IS NULL
+
+  - rule_id: space_without_area
+    description: >-
+      A space has no area_m2 quantity from any source, so space schedules and area
+      takeoffs show no area for it.
+    severity: warning
+    dimension: completeness
+    scope: model_content
+    sql: |
+      SELECT o.object_id,
+             format('space %s has no area_m2 from any source', coalesce(o.name, '(unnamed)'))
+                 AS message
+      FROM ifc.object AS o
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSpace'
+        AND NOT EXISTS (
+            SELECT 1 FROM ifc.quantity AS q
+            WHERE q.object_id = o.object_id AND q.name = 'area_m2'
+        )
+
+  - rule_id: wall_area_inconsistent
+    description: >-
+      A wall's area_m2 (one face) is more than 5 % above its length_m times height_m,
+      which a face of that length and height cannot be. A wall with an edited profile
+      can come close; well above it, one of the three quantities is wrong, and area
+      takeoffs inherit it.
+    severity: warning
+    dimension: consistency
+    scope: model_content
+    sql: |
+      SELECT o.object_id,
+             format('area_m2 = %s m2 is more than 1.05 x length_m x height_m = %s m2',
+                    round(CAST(a.value AS numeric), 3),
+                    round(CAST(1.05 * l.value * h.value AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      JOIN ifc.v_quantity AS l ON l.object_id = o.object_id AND l.name = 'length_m'
+      JOIN ifc.v_quantity AS h ON h.object_id = o.object_id AND h.name = 'height_m'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcWall'
+        AND a.value > 1.05 * l.value * h.value
+
+  - rule_id: slab_volume_inconsistent
+    description: >-
+      A slab's volume_m3 is not between 0.75 and 1.1 times its area_m2 times width_m (its
+      thickness). Openings make a slab's volume less than its gross area times its
+      thickness, but not by a quarter; further off, the thickness or the volume is wrong
+      (Revit 2021 gives a 150 mm foundation slab a Width of 25.4 m), and takeoffs of slab
+      volume or concrete inherit it.
+    severity: warning
+    dimension: consistency
+    scope: model_content
+    sql: |
+      SELECT o.object_id,
+             format('volume_m3 = %s m3 is not between 0.75 and 1.1 x area_m2 x width_m = %s m3',
+                    round(CAST(v.value AS numeric), 3),
+                    round(CAST(a.value * w.value AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS v ON v.object_id = o.object_id AND v.name = 'volume_m3'
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      JOIN ifc.v_quantity AS w ON w.object_id = o.object_id AND w.name = 'width_m'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSlab'
+        AND (v.value < 0.75 * a.value * w.value OR v.value > 1.1 * a.value * w.value)
+
+  - rule_id: space_volume_inconsistent
+    description: >-
+      A space's volume_m3 is more than 10 % above its area_m2 times height_m. A room's
+      volume follows its ceiling, so it is often less than area x height (Revit's
+      Unbounded Height), but it cannot be more; a volume above it was computed or
+      exported wrongly.
+    severity: warning
+    dimension: consistency
+    scope: model_content
+    sql: |
+      SELECT o.object_id,
+             format('volume_m3 = %s m3 is more than 1.1 x area_m2 x height_m = %s m3',
+                    round(CAST(v.value AS numeric), 3),
+                    round(CAST(1.1 * a.value * h.value AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS v ON v.object_id = o.object_id AND v.name = 'volume_m3'
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      JOIN ifc.v_quantity AS h ON h.object_id = o.object_id AND h.name = 'height_m'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSpace'
+        AND v.value > 1.1 * a.value * h.value
+
+  - rule_id: space_perimeter_implausible
+    description: >-
+      A space's perimeter_m is shorter than 2 x sqrt(pi x area_m2), the perimeter of a
+      circle of its area, below which no shape can go. The perimeter or the area is in
+      the wrong unit (Revit 2021 writes GrossPerimeter in feet, labelled with the file's
+      millimetres).
+    severity: warning
+    dimension: validity
+    scope: model_content
+    sql: |
+      SELECT o.object_id,
+             format('perimeter_m = %s m is shorter than 2 x sqrt(pi x area_m2) = %s m',
+                    round(CAST(p.value AS numeric), 3),
+                    round(CAST(2 * sqrt(pi() * a.value) AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN ifc.v_quantity AS p ON p.object_id = o.object_id AND p.name = 'perimeter_m'
+      JOIN ifc.v_quantity AS a ON a.object_id = o.object_id AND a.name = 'area_m2'
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSpace'
+        AND p.value < 2 * sqrt(pi() * a.value)
+
+  - rule_id: duplicate_space
+    description: >-
+      A space covers the floor of another again. Its plan lies at least 90 % inside larger
+      spaces on its storey, whatever its number or name; a space without a plan repeats
+      one with the same number, name, storey and floor area. A Revit model that holds both
+      Rooms and MEP Spaces exports each room twice, and summing the schedule counts its
+      area twice. v_space_schedule.duplicate_of points at the space it repeats; leave those
+      rows out of totals, or export rooms or spaces, not both.
+    severity: warning
+    dimension: uniqueness
+    scope: model_content
+    sql: |
+      SELECT s.object_id,
+             format('space %s %L on %s repeats space %s %L (object %s): %s, a room '
+                    'exported twice',
+                    coalesce(s.number, '(unnumbered)'), s.name,
+                    coalesce(s.storey_name, 'no storey'), coalesce(first.name, '(unnumbered)'),
+                    first_space.long_name, s.duplicate_of,
+                    CASE WHEN s.footprint_m2 IS NOT NULL THEN 'its plan lies inside that one'
+                         ELSE 'the same number, name, storey and floor area' END)
+                 AS message
+      FROM ifc.v_space_schedule AS s
+      JOIN ifc.object AS first ON first.object_id = s.duplicate_of
+      JOIN ifc.spatial_element AS first_space ON first_space.object_id = s.duplicate_of
+      WHERE s.model_id = :model_id
+
+  # ---------------------------------------------------------- what the model lacks (A9)
+
+  - rule_id: model_without_quantities
+    description: >-
+      The model has elements but no quantity from IFC base quantities or Revit
+      parameters (a door's or window's size, written whatever the export options, does not
+      count). Revit exported it with neither "Export base quantities" nor "Export Revit
+      property sets" ticked, so no area, volume or length can be given. Tick one and
+      export again, or run ifc-sql ingest --geometry on the same file: it measures the
+      shapes, with no new export.
+    severity: warning
+    dimension: completeness
+    scope: model_content
+    sql: |
+      SELECT CAST(NULL AS bigint) AS object_id,
+             format('none of the model''s %s elements has a quantity from IFC base '
+                    'quantities or Revit parameters: export again with "Export base '
+                    'quantities" ticked, or measure the shapes of this file with '
+                    'ifc-sql ingest --geometry', count(*)) AS message
+      FROM ifc.element AS e
+      JOIN ifc.object AS o ON o.object_id = e.object_id
+      WHERE o.model_id = :model_id
+        AND NOT e.is_feature
+      HAVING count(*) > 0
+         AND NOT EXISTS (
+             SELECT 1 FROM ifc.quantity AS q
+             JOIN ifc.object AS qo ON qo.object_id = q.object_id
+             WHERE qo.model_id = :model_id AND q.source IN ('ifc_qto', 'revit_pset')
+         )
+
+  - rule_id: model_without_spaces
+    description: >-
+      An architectural model (discipline ARC) has no spaces, so room schedules and
+      areas by room are empty. Place rooms in Revit and export them. Other disciplines
+      are not checked: an MEP or structural model often has no rooms of its own.
+    severity: warning
+    dimension: completeness
+    scope: model_content
+    sql: |
+      SELECT CAST(NULL AS bigint) AS object_id,
+             'the architectural model has no spaces (rooms): room schedules and areas by '
+             'room are empty' AS message
+      FROM ifc.model AS m
+      WHERE m.model_id = :model_id
+        AND m.discipline = 'ARC'
+        AND NOT EXISTS (
+            SELECT 1 FROM ifc.object AS o
+            WHERE o.model_id = m.model_id AND o.ifc_class_base = 'IfcSpace'
+        )
+
+  - rule_id: missing_fire_rating
+    description: >-
+      A wall, curtain wall, door or slab has no FireRating in its Pset_*Common set (or an
+      empty one). Handover requirements usually ask for it; info, because not every
+      element needs one.
+    severity: info
+    dimension: completeness
+    scope: model_content
+    sql: |
+      SELECT e.object_id,
+             format('no FireRating in %s', want.pset_name) AS message
+      FROM ifc.element AS e
+      JOIN ifc.object AS o ON o.object_id = e.object_id
+      JOIN (VALUES ('IfcWall', 'Pset_WallCommon'), ('IfcCurtainWall', 'Pset_CurtainWallCommon'),
+                   ('IfcDoor', 'Pset_DoorCommon'), ('IfcSlab', 'Pset_SlabCommon'))
+          AS want (ifc_class_base, pset_name) ON want.ifc_class_base = o.ifc_class_base
+      WHERE o.model_id = :model_id
+        AND NOT e.is_feature
+        AND NOT EXISTS (
+            SELECT 1 FROM ifc.property AS p
+            WHERE p.object_id = e.object_id AND p.pset_name = want.pset_name
+              AND p.prop_name = 'FireRating' AND btrim(p.value_text) <> ''
+        )
+
+  - rule_id: placeholder_material
+    description: >-
+      A material is one of Revit's placeholders, not a real material: a name starting
+      with Default (Default Wall), <Unnamed> or <By Category>, or a render material named
+      after its colour (Render Material 0-127-255, Materiale per il rendering 0-127-255).
+      Material takeoffs and build-ups say nothing about such elements. One finding per
+      material, with the number of elements that use it.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    sql: |
+      SELECT CAST(NULL AS bigint) AS object_id,
+             format('material %L, used by %s elements, is a Revit placeholder', mat.name,
+                    count(DISTINCT layer.element_id)) AS message
+      FROM ifc.material AS mat
+      JOIN ifc.element_material_layer AS layer ON layer.material_id = mat.material_id
+      WHERE mat.model_id = :model_id
+        AND (mat.name ~* '^default'
+             OR mat.name IN ('<Unnamed>', '<By Category>')
+             OR mat.name ~* '^(render material|rendering material|materiale per il rendering) [0-9]+-[0-9]+-[0-9]+$')
+      GROUP BY mat.material_id, mat.name
+
+  - rule_id: placeholder_project_info
+    description: >-
+      The model's Project Information is Revit's default: project number 0001 or
+      Project Number, or project name Project Name. Fill it in: models of different
+      projects with the same default are otherwise matched as one project.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    sql: |
+      SELECT CAST(NULL AS bigint) AS object_id,
+             format('Project Information is Revit''s default (number %L, name %L): fill it in',
+                    m.project_name, m.project_long_name) AS message
+      FROM ifc.model AS m
+      WHERE m.model_id = :model_id
+        AND (m.project_name IN ('0001', 'Project Number') OR m.project_long_name = 'Project Name')
+
+  - rule_id: space_area_not_mapped
+    description: >-
+      A space has an area in one of its sets (a value in m2), but no area_m2 quantity:
+      no rule of this tool maps that set. The model has the area; the tool cannot use it.
+    severity: warning
+    dimension: completeness
+    scope: loader_coverage
+    sql: |
+      SELECT o.object_id,
+             format('space %s has %s.%s = %s m2, which no rule maps to area_m2',
+                    coalesce(o.name, '(unnamed)'), area.pset_name, area.prop_name,
+                    round(CAST(area.value_num AS numeric), 3)) AS message
+      FROM ifc.object AS o
+      JOIN LATERAL (
+          SELECT p.pset_name, p.prop_name, p.value_num
+          FROM ifc.property AS p
+          WHERE p.object_id = o.object_id AND p.unit = 'm2' AND NOT p.is_implausible
+          ORDER BY p.pset_name, p.prop_name
+          LIMIT 1
+      ) AS area ON true
+      WHERE o.model_id = :model_id
+        AND o.ifc_class_base = 'IfcSpace'
+        AND NOT EXISTS (
+            SELECT 1 FROM ifc.quantity AS q
+            WHERE q.object_id = o.object_id AND q.name = 'area_m2'
+        )
+
+  # ---------------------------------------------------------- issues: model and units
+
+  - rule_id: multiple_projects
+    description: >-
+      The file contains more than one IfcProject, which IFC forbids. The model's project
+      name and GlobalId come from the first one.
+    severity: warning
+    dimension: uniqueness
+    scope: model_content
+    issue_code: multiple_projects
+
+  - rule_id: invalid_project_global_id
+    description: >-
+      The IfcProject GlobalId is not 22 characters of IFC's base-64 alphabet, so
+      model.project_global_id is NULL.
+    severity: error
+    dimension: validity
+    scope: model_content
+    issue_code: invalid_project_global_id
+
+  - rule_id: unit_assumed_si
+    description: >-
+      The file declares no unit for length, area, volume or plane angle, so values of
+      that dimension were read as SI units, as IFC prescribes. If the exporter meant
+      another unit, every such value is off by a constant factor.
+    severity: warning
+    dimension: completeness
+    scope: model_content
+    issue_code: unit_assumed_si
+
+  - rule_id: unit_not_convertible
+    description: >-
+      A value's unit has no known SI conversion, so the value was dropped and is not in
+      ifc.property.
+    severity: error
+    dimension: validity
+    scope: loader_coverage
+    issue_code: unit_not_convertible
+
+  - rule_id: measure_not_converted
+    description: >-
+      A measure is stored as written and without a unit, because the file does not
+      declare its unit in SI (a power in an undeclared unit, a flow in mm3/s): it is in
+      the file's own unit, not in SI like every other number with a unit.
+    severity: warning
+    dimension: validity
+    scope: loader_coverage
+    issue_code: measure_not_converted
+
+  # ---------------------------------------------------------- issues: objects
+
+  - rule_id: invalid_global_id
+    description: >-
+      An object's GlobalId is malformed, so the object was not loaded and is missing from
+      every count, takeoff and schedule. The finding has no object; its message gives the
+      GlobalId as written in the file.
+    severity: error
+    dimension: validity
+    scope: model_content
+    issue_code: invalid_global_id
+
+  - rule_id: duplicate_global_id
+    description: >-
+      Two objects in the file share a GlobalId, so the second was not loaded. The finding
+      points at the object that kept the GlobalId.
+    severity: error
+    dimension: uniqueness
+    scope: model_content
+    issue_code: duplicate_global_id
+
+  - rule_id: invalid_elevation
+    description: >-
+      A storey elevation is not a finite number or does not fit numeric(9,3), so
+      elevation_m is NULL.
+    severity: error
+    dimension: validity
+    scope: model_content
+    issue_code: invalid_elevation
+
+  - rule_id: revit_name_unparsed
+    description: >-
+      An element name does not follow Revit's Family:Type:ElementId pattern, so
+      revit_family and revit_type (and, if no ElementId was found, revit_element_id) are
+      NULL. The name itself is kept in object.name.
+    severity: warning
+    dimension: validity
+    scope: loader_coverage
+    issue_code: revit_name_unparsed
+
+  - rule_id: revit_tag_mismatch
+    description: >-
+      The ElementId read from an element's name differs from its Tag, where Revit writes
+      the same id, so one of them points at the wrong Revit element.
+    severity: warning
+    dimension: consistency
+    scope: model_content
+    issue_code: revit_tag_mismatch
+
+  - rule_id: control_character_in_name
+    description: >-
+      A Revit family or type name holds control characters, such as the U+001F that
+      Revit 2022 left in "1AR_MUR_PV001 - Interrato_Interrato". They are removed from
+      revit_family and revit_type, so groupings show the name a person typed; the IFC
+      Name keeps them as written. Rename the type in Revit.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    issue_code: control_character_in_name
+
+  - rule_id: geometry_not_measured
+    description: >-
+      With ifc-sql ingest --geometry: IfcOpenShell could not triangulate or measure an
+      object's body, so it got no geometry quantity. The shape may still be fine in Revit.
+    severity: warning
+    dimension: completeness
+    scope: loader_coverage
+    issue_code: geometry_not_measured
+
+  # ---------------------------------------------------------- issues: properties, quantities
+
+  - rule_id: unnamed_property
+    description: >-
+      A property or its property set has no name, so its value was dropped.
+    severity: error
+    dimension: completeness
+    scope: model_content
+    issue_code: unnamed_property
+
+  - rule_id: unsupported_property
+    description: >-
+      A property that is not a single value (a list, table, enumeration or complex
+      property, or a quantity without a number) was dropped; the pipeline reads only
+      single values.
+    severity: error
+    dimension: completeness
+    scope: loader_coverage
+    issue_code: unsupported_property
+
+  - rule_id: unsupported_property_set
+    description: >-
+      A property set definition other than IfcPropertySet or IfcElementQuantity holds
+      values, which were dropped.
+    severity: error
+    dimension: completeness
+    scope: loader_coverage
+    issue_code: unsupported_property_set
+
+  - rule_id: non_finite_value
+    description: >-
+      A number is NaN or infinite, as written or after unit conversion. No column accepts
+      it, so the value was dropped.
+    severity: error
+    dimension: validity
+    scope: model_content
+    issue_code: non_finite_value
+
+  - rule_id: conflicting_property
+    description: >-
+      The file gives one object two different values for the same property set and
+      property, at the same level (Revit 2013 writes instance and type parameters as two
+      sets of one name). The value written first is stored; the message names both.
+    severity: warning
+    dimension: consistency
+    scope: model_content
+    issue_code: conflicting_property
+
+  - rule_id: quantity_not_a_measure
+    description: >-
+      A parameter mapped to a canonical quantity is not a measure in the quantity's unit
+      (Revit writes pipe fittings' Length as a unitless IfcReal), so no quantity was made
+      and takeoffs leave the object out. The raw value stays in ifc.property.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    issue_code: quantity_not_a_measure
+
+  - rule_id: negative_quantity
+    description: >-
+      A parameter mapped to a canonical quantity is negative, so no quantity was made.
+      The raw value stays in ifc.property.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    issue_code: negative_quantity
+
+  - rule_id: implausible_quantity
+    description: >-
+      A value in an IFC quantity set breaks a physical bound set by the other values of
+      its set: a wall's side area above twice its length x height, a volume above twice
+      area x height or thickness, a net value above its gross one, a perimeter below
+      half that of a circle of the same area. Revit 2019 and 2021 write such values (a
+      space volume 1,000 times too large, a perimeter in feet labelled millimetres). The
+      value is stored as written in ifc.property with is_implausible, and no quantity
+      is made from it; the message gives the bound.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    issue_code: implausible_quantity
+
+  - rule_id: conflicting_quantity
+    description: >-
+      Two different values arrive for one quantity of an object from the same source;
+      the first is stored, and the message names both.
+    severity: warning
+    dimension: consistency
+    scope: model_content
+    issue_code: conflicting_quantity
+
+  # ---------------------------------------------------------- issues: classifications
+
+  - rule_id: omniclass_unparsed
+    description: >-
+      An OmniClass parameter holds no recognisable code (Revit 2013 writes only a title
+      for spaces), so no classification was made. The raw value stays in ifc.property.
+    severity: warning
+    dimension: validity
+    scope: model_content
+    issue_code: omniclass_unparsed
+
+  - rule_id: incomplete_classification_reference
+    description: >-
+      An IfcClassificationReference has no code or no system, so it classifies nothing
+      and was dropped. Revit 2013 attaches such references, with an empty code and name,
+      to type objects; every element of the type gets a finding.
+    severity: warning
+    dimension: completeness
+    scope: model_content
+    issue_code: incomplete_classification_reference
+
+  - rule_id: unsupported_classification
+    description: >-
+      A classification association that is not an IfcClassificationReference was
+      dropped.
+    severity: error
+    dimension: completeness
+    scope: loader_coverage
+    issue_code: unsupported_classification
+
+  - rule_id: conflicting_classification
+    description: >-
+      One classification system and code arrive with two different titles; the first is
+      stored.
+    severity: warning
+    dimension: consistency
+    scope: model_content
+    issue_code: conflicting_classification
+
+  # ---------------------------------------------------------- issues: materials
+
+  - rule_id: multiple_material_associations
+    description: >-
+      An element has more than one material association; the first is used and the
+      others are ignored.
+    severity: warning
+    dimension: uniqueness
+    scope: model_content
+    issue_code: multiple_material_associations
+
+  - rule_id: unsupported_material
+    description: >-
+      An element's material definition is of a kind the pipeline does not read, so the
+      element has no materials.
+    severity: error
+    dimension: completeness
+    scope: loader_coverage
+    issue_code: unsupported_material
+
+  - rule_id: unnamed_material
+    description: >-
+      A material layer or list entry has no named material, so that position, with its
+      thickness, was skipped.
+    severity: error
+    dimension: completeness
+    scope: model_content
+    issue_code: unnamed_material
+
+  - rule_id: invalid_layer_thickness
+    description: >-
+      A material layer's thickness is negative or not finite, so thickness_m is NULL.
+    severity: error
+    dimension: validity
+    scope: model_content
+    issue_code: invalid_layer_thickness

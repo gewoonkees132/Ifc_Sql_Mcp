@@ -1,0 +1,79 @@
+connect                                                               0.008 s          ch 
+S1 what is loaded                              list_models             0.44 s     4880 ch 
+S0 schema resource                             ifc://schema           0.041 s    28614 ch 
+m5 S2 storeys                                  list_storeys           0.031 s      936 ch 
+m5 S3 count by class                           quantity_takeoff        0.06 s     2082 ch 
+m5 S4 wall area by type                        quantity_takeoff       0.064 s    10570 ch 
+m5 S4b area by storey                          quantity_takeoff       0.044 s     1195 ch 
+m5 S5 material area                            quantity_takeoff       0.097 s    10907 ch 
+m5 S6 list doors page 1                        find_elements          0.046 s     5300 ch 
+m5 S6b all door pages                                                   0.0 s          ch 
+m5 S7 door detail                              get_element            0.094 s     3071 ch 
+m5 S7b first wall                              find_elements          0.028 s      405 ch 
+m5 S7c wall detail                             get_element            0.038 s     3678 ch 
+m5 S8 room schedule                            space_schedule         0.054 s      202 ch 
+m5 S9 dq report                                data_quality_report     0.06 s     7811 ch 
+m5 S10 sql external_walls_by_type              run_sql                0.051 s      371 ch 
+m5 S10 sql doors_per_storey                    run_sql                0.024 s      223 ch 
+m5 S10 sql door_schedule_by_type               run_sql                0.028 s      433 ch 
+m5 S10 sql door_sizes_anywhere                 run_sql                0.025 s      482 ch 
+m5 S10 sql fire_rated_walls                    run_sql                0.046 s      183 ch 
+m5 S10 sql wall_area_naive_from_qto            run_sql                0.027 s      189 ch 
+m5 S10 sql wall_area_by_type_from_qto          run_sql                0.616 s      487 ch 
+m5 S10 sql space_areas_from_qto                run_sql                0.032 s      188 ch 
+m5 S10 sql space_volume_trap                   run_sql                0.033 s      333 ch 
+m5 S10 sql find_by_revit_element_id            run_sql                0.033 s      370 ch 
+m5 S10 sql materials_of_windows                run_sql                 0.03 s      182 ch 
+m5 S11 summary resource                        ifc://models/5/summary   0.084 s      578 ch 
+m5 S12 briefing prompt                                                      s     1109 ch 
+m6 S2 storeys                                  list_storeys           0.031 s     4315 ch 
+m6 S3 count by class                           quantity_takeoff        0.06 s     1763 ch 
+m6 S4 wall area by type                        quantity_takeoff       0.109 s     8822 ch 
+m6 S4b area by storey                          quantity_takeoff       0.119 s     3442 ch 
+m6 S5 material area                            quantity_takeoff       0.169 s     3488 ch 
+m6 S6 list doors page 1                        find_elements          0.064 s    37765 ch 
+m6 S6b all door pages                                                 1.207 s          ch 
+m6 S7 door detail                              get_element             0.04 s     2434 ch 
+m6 S7b first wall                              find_elements          0.049 s      464 ch 
+m6 S7c wall detail                             get_element            0.037 s     2439 ch 
+m6 S8 room schedule                            space_schedule         0.028 s      202 ch 
+m6 S9 dq report                                data_quality_report    0.078 s     6694 ch 
+m6 S10 sql external_walls_by_type              run_sql                0.055 s      881 ch 
+m6 S10 sql doors_per_storey                    run_sql                0.038 s      374 ch 
+m6 S10 sql door_schedule_by_type               run_sql                0.044 s      585 ch 
+m6 S10 sql door_sizes_anywhere                 run_sql                0.051 s      332 ch 
+m6 S10 sql fire_rated_walls                    run_sql                 0.04 s      185 ch 
+m6 S10 sql wall_area_naive_from_qto            run_sql                0.023 s      187 ch 
+m6 S10 sql wall_area_by_type_from_qto          run_sql                0.038 s      214 ch 
+m6 S10 sql space_areas_from_qto                run_sql                0.027 s      188 ch 
+m6 S10 sql space_volume_trap                   run_sql                0.031 s      333 ch 
+m6 S10 sql find_by_revit_element_id            run_sql                0.031 s      424 ch 
+m6 S10 sql materials_of_windows                run_sql                0.036 s      186 ch 
+m6 S11 summary resource                        ifc://models/6/summary    0.11 s      601 ch 
+m6 S12 briefing prompt                                                      s     1109 ch 
+m7 S2 storeys                                  list_storeys           0.026 s      646 ch 
+m7 S3 count by class                           quantity_takeoff       0.061 s     2544 ch 
+m7 S4 wall area by type                        quantity_takeoff       0.089 s    16531 ch 
+m7 S4b area by storey                          quantity_takeoff       0.067 s      986 ch 
+m7 S5 material area                            quantity_takeoff       0.099 s     4529 ch 
+m7 S6 list doors page 1                        find_elements          0.065 s    36954 ch 
+m7 S6b all door pages                                                  0.04 s          ch 
+m7 S7 door detail                              get_element            0.035 s     3126 ch 
+m7 S7b first wall                              find_elements          0.031 s      400 ch 
+m7 S7c wall detail                             get_element            0.036 s     3661 ch 
+m7 S8 room schedule                            space_schedule         0.081 s    39012 ch 
+m7 S9 dq report                                data_quality_report     0.08 s     9620 ch 
+m7 S10 sql external_walls_by_type              run_sql                0.034 s      395 ch 
+m7 S10 sql doors_per_storey                    run_sql                0.028 s      214 ch 
+m7 S10 sql door_schedule_by_type               run_sql                0.045 s      441 ch 
+m7 S10 sql door_sizes_anywhere                 run_sql                0.034 s      340 ch 
+m7 S10 sql fire_rated_walls                    run_sql                0.038 s      184 ch 
+m7 S10 sql wall_area_naive_from_qto            run_sql                0.024 s      191 ch 
+m7 S10 sql wall_area_by_type_from_qto          run_sql                0.038 s      404 ch 
+m7 S10 sql space_areas_from_qto                run_sql                0.026 s      192 ch 
+m7 S10 sql space_volume_trap                   run_sql                 0.03 s      650 ch 
+m7 S10 sql find_by_revit_element_id            run_sql                0.031 s      408 ch 
+m7 S10 sql materials_of_windows                run_sql                0.032 s      180 ch 
+m7 S11 summary resource                        ifc://models/7/summary   0.119 s      592 ch 
+m7 S12 briefing prompt                                                      s     1109 ch 
+S13 storey alignment across models             run_sql                0.036 s     2221 ch 
