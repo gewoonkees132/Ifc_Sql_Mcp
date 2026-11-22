@@ -34,8 +34,8 @@ with the evidence and the fix. One of them corrects a figure in the audit itself
   30,344.7 m² for 7,438.8 m² of rooms. This is **R1**, the one P0 of the re-check.
 - **Three smaller gaps.**
   - Ceilings' IFC base quantities are not read (R2).
-  - Enumerated property values are dropped, which leaves 724 "errors" on file C that are
-    loader gaps, not the model's (R3).
+  - Enumerated property values are not read, which leaves 724 "errors" on file C that
+    are loader gaps, not the model's (R3).
   - The no-quantities warning sends the architect back to Revit, although
     `ingest --geometry` can measure the file they already have (R4).
 
@@ -122,7 +122,7 @@ names too, and each error listed the name to use.
 |---|---|---|---|---|
 | [R1](#r1-room-totals-count-the-same-floor-two-to-four-times) | Room totals count the same floor two to four times | P0 | M | [#23](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/23) |
 | [R2](#r2-ceilings-ifc-base-quantities-are-not-read) | Ceilings' IFC base quantities are not read | P1 | S | [#24](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/24) |
-| [R3](#r3-enumerated-property-values-are-dropped) | Enumerated property values are dropped: 724 "errors" on C | P2 | S | [#25](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/25) |
+| [R3](#r3-enumerated-property-values-are-not-read) | Enumerated property values are not read: 724 "errors" on C | P2 | S | [#25](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/25) |
 | [R4](#r4-the-no-quantities-warning-does-not-mention---geometry) | The no-quantities warning does not mention `--geometry` | P2 | S | [#26](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/26) |
 | [A18.4](#a184-the-embedded-database-still-deferred) | The embedded database, deferred in the audit | P3 | L | [#27](https://github.com/gewoonkees132/Ifc_Sql_Mcp/issues/27) |
 
@@ -194,23 +194,27 @@ the fallback, and `Width` (the covering's thickness) to `width_m`. Read IFC2X3
 fallback. **Acceptance:** A 2/2 coverings with an area (154.3 m²), C 43/43 (1,755.4 m²),
 and E unchanged at 6,879.0 m².
 
-### R3. Enumerated property values are dropped
+### R3. Enumerated property values are not read
 
 **Evidence.**
 - File C's data quality report has **724 errors**, every one `unsupported_property`:
   `'Pset_DuctSegmentTypeCommon'.'Shape' is an IfcPropertyEnumeratedValue, which is not
   read`.
-- So 724 of C's 837 duct segments lose their shape (round, rectangular, …).
+- Each is the `Shape` of one of C's 837 duct segments. Revit wrote every one as the
+  single label `Undefined`, so this file loses nothing of value. An export whose ducts
+  have a shape, or any other enumerated property (IFC4's common property sets use many),
+  loses it.
 - [revit-ifc-quirks.md §9](../revit-ifc-quirks.md#9-property-values-are-shared-between-elements)
   says other kinds of property "would be reported". This is the first file that has one.
 
 **Why it matters.** It is A9's defect again, on another file. The most severe findings
-of an MEP model describe the loader, not the model, and the values are gone.
+of an MEP model describe the loader, not the model.
 
 **Fix.** Read an `IfcPropertyEnumeratedValue` as a text value. A single value is stored
 as itself; several are joined with `", "` in the file's order. The value type is the
 type of the enumeration value (`IfcLabel`). **Acceptance:** C has 0
-`unsupported_property` findings, and its 724 duct segments carry their `Shape`.
+`unsupported_property` findings, and its 724 duct segments carry `Shape` as IfcOpenShell
+reads it, `Undefined`.
 
 ### R4. The no-quantities warning does not mention `--geometry`
 
