@@ -136,8 +136,9 @@ jobs:
       run:
         shell: pwsh
 
+    # The runner context is not available at job level; the workspace is.
     env:
-      IFC_SQL_DATA_DIR: ${{ runner.temp }}\ifc-sql-data
+      IFC_SQL_DATA_DIR: ${{ github.workspace }}\.ifc-sql-data
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
