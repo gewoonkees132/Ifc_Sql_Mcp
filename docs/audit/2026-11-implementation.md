@@ -13,7 +13,7 @@ and the figure measured on the audit's own files before and after the fix.
   sub-issue per finding (A1 → #3 … A18 → #20), each closed with its before and after
   figures and its CI run.
 - **Branch:** `ccr-010fe6a4-5gswo3`, starting from the audit commit `0366a46` (which audited
-  `15841f4`).
+  `15841f4`), merged into `main` with round 2.
 - **Proof on the real files:** `make test-modern` loads the five audit files (pinned,
   checksum-verified, [`scripts/download_audit_samples.py`](../../scripts/download_audit_samples.py))
   and runs [`tests/modern/test_audit_acceptance.py`](../../tests/modern/test_audit_acceptance.py).
@@ -205,7 +205,7 @@ that add a tool or a command. The acceptance suite itself landed first, in
   ≤ gross, volume ≤ area × height or thickness, perimeter ≥ a circle's. On files A, C
   and E, the correct values stay within 1.1 of their bound. The defective ones are 10³
   to 10⁹ away. That set the allowances: a factor of 2 on geometric bounds, 5 % on net
-  against gross ([ADR 7](adr/0007-quantity-set-plausibility.md)).
+  against gross ([ADR 7](../adr/0007-quantity-set-plausibility.md)).
 - **Duplicates.** Of two values for one quantity, the one that keeps the bounds wins.
   The `conflicting_property` message says which bound chose it ("the only value within
   Length x Height"). File order decides only when the bounds cannot.
@@ -242,7 +242,7 @@ that add a tool or a command. The acceptance suite itself landed first, in
 
 ### A1: the quantity sets modern Revit writes are ignored
 
-- **Mapping** ([ADR 8](adr/0008-ifc-base-quantities.md), table in
+- **Mapping** ([ADR 8](../adr/0008-ifc-base-quantities.md), table in
   [revit-ifc-quirks.md §14](../revit-ifc-quirks.md#14-revit-2019-to-2022-write-ifc-base-quantities-some-of-them-wrong)):
   - rules for walls, slabs, spaces, doors, windows, columns, beams, members, stair flights
     and railings;
@@ -665,7 +665,7 @@ deferred item.
   one sub-issue per finding (R1 → #23, R2 → #24, R3 → #25, R4 → #26, A18.4 → #27). Each
   is closed with its before and after figures and its CI run.
 - **Branch:** `ccr-9b6ac756-08mrxw`, which continues `ccr-010fe6a4-5gswo3` from `513fe97`,
-  the end of round 1.
+  the end of round 1, and was merged into `main`.
 - **The re-check:** [2026-11-recheck.md](2026-11-recheck.md), with its evidence in
   [evidence/recheck/](evidence/recheck/).
 

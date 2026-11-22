@@ -1,6 +1,6 @@
 # Data model
 
-Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 7 views and a read-only
+Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 8 views and a read-only
 role. It is created by Alembic migrations:
 
 ```bash
@@ -284,10 +284,11 @@ accommodates:
 ## Views
 
 Each view is a versioned file (`v_element.v1.sql`) that also carries its `COMMENT`s.
-`v_element` is at version 3. Migration 0004 corrected its `revit_type` comment (and the
+`v_element` is at version 4. Migration 0004 corrected its `revit_type` comment (and the
 column's), which wrongly said the type may contain colons; migration 0010 added
 `is_feature`, `host_revit_family` and `host_revit_type` (audit finding A3) and moved the
-name parts of openings in models already loaded.
+name parts of openings in models already loaded; migration 0012 added `width_m` (audit
+finding A1).
 
 | View | One row per | What it adds |
 |---|---|---|

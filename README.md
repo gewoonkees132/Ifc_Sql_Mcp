@@ -126,7 +126,7 @@ that were rejected.
   references checked at commit. Pending migrations run in one transaction, and tests
   compare the migrated database with `schema.py` and check every CHECK by name.
 - **Data model** ([ADR 2](docs/adr/0002-properties-eav-vs-jsonb.md),
-  [data-model.md](docs/data-model.md)): 14 tables and 7 views in schema `ifc`, every one
+  [data-model.md](docs/data-model.md)): 14 tables and 8 views in schema `ifc`, every one
   commented. One `object` supertable for spatial elements and physical elements, so
   properties, quantities, classifications and findings all have real foreign keys. Property
   values are a typed entity-attribute-value table; quantities have a fixed vocabulary
@@ -203,10 +203,11 @@ DELETE statement`.
 
 ```
 src/ifc_sql_mcp/
-  cli.py                 ifc-sql: migrate, ingest, dq, serve
+  cli.py                 ifc-sql: migrate, ingest, dq, watch, serve
   config.py              settings from IFC_SQL_* environment variables
   logging_config.py      key=value logs on stderr (stdout is the MCP protocol)
-  db/                    schema.py, engines, migrations 0001-0018, versioned view SQL
+  watch.py               ifc-sql watch: load and check each export saved to a folder
+  db/                    schema.py, engines, embedded PostgreSQL, migrations 0001-0019, view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   dq/                    rule catalogue, sync, runs
   rules/dq_rules.yaml    the 45 data quality rules
@@ -217,8 +218,9 @@ tests/
   samples/               the four Duplex files (pytest -m sample)
   modern/                the audit's Revit 2019-2022 exports (pytest -m modern)
   fixtures/              a synthetic Revit-style IFC file and the script that writes it
-scripts/                 sample download, quirks report, load benchmark, MCP smoke test
-docs/                    data model, Revit quirks, data quality, MCP server, ADRs
+  support/               helpers the suites share: sample files, an MCP client, builders
+scripts/                 sample downloads, quirks report, load benchmark, MCP smoke test
+docs/                    data model, Revit quirks, data quality, MCP server, ADRs, audit
 ```
 
 ## Documentation
@@ -231,9 +233,10 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
 | [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
 | [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder; CI runs it on Windows |
-| [docs/adr/](docs/adr/README.md) | Ten architecture decision records |
+| [docs/adr/](docs/adr/README.md) | Thirteen architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
-| [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog was implemented: per finding, the issue, the commits and the figures before and after |
+| [docs/audit/2026-11-recheck.md](docs/audit/2026-11-recheck.md) | The audit's workflow repeated on the fixed tool, and the four findings it made (R1–R4) |
+| [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog and the re-check's findings were implemented: per finding, the issue, the commits and the figures before and after |
 | [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials |
 
 `make help` lists every target.
