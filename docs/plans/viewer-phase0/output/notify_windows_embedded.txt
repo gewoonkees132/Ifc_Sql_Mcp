@@ -1,0 +1,21 @@
+# uv run python -I phase0_notify.py <data dir>, Windows 11, embedded PostgreSQL 16.15, 2026-11-22 (third run)
+owner url 127.0.0.1:50898/ifc
+reader: ifc_reader
+default_transaction_read_only: on
+1. pg_notify in a committed READ ONLY transaction (transaction_read_only=on): delivered=True
+1b. through make_reader_engine, engine.begin(): delivered=True
+1c. rolled back: delivered=False
+2. 7999 ASCII bytes: accepted
+2. 8000 ASCII bytes: refused, SQLSTATE 22023: payload string too long
+2. 7998 bytes of é (3999 chars): accepted
+2. 8000 bytes of é (4000 chars): refused, SQLSTATE 22023: payload string too long
+3. notify via a new session: median 15.2 ms (min 10.0, max 27.9, n=30); send-to-receive median -0.1 ms
+3b. a bare new reader session: median 15.5 ms
+4. after pg_terminate_backend: reconnected=True, delivered=True, error=['OperationalError: consuming input failed: server closed the connection unexpectedly']
+5. after pg_ctl restart -m fast (0.2 s): reconnected=True (0.2 s after the restart began, 1 failed attempts), delivered=True
+6. 200 events in order: True
+# Earlier runs: notify 15.9 ms / bare 15.6 ms; notify 17.5 ms / bare 15.8 ms.
+# An earlier version of check 5 stopped the server and started it through pgserver: it came
+# back on another port (61655 -> 49698; 51330 -> 50889), and a listener re-resolving the URL
+# through the cached pgserver handle hung on the old port (psycopg's default connect_timeout
+# is 130 s, psycopg/conninfo.py).
