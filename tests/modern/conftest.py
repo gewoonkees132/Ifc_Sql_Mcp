@@ -17,8 +17,9 @@ duplex_mep  Duplex_MEP_20110907.ifc                an MEP Space over every room 
 Every model is checked by the data quality rules once, as ``ifc-sql dq`` does.
 
 A second database, ``measured``, holds files A and B loaded with ``--geometry`` (audit
-finding A5). It is separate so that every other test sees the files as an architect's
-plain ``ifc-sql ingest`` loads them.
+finding A5) and ``--viewer``, which share one triangulation (ADR 14, P1), and files C, D
+and E loaded with ``--viewer``: every audit file's scene. It is separate so that every
+other test sees the files as an architect's plain ``ifc-sql ingest`` loads them.
 """
 
 from collections.abc import Callable, Iterator
@@ -59,12 +60,15 @@ def modern(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
 
 @pytest.fixture(scope="session")
 def measured(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
-    """Files A and B loaded with --geometry, in a database of their own."""
+    """Files A and B loaded with --geometry --viewer, C, D and E with --viewer."""
     settings = create_database("test_modern_geometry")
     upgrade(settings)
     engine = make_engine(settings.database_url)
     ingested = {
-        key: ingest_file(engine, audit_path(key), "ARC", geometry=True) for key in ("a", "b")
+        key: ingest_file(
+            engine, audit_path(key), discipline, geometry=key in ("a", "b"), viewer=True
+        )
+        for key, discipline in AUDIT_DISCIPLINES.items()
     }
     yield Modern(engine=engine, settings=settings, ingested=ingested)
     engine.dispose()
