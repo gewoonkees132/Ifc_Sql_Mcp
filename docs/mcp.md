@@ -36,6 +36,7 @@ uv run ifc-sql serve
 |---|---|
 | `IFC_SQL_DATABASE_URL` | Host, port and database. Its user and password are **not** used: the server connects as `ifc_reader`, so `postgresql+psycopg://localhost:5432/ifc` is enough. |
 | `IFC_SQL_READER_PASSWORD` | The password of `ifc_reader`, set by `ifc-sql migrate` (dev default `ifc-reader-dev-only`). |
+| `IFC_SQL_DATA_DIR` | Instead of `IFC_SQL_DATABASE_URL`: the folder of the embedded PostgreSQL ([ADR 13](adr/0013-embedded-postgresql.md)). The server starts it, or attaches to the one running there, and still connects as `ifc_reader`. |
 | `IFC_SQL_LOG_LEVEL` | `INFO` by default; `DEBUG` also logs the text of every `run_sql` query ([Logging](#logging)). |
 
 Before it reads the first message, the server checks the database, and refuses to start

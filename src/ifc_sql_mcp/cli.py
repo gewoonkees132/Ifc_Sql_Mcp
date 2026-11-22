@@ -16,6 +16,7 @@ from sqlalchemy.exc import OperationalError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.config import LOG_LEVELS, Settings, SettingsError, parse_log_level
+from ifc_sql_mcp.db.embedded import EmbeddedError, embedded_database_url
 from ifc_sql_mcp.db.engine import make_engine, make_reader_engine, reader_database_url, redact
 from ifc_sql_mcp.db.migrate import (
     READER_READS_REVISION_FROM,
@@ -68,6 +69,23 @@ def resolve_settings(log_level_override: str | None) -> Settings:
     return settings
 
 
+def _database_settings(ctx: typer.Context) -> Settings:
+    """The settings of a command that uses the database, with the embedded one started first.
+
+    With IFC_SQL_DATA_DIR, the embedded PostgreSQL is started (or attached to) here, by the
+    commands that need it, so that ``--help`` starts nothing (``db/embedded.py``).
+    """
+    settings: Settings = ctx.obj
+    if settings.data_dir is None:
+        return settings
+    try:
+        url = embedded_database_url(settings.data_dir)
+    except EmbeddedError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    return dataclasses.replace(settings, database_url=url)
+
+
 def _print_version(value: bool) -> None:
     if value:
         typer.echo(f"ifc-sql {__version__}")
@@ -109,7 +127,7 @@ def migrate(
     ] = "head",
 ) -> None:
     """Create or upgrade the ifc schema: tables, views and the read-only role."""
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(settings.database_url)
     logger.info("migrating", extra={"database": database, "target": revision})
     try:
@@ -223,7 +241,7 @@ def ingest(
     (unreadable file, database unreachable or not migrated, load error); 2 for a usage
     error (no such file, invalid discipline, blank project, no model to replace).
     """
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(settings.database_url)
     logger.info("ingesting", extra={"file": str(path), "discipline": discipline})
     engine = make_engine(settings.database_url)
@@ -287,7 +305,7 @@ def dq(
     run failed, the rule catalogue is invalid, or the database is unreachable or not
     migrated; 2 for a usage error (no model with a given id).
     """
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(settings.database_url)
     engine = make_engine(settings.database_url)
     failed = False
@@ -369,7 +387,7 @@ def watch(
     failure); 1 when a file failed to load or check under --once, or the database is
     unreachable or not migrated; 2 for a usage error.
     """
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(settings.database_url)
     engine = make_engine(settings.database_url)
     failed = False
@@ -438,7 +456,7 @@ def serve(ctx: typer.Context) -> None:
     checks the database before it serves. Exit codes: 0 when the client closes the
     connection; 1 when the database is unreachable or not at the latest migration.
     """
-    settings: Settings = ctx.obj
+    settings = _database_settings(ctx)
     database = redact(reader_database_url(settings.database_url, settings.reader_password))
     engine = make_reader_engine(settings)
     try:

@@ -27,8 +27,9 @@ interface for the rest.
 
 ## Quick start
 
-Requires [uv](https://docs.astral.sh/uv/) and Docker. On Windows, without `make`, follow
-[docs/windows.md](docs/windows.md). Before exporting from Revit, read
+Requires [uv](https://docs.astral.sh/uv/), and Docker or nothing more: for one user,
+`ifc-sql` can run PostgreSQL 16 itself in a folder (`IFC_SQL_DATA_DIR`, below). On
+Windows, without `make`, follow [docs/windows.md](docs/windows.md). Before exporting from Revit, read
 [docs/revit-export-settings.md](docs/revit-export-settings.md): which options the tool
 reads, and what it does without them.
 
@@ -37,6 +38,16 @@ make install       # .venv from uv.lock, plus the pre-commit hooks
 make up            # PostgreSQL 16 in Docker, bound to 127.0.0.1
 make dq-samples    # download the four sample files, migrate, load and check them
 make smoke         # start the MCP server as a client would and call a few tools
+```
+
+Without Docker, for one user, skip `make up`: with `IFC_SQL_DATA_DIR` set, the commands
+start an embedded PostgreSQL 16 in that folder themselves, and stop it when the last one
+exits ([ADR 13](docs/adr/0013-embedded-postgresql.md); it takes no passwords, so read
+[SECURITY.md](SECURITY.md#the-embedded-database) first).
+
+```bash
+export IFC_SQL_DATA_DIR=~/.local/share/ifc-sql
+make install dq-samples smoke
 ```
 
 `make dq-samples` downloads the buildingSMART Duplex Apartment models (CC BY 4.0,
@@ -216,7 +227,7 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
 | [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
-| [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make`, including `ifc-sql watch` on an export folder |
+| [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder; CI runs it on Windows |
 | [docs/adr/](docs/adr/README.md) | Ten architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog was implemented: per finding, the issue, the commits and the figures before and after |

@@ -49,8 +49,10 @@ jobs:
         with:
           enable-cache: true
 
+      # The embedded extra too: its tests (tests/integration/test_embedded.py) are part of
+      # the 100 % coverage gate.
       - name: Install (exactly as locked)
-        run: uv sync --locked
+        run: uv sync --locked --extra embedded
 
       - name: Lint
         run: |
@@ -121,3 +123,55 @@ jobs:
 
       - name: Duplex and audit acceptance tests
         run: uv run pytest -m "sample or modern" -p no:cacheprovider
+
+  # The Windows quick start (docs/windows.md), step by step, on the embedded PostgreSQL:
+  # no Docker and no database server, as for one architect on a Windows laptop (audit
+  # finding A18, item 4). It runs the commands as the page gives them, in PowerShell.
+  windows:
+    name: Windows → quick start on the embedded database
+    runs-on: windows-2025
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        shell: pwsh
+
+    env:
+      IFC_SQL_DATA_DIR: ${{ runner.temp }}\ifc-sql-data
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install, with the embedded database
+        run: uv sync --locked --extra embedded
+
+      - name: Create the schema
+        run: uv run ifc-sql migrate
+
+      # $PSNativeCommandUseErrorActionPreference: a step of several commands fails at the
+      # first one that fails, not only when its last one does.
+      - name: Load and check one file
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          uv run python scripts/download_samples.py
+          uv run ifc-sql ingest data\samples\Duplex_A_20110907.ifc --discipline ARC --project duplex
+          uv run ifc-sql dq
+
+      - name: Keep a folder in step
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          New-Item -ItemType Directory -Path exports | Out-Null
+          Copy-Item data\samples\Duplex_MEP_20110907.ifc exports\
+          uv run ifc-sql watch exports --discipline MEP --project duplex --once
+
+      - name: Serve to an MCP client over stdio, as Claude Desktop does
+        run: uv run python scripts/mcp_smoke.py
+
+      - name: The embedded database's own tests
+        run: uv run pytest tests/integration/test_embedded.py -p no:cacheprovider

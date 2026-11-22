@@ -18,3 +18,4 @@ new record supersedes the old one.
 | [10](0010-geometry-quantities.md) | Quantities measured from the geometry with IfcOpenShell, on request (`ingest --geometry`): wall side areas, slab and space footprints, solid volumes, ranked last |
 | [11](0011-space-plans.md) | Every space's plan measured at ingest: a space whose plan lies 90 % inside larger ones repeats them; Revit Areas kept apart from rooms |
 | [12](0012-measure-in-place.md) | `ingest --geometry` on a file already loaded without it measures it into the same model, once; supersedes ADR 10's "delete and load again" |
+| [13](0013-embedded-postgresql.md) | An embedded PostgreSQL 16 (`IFC_SQL_DATA_DIR`, the `embedded` extra) for one user without Docker: the same views and read-only role, no passwords, run on Windows by CI |

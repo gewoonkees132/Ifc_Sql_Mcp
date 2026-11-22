@@ -86,6 +86,23 @@ owner's credentials. Load files from unknown sources only in an isolated environ
 - **Rotating** the reader password: `ALTER ROLE ifc_reader PASSWORD …` as the owner (or
   `\password ifc_reader` in psql), then update `IFC_SQL_READER_PASSWORD` in each client.
 
+### The embedded database
+
+With `IFC_SQL_DATA_DIR`, ifc-sql runs PostgreSQL itself, in that folder
+([ADR 13](docs/adr/0013-embedded-postgresql.md)). It is the same PostgreSQL, with the same
+read-only role and transactions for the MCP server, but **no passwords**: the cluster
+trusts every local connection.
+
+- **Linux and macOS:** it listens on a Unix socket in the data folder, which only its
+  owner can open. If the folder's path is too long for a socket, the socket goes under
+  `XDG_RUNTIME_DIR` (private to the user) or, without it, the temporary directory, where
+  other local users may reach it. Keep the path short.
+- **Windows:** it listens on a free port of 127.0.0.1. Any local user of the computer can
+  connect, as the database superuser.
+
+Use it on a computer only you use. On a shared one, or for a team, run PostgreSQL in
+Docker or as a service, with your own passwords (above).
+
 ### What is not protected
 
 - **No authentication.** The server trusts whoever starts it. It speaks only stdio, to
