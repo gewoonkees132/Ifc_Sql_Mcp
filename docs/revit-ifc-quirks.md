@@ -440,6 +440,7 @@ gross value stands in for a missing or implausible net one, and never conflicts:
 | `Qto_DoorBaseQuantities`, `Qto_WindowBaseQuantities` | | Height | Width | Area | | |
 | `Qto_ColumnBaseQuantities`, `Qto_BeamBaseQuantities`, `Qto_MemberBaseQuantities`, `Qto_StairFlightBaseQuantities` | Length | | | | | NetVolume, else GrossVolume |
 | `Qto_RailingBaseQuantities` | Length | | | | | |
+| `Qto_CoveringBaseQuantities` (since re-check R2) | | | Width (thickness) | NetArea, else GrossArea, else Revit 2019's GrossCeilingArea | | |
 
 Some of the values are not measurements. `ingest/plausibility.py` checks every set
 against IFC's own ties ([ADR 7](adr/0007-quantity-set-plausibility.md)):

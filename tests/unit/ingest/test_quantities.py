@@ -254,6 +254,32 @@ def test_a_railing_gets_its_length() -> None:
     }
 
 
+def test_a_ceiling_gets_its_net_area_and_its_thickness() -> None:
+    # Revit 2021, IFC4 (files A and C): NetArea only. The gross area stands in for it.
+    ceiling = quantities(
+        "IfcCovering",
+        qto("Qto_CoveringBaseQuantities", "NetArea", 83.51, "m2"),
+        qto("Qto_CoveringBaseQuantities", "GrossArea", 84.0, "m2"),
+        qto("Qto_CoveringBaseQuantities", "Width", 0.05, "m"),
+    )
+    gross_only = quantities(
+        "IfcCovering", qto("Qto_CoveringBaseQuantities", "GrossArea", 9.0, "m2")
+    )
+
+    assert ceiling == {
+        "area_m2": (83.51, "Qto_CoveringBaseQuantities.NetArea"),
+        "width_m": (0.05, "Qto_CoveringBaseQuantities.Width"),
+    }
+    assert gross_only == {"area_m2": (9.0, "Qto_CoveringBaseQuantities.GrossArea")}
+
+
+def test_revit_2019s_gross_ceiling_area_is_a_ceilings_area() -> None:
+    # File E, IFC2X3: one BaseQuantities set, whose only value is Revit's own name.
+    assert quantities("IfcCovering", qto("BaseQuantities", "GrossCeilingArea", 52.6, "m2")) == {
+        "area_m2": (52.6, "BaseQuantities.GrossCeilingArea")
+    }
+
+
 def test_the_gsa_area_stands_in_for_a_missing_space_net_floor_area_only() -> None:
     gsa = qto("GSA Space Areas", "GSA BIM Area", 30.1, "m2")
 

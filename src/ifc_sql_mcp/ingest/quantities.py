@@ -62,6 +62,7 @@ QTO_SET_OF_CLASS: Mapping[str, str] = {
     "IfcMember": "Qto_MemberBaseQuantities",
     "IfcRailing": "Qto_RailingBaseQuantities",
     "IfcStairFlight": "Qto_StairFlightBaseQuantities",
+    "IfcCovering": "Qto_CoveringBaseQuantities",
 }
 """The IFC4 ``Qto_`` set an IFC2X3 ``BaseQuantities`` set stands for, by ``ifc_class_base``."""
 
@@ -157,6 +158,16 @@ QUANTITY_RULES: tuple[QuantityRule, ...] = (
         )
     ),
     *_qto("Qto_RailingBaseQuantities", ("Length", "length_m", "m")),
+    # A ceiling or a floor finish (re-check finding R2). Width is its thickness. Revit
+    # 2019 writes a ceiling's area into IFC2X3's BaseQuantities as GrossCeilingArea, a name
+    # no IFC set has; on all 259 coverings of the audit's file E it equals Revit's Area.
+    *_qto(
+        "Qto_CoveringBaseQuantities",
+        ("Width", "width_m", "m"),
+        ("NetArea", "area_m2", "m2"),
+        ("GrossArea", "area_m2", "m2", GROSS),
+        ("GrossCeilingArea", "area_m2", "m2", GROSS),
+    ),
     QuantityRule(("GSA Space Areas",), "GSA BIM Area", "area_m2", "ifc_qto", "m2", fallback=True),
     # A door's and a window's overall size are attributes of the occurrence (A4).
     QuantityRule(("IfcDoor", "IfcWindow"), "OverallWidth", "width_m", "ifc_attribute", "m"),

@@ -49,7 +49,6 @@ def test_r1_each_room_is_counted_once(modern: Modern) -> None:
     assert [modern.findings(k, "duplicate_space") for k in ("c", "e", "duplex_mep")] == [75, 0, 21]
 
 
-@_open("R2", 24)
 def test_r2_ceilings_have_their_areas(modern: Modern) -> None:
     keys = ("a", "c", "e")
     rows = modern.rows(
