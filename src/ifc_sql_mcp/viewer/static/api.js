@@ -1,5 +1,6 @@
 // The page's one seam for data. The live source reads `ifc-sql view`'s routes with the
-// token; Phase 5 adds a static source that reads exported files instead.
+// token, and its feed of calls as server-sent events; Phase 5 adds a static source that
+// reads exported files instead.
 
 const TOKEN_KEY = 'ifc-sql-view-token';
 
@@ -50,5 +51,18 @@ export function liveSource(token) {
       get(`${model(modelId)}/scene/${encodeURIComponent(chunkNo)}.glb`).then((r) => r.arrayBuffer()),
     element: (modelId, globalId) =>
       get(`${model(modelId)}/objects/${encodeURIComponent(globalId)}`).then((r) => r.json()),
+    feed: () => get('/api/feed').then((r) => r.json()),
+    /**
+     * The calls as they arrive. EventSource cannot send a header, so this one route takes
+     * the token in its query; the browser resumes with Last-Event-ID by itself.
+     */
+    events(handlers) {
+      const source = new EventSource(`/api/events?t=${encodeURIComponent(token)}`);
+      source.addEventListener('open', () => handlers.open());
+      source.addEventListener('status', (event) => handlers.status(JSON.parse(event.data)));
+      source.addEventListener('call', (event) => handlers.call(JSON.parse(event.data)));
+      source.addEventListener('error', () => handlers.error(source.readyState === EventSource.CLOSED));
+      return source;
+    },
   };
 }

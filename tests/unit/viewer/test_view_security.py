@@ -34,6 +34,8 @@ API = [
     "/api/models/1/scene",
     "/api/models/1/scene/0.glb",
     "/api/models/1/objects/0123456789abcdefghijkl",
+    "/api/feed",
+    "/api/events",
 ]
 HEADERS = {
     "x-content-type-options": "nosniff",
@@ -246,7 +248,36 @@ def test_a_token_that_is_not_ascii_gets_401(client: TestClient) -> None:
 
 def test_the_token_is_not_taken_from_the_query_or_a_cookie(client: TestClient) -> None:
     assert client.get(f"/api/models?t={TOKEN}").status_code == 401
+    assert client.get(f"/api/feed?t={TOKEN}").status_code == 401
+    assert client.get(f"/api/events/?t={TOKEN}").status_code == 401
     assert client.get("/api/models", headers={"Cookie": f"t={TOKEN}"}).status_code == 401
+
+
+def test_the_event_stream_alone_takes_the_token_in_its_query(client: TestClient) -> None:
+    """EventSource cannot send a header; without a feed the stream says so, and ends."""
+    response = client.get(f"/api/events?t={TOKEN}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
+    assert response.headers["cache-control"] == "no-store"
+    assert response.text.startswith("event: status\r\ndata: ")
+    assert '"state":"off"' in response.text
+
+
+@pytest.mark.parametrize(
+    "query",
+    [f"t={TOKEN[:-1]}", f"t={TOKEN}&t={TOKEN}", f"token={TOKEN}", "t=", "t=%C3%A9", ""],
+)
+def test_the_event_stream_refuses_a_wrong_token_in_its_query(
+    client: TestClient, query: str
+) -> None:
+    assert client.get(f"/api/events?{query}").status_code == 401
+
+
+def test_a_bearer_token_wins_over_the_query(client: TestClient) -> None:
+    response = client.get(f"/api/events?t={TOKEN}", headers=_authorised(new_token()))
+
+    assert response.status_code == 401
 
 
 def test_the_scheme_of_the_token_is_case_insensitive(client: TestClient) -> None:
@@ -400,6 +431,8 @@ def test_the_routes_are_pinned(app: Security) -> None:
         ("/api/models/{model_id:int}/scene", ["GET", "HEAD"]),
         ("/api/models/{model_id:int}/scene/{chunk_no:int}.glb", ["GET", "HEAD"]),
         ("/api/models/{model_id:int}/objects/{global_id}", ["GET", "HEAD"]),
+        ("/api/feed", ["GET", "HEAD"]),
+        ("/api/events", ["GET", "HEAD"]),
     ]
 
 
@@ -408,3 +441,12 @@ def test_the_api_answers_json(client: TestClient) -> None:
 
     assert response.headers["content-type"] == "application/json"
     assert json.loads(response.content)["error"]
+
+
+def test_without_a_feed_the_feed_route_says_so(client: TestClient) -> None:
+    response = client.get("/api/feed", headers=_authorised())
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    body = response.json()
+    assert (body["status"]["state"], body["entries"]) == ("off", [])

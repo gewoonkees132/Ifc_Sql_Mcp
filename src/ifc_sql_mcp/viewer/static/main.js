@@ -1,11 +1,13 @@
 // The page: the models of a project, every discipline together, storey and discipline
-// toggles, and an element's details on a click (ADR 14, decision 6). The server decides
-// what can be decided there (the projects, the set shown first, the counts and their
-// wording); this module only lays it out.
+// toggles, an element's details on a click, and what each MCP call found (ADR 14,
+// decisions 4 and 6). The server decides what can be decided there (the projects, the
+// set shown first, the counts and their wording, what a call lights and in which
+// colours); this module only lays it out.
 
 import { ApiError, liveSource, takeToken } from './api.js';
 import { Details } from './details.js';
 import { el, metres, number } from './dom.js';
+import { FeedPanel } from './feed.js';
 import { SceneView, TINTS } from './scene.js';
 
 const LOADS_AT_ONCE = 4;
@@ -23,6 +25,7 @@ const viewer = {
   ready_ms: null,
   error: null,
   highlighted: 0,
+  call: null, // the feed's id of the call lit last
   stats: () => view.stats(),
   measure: (seconds) => view.measure(seconds),
 };
@@ -31,10 +34,15 @@ window.ifcViewer = viewer;
 let api;
 let catalogue;
 let generation = 0; // a newer show() makes the loads of an older one stop
-const shown = { models: [], manifests: [], spacesLoaded: false, bytes: 0 };
+const shown = { models: [], manifests: [], loaded: new Set(), layers: new Set(), bytes: 0 };
 const hiddenDisciplines = new Set();
 const hiddenStoreys = new Set();
+const storeyBoxes = new Map(); // storey name → { elevation, box }
 let selection = null;
+let lastCall = null;
+let zoomed = false; // the last call moved the camera to one object
+const ZOOM_MARGIN_M = 4;
+const feed = new FeedPanel({ state: $('feed-state'), note: $('feed-note'), list: $('feed') }, (entry) => lightCall(entry));
 
 function status(text) {
   $('status').textContent = text;
@@ -70,6 +78,7 @@ async function start() {
   }
   fillProjects();
   await show(catalogue.shown);
+  feed.listen(api);
 }
 
 function fillProjects() {
@@ -106,7 +115,8 @@ async function show(set) {
   const byId = new Map(catalogue.models.map((model) => [model.model_id, model]));
   shown.models = set.model_ids.map((id) => byId.get(id)).filter(Boolean);
   shown.manifests = [];
-  shown.spacesLoaded = false;
+  shown.loaded = new Set();
+  shown.layers = new Set();
   shown.bytes = 0;
   listModels();
 
@@ -141,6 +151,7 @@ async function show(set) {
   listDisciplines();
   listStoreys();
   try {
+    shown.loaded.add('elements');
     await load('elements', mine);
   } catch (error) {
     if (mine === generation) fail(error);
@@ -150,6 +161,7 @@ async function show(set) {
   if (!view.moved) view.fit();
   summarise();
   ready();
+  if (lastCall) await lightCall(lastCall);
 }
 
 function ready() {
@@ -246,10 +258,12 @@ function listStoreys() {
   const rows = [...storeys.values()].sort(
     (a, b) => (a.key === '') - (b.key === '') || (b.elevation ?? -Infinity) - (a.elevation ?? -Infinity) || a.key.localeCompare(b.key),
   );
+  storeyBoxes.clear();
   $('storeys').replaceChildren(
     ...rows.map((storey) => {
       const box = el('input', { attrs: { type: 'checkbox' } });
       box.checked = true;
+      storeyBoxes.set(storey.key, { elevation: storey.elevation, box });
       box.addEventListener('change', () => {
         if (box.checked) hiddenStoreys.delete(storey.key);
         else hiddenStoreys.add(storey.key);
@@ -277,33 +291,167 @@ function applyVisibility() {
     (chunk) =>
       !hiddenDisciplines.has(discipline.get(chunk.modelId)) &&
       !hiddenStoreys.has(chunk.storey) &&
-      (chunk.kind === 'elements' || $('spaces').checked),
+      (chunk.kind === 'elements' || (chunk.kind === 'spaces' && $('spaces').checked) || shown.layers.has(chunk.kind)),
   );
   $('all-storeys').hidden = hiddenStoreys.size === 0;
 }
 
-$('all-storeys').addEventListener('click', () => {
+function showAllStoreys() {
   hiddenStoreys.clear();
-  for (const box of $('storeys').querySelectorAll('input')) box.checked = true;
+  for (const { box } of storeyBoxes.values()) box.checked = true;
   applyVisibility();
-});
+}
+
+$('all-storeys').addEventListener('click', showAllStoreys);
+
+/** Load the chunks of `kind` (spaces, their copies, Revit Areas) once, for every shown model. */
+async function ensureLoaded(kind) {
+  if (shown.loaded.has(kind)) return;
+  shown.loaded.add(kind);
+  await load(kind, generation);
+  summarise();
+}
 
 $('spaces').addEventListener('change', async () => {
-  if ($('spaces').checked && !shown.spacesLoaded) {
-    shown.spacesLoaded = true;
-    try {
-      await load('spaces', generation);
-      summarise();
-    } catch (error) {
-      fail(error);
-    }
+  try {
+    if ($('spaces').checked) await ensureLoaded('spaces');
+  } catch (error) {
+    fail(error);
   }
   applyVisibility();
 });
 
+// --------------------------------------------------------------------------- the feed's calls
+
+/**
+ * Light what one call found: its groups in their colours and the rest grey, the layers of
+ * spaces it holds, the storeys above a selection on one storey hidden, and a caption.
+ */
+async function lightCall(entry) {
+  lastCall = entry;
+  const found = entry.selection;
+  if (!found || !viewer.ready) return;
+  select(null);
+  try {
+    for (const kind of found.layers) await ensureLoaded(kind);
+  } catch (error) {
+    fail(error);
+    return;
+  }
+  if (lastCall !== entry) return;
+  shown.layers = new Set(found.layers);
+  const groups = found.groups.map((group) => ({
+    colour: group.colour,
+    keys: group.models.flatMap((model) => model.global_ids.map((globalId) => [model.model_id, globalId])),
+  }));
+  const drawn = view.highlight(groups, true);
+  const hidden = hideAbove(found);
+  viewer.highlighted = drawn;
+  viewer.call = entry.id;
+  $('fit-selection').disabled = drawn === 0;
+  $('only-selection').disabled = drawn === 0;
+  // Rooms are inside the walls: a call that lights only spaces shows nothing else.
+  const only = drawn > 0 && found.spaces === found.count;
+  view.showOnly(only);
+  $('only-selection').setAttribute('aria-pressed', String(only));
+  if (found.zoom && drawn) {
+    view.fitSelection(ZOOM_MARGIN_M);
+    zoomed = true;
+    const [group] = groups;
+    const [modelId, globalId] = group.keys[0];
+    showDetails(modelId, globalId);
+  } else if (zoomed && drawn) {
+    view.fit();
+    zoomed = false;
+  }
+  callCaption(entry, drawn, hidden);
+}
+
+/** Open the drawer with an object's details, as a click does, without changing the caption. */
+async function showDetails(modelId, globalId) {
+  details.loading(globalId);
+  try {
+    details.show(await api.element(modelId, globalId));
+  } catch (error) {
+    details.failed(globalId, String(error.message ?? error));
+  }
+}
+
+/**
+ * Show every storey again, then hide those above a selection that lies on one storey;
+ * return their names.
+ */
+function hideAbove(found) {
+  hiddenStoreys.clear();
+  for (const { box } of storeyBoxes.values()) box.checked = true;
+  if (found.storey_elevation_m === null) {
+    applyVisibility();
+    return [];
+  }
+  const above = [...storeyBoxes.entries()]
+    .filter(([name, { elevation }]) => name && elevation !== null && elevation > found.storey_elevation_m + 1e-6)
+    .sort((a, b) => a[1].elevation - b[1].elevation);
+  for (const [name, { box }] of above) {
+    hiddenStoreys.add(name);
+    box.checked = false;
+  }
+  applyVisibility();
+  return above.map(([name]) => name);
+}
+
+function callCaption(entry, drawn, hidden) {
+  const found = entry.selection;
+  const shownIds = new Set(shown.models.map((model) => model.model_id));
+  const elsewhere = [...new Set(found.groups.flatMap((group) => group.models.map((model) => model.model_id)))].filter((id) => !shownIds.has(id));
+  const without = Math.max(found.count - drawn - found.openings - found.not_drawn, 0);
+  const counts = [`${number(found.count)} found`, `${number(drawn)} shown`, `${number(without)} without shape`];
+  if (found.openings) counts.push(`${number(found.openings)} openings not drawn`);
+  if (found.not_drawn) counts.push(`${number(found.not_drawn)} storeys or buildings, not drawn`);
+  if (found.truncated) counts.push('the first 20,000');
+
+  const box = $('caption');
+  box.hidden = false;
+  const kicker = entry.step ? `Step ${entry.step.index} of ${entry.step.steps} · ${entry.source}` : entry.source;
+  const lines = [
+    el('div', { className: 'kicker', text: kicker }),
+    el('div', { className: 'name', text: entry.step ? entry.step.title : entry.summary }),
+  ];
+  if (entry.step) lines.push(el('div', { className: 'muted', text: entry.summary }));
+  if (entry.step) lines.push(el('div', { className: 'figure', text: entry.step.figure }));
+  lines.push(el('div', { className: 'counts', text: counts.join(' · ') }));
+  if (found.note) lines.push(el('div', { className: 'muted', text: found.note }));
+  if (elsewhere.length) {
+    lines.push(el('div', { className: 'muted', text: `Model ${elsewhere.join(', ')} is not shown here: pick its project above.` }));
+  }
+  if (hidden.length) {
+    const all = el('button', { className: 'link', text: 'show all', attrs: { type: 'button' } });
+    all.addEventListener('click', showAllStoreys);
+    lines.push(el('div', { className: 'muted' }, `${hidden.join(', ')} hidden · `, all));
+  }
+  if (found.groups.length > 1 || (found.groups.length === 1 && found.groups[0].label)) {
+    lines.push(
+      el(
+        'ul',
+        { className: 'legend' },
+        ...found.groups.map((group) => {
+          const swatch = el('span', { className: 'swatch' });
+          swatch.style.setProperty('--swatch', group.colour);
+          return el('li', {}, swatch, el('span', { text: group.label ?? '(none)' }), el('span', { className: 'muted', text: number(group.count) }));
+        }),
+      ),
+    );
+  }
+  box.replaceChildren(...lines);
+}
+
 /** Light one element and open its details; null clears the selection. */
 async function select(picked) {
   selection = picked;
+  viewer.call = null;
+  if (shown.layers.size) {
+    shown.layers = new Set(); // the spaces a call showed go with its selection
+    applyVisibility();
+  }
   viewer.highlighted = view.select(picked ? [[picked.modelId, picked.globalId]] : []);
   $('fit-selection').disabled = !picked;
   $('only-selection').disabled = !picked;

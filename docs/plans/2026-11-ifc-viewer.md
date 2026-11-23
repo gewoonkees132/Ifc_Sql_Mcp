@@ -2,8 +2,10 @@
 
 - Status: revised after review ([the review](2026-11-ifc-viewer-review.md)), again
   after Phases 0 and 1 ([Changes after Phases 0 and 1](#changes-after-phases-0-and-1)),
-  and after Phase 2 ([Changes after Phase 2](#changes-after-phase-2)). Phase 0 is done
-  (the draft [ADR 14](../adr/0014-viewer.md)); Phase 1 is PR 1, Phase 2 PR 2.
+  after Phase 2 ([Changes after Phase 2](#changes-after-phase-2)) and after Phase 3
+  ([Changes after Phase 3](#changes-after-phase-3)). Phase 0 is done
+  ([ADR 14](../adr/0014-viewer.md), accepted with Phase 3); Phase 1 is PR 1, Phase 2
+  PR 2, Phase 3 PR 3.
 - Date: 2026-11-22
 - For: a separate session that implements it, one pull request per phase. This plan is
   complete on its own; the review records why it changed.
@@ -732,7 +734,8 @@ its frames per second and memory are recorded in `docs/viewer.md`.
 - The demo:
   - it plays through an in-process client (`tests/support/mcp_client.py`), so coverage
     counts;
-  - `tests/samples` pins every Duplex step's count, `tests/modern` every audit step's;
+  - `tests/samples` pins every Duplex step's count (the audit script, and its pins in
+    `tests/modern`, are Phase 4's);
   - `--check` exits 1 on a difference;
   - the script's SHA-256 equal the download scripts'.
 - `test_serve_stdio` with the feed on: stdout carries only JSON-RPC, and there are still
@@ -1075,3 +1078,59 @@ code where the plan did not fit it:
 - **Measured on a desktop**, the Phase 0 machine, with r187 in Microsoft Edge 158: file B
   in 76 draw calls at 144.1 frames per second, ready 0.93 s after the page starts
   loading. **The laptop figure is still missing**: no laptop was at hand.
+
+## Changes after Phase 3
+
+Phase 3 (PR 3; [docs/viewer.md](../viewer.md), ADR 14 decisions 4 and 5, now accepted)
+followed the code where the plan did not fit it, and measured where the plan estimated:
+
+- **Step 8's figure.** `get_element` on the wall is 16,353 characters of compact JSON,
+  not docs/mcp.md's 14,902, which no test pinned and the result has outgrown.
+  docs/mcp.md now gives 16,353, pinned by
+  `tests/samples/test_duplex_demo.py` for the layout where ARC loads first. The count
+  depends on the ids' digits, so `demo --check` compares the wall's class and name.
+  Every other step's count and figure held as the plan gives them, step 4 included: 14
+  doors in 4 types (6, 4, 2, 2), all rated `'Fire Rating'`. No step was dropped.
+- **The event's shape.** `ids` is `{groups: [{label, object_ids, global_ids}],
+  truncated}`, `global_ids` keyed by model id, in place of `{object_ids, groups,
+  truncated}`: one shape for one group and for many, and for GlobalIds, which are unique
+  per model only. An event also says which text arguments it `clipped` (at 200 bytes); a
+  call with one lights nothing, since its filter would not be the call's.
+- **Measured, not estimated**: 500 object ids of seven digits take 4,076 bytes of the
+  event; beside them, 20,000 non-ASCII characters of SQL are clipped to 1,821, and the
+  event is 7,999 bytes. The ids have a budget of 4,800 bytes, which GlobalIds, at 25
+  bytes each in the JSON, reach before 500. The limit is PostgreSQL's: at most 7,999 bytes, which the plan's test list words as
+  "under 7,999".
+- **`run_sql`'s ids** come from the rows as psycopg returned them, kept on the result
+  (`SqlResult.records()`, not sent to the client): an `array_agg` longer than 2,000
+  characters reaches the client as clipped text, but its ids are whole.
+- **The arguments are checked with the tools' own argument models**, the SDK's
+  (`app.argument_checks`), which also refuse an argument the tool does not have. The SDK
+  has no public accessor for them, so it reads `MCPServer._tool_manager`; a test fails if
+  an SDK upgrade moves it.
+- **One `Reader`** (`viewer/reading.py`, a semaphore of three) serves the routes and the
+  feed's selections, so the two together hold at most three sessions; the listener's
+  session is named `ifc-sql-mcp-viewer-feed`. `create_app` gains `feed` and `reader`.
+- **The routes**: `GET /api/feed` is the status and the calls kept, as JSON; `GET
+  /api/events` streams them, beginning with every call kept (or those after
+  `Last-Event-ID`). The stream looks for new calls every 0.2 s.
+- **The feed's numbers**: a burst of 30 events, then 10 a second; the last 200 calls, the
+  selections of the last 50 (a selection can hold 20,000 GlobalIds).
+- **The colours are the server's**: each group of a selection carries one, by severity
+  for a data quality report. A selection says how many of its objects are openings,
+  storeys or spaces, and which chunk kinds of spaces must show.
+- **The page**, beyond the plan: a call that lights only spaces hides everything else (the
+  rooms are inside the walls); `get_element` frames its object with 4 m around it and opens
+  its details; each call shows again the storeys the last one hid.
+- **The demo's questions in the page**: the demo tells the feed which step it expects
+  before it asks (`Feed.expect`), so the page numbers the questions and names them; the
+  first arriving event marks the demo's `serve`.
+- **`--script`** takes `duplex` only, as a `Literal` (typer 0.29 has no `click_type`); the
+  audit script is Phase 4's, `--export` Phase 5's.
+- **ADR 13 decision 3** names `demo` beside `view`.
+- **CI**: the windows job runs `scripts/demo.py --check`, which loads ELE and PLU with
+  `--viewer` and builds MEP's scene in place (the job loads MEP through `watch`); the
+  samples job runs it on the service's database after the tests.
+- **The plan's line numbers** predate Phases 1 and 2; on `d30c24e` `_Calls` is at
+  `server/app.py:302`, `build_server` at `:420`, `ELEMENT_FILTERS` at
+  `server/tools.py:333`, and `create_app` at `viewer/http.py:473`.

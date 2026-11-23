@@ -145,7 +145,37 @@ What it does not protect against:
   URL is on the browser's command line for a moment; on a computer shared with other
   users, start it with `--no-open` and paste the URL.
 - **Anyone with the URL.** Until `view` stops, the URL gives what `list_models` and
-  `get_element` give, for every model in the database. Do not paste it into a chat.
+  `get_element` give, for every model in the database, and the calls of the feed below.
+  Do not paste it into a chat.
+
+### The viewer's feed (`IFC_SQL_VIEWER_FEED`)
+
+With `IFC_SQL_VIEWER_FEED=1`, `ifc-sql serve` sends one PostgreSQL notification per tool
+call, which every `ifc-sql view` on the database receives and shows
+([ADR 14](docs/adr/0014-viewer.md), decision 4; [docs/viewer.md](docs/viewer.md#the-mcp-servers-calls-the-feed)).
+**It is off unless that variable is set**: without it, `serve` sends nothing and opens no
+session for it.
+
+- **Any login to the database can read the feed and send to it.** PostgreSQL shows a
+  notification to every session that listens on its channel, whatever its role, and lets
+  any role send one ("Notifications are visible to all users",
+  [NOTIFY](https://www.postgresql.org/docs/16/sql-notify.html)). On the embedded database
+  on Windows, any local user of the computer can connect, so any local user can.
+- **What it carries**: the tool, its arguments, how the call ended, and for `run_sql` the
+  query's text, clipped to what fits in 8,000 bytes. Never text from an IFC file. The
+  query carries whatever the conversation put into it, which the log keeps only at
+  `DEBUG` (ADR 6, decision 10): with the feed on, whoever listens on the database reads
+  it, and PostgreSQL keeps it in its notification queue (`pg_notify/` in the data folder)
+  until every session listening has read it.
+- **`view` validates every event**: its version, every field's type, the tool, the
+  arguments with the tool's own checks, every id and GlobalId, at most 500 ids and 10
+  events a second. It never runs SQL that came from an event: what it lights comes from
+  fixed queries with the arguments as bind parameters, read-only, as `ifc_reader`. So the
+  worst a forged event does is a wrong highlight, or a line in the feed that no MCP
+  client sent; the page labels each line with the process that claims to have sent it.
+- **What `serve` does for it**: after a call's own transaction has rolled back, one more
+  session as `ifc_reader`, one committed `READ ONLY` transaction that only calls
+  `pg_notify`. It can write nothing else: the role's privileges still hold.
 
 ### The embedded database
 

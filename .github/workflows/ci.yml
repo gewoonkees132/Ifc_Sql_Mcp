@@ -124,6 +124,12 @@ jobs:
       - name: Duplex and audit acceptance tests
         run: uv run pytest -m "sample or modern" -p no:cacheprovider
 
+      # The scripted Duplex demo, as from a fresh clone (scripts/demo.py): the four files
+      # loaded with --viewer into the service's database and checked, then the nine
+      # questions asked through ifc-sql serve over stdio, each compared with the script.
+      - name: The scripted Duplex demo, checked
+        run: uv run python scripts/demo.py --check
+
   # The Windows quick start (docs/windows.md), step by step, on the embedded PostgreSQL:
   # no Docker and no database server, as for one architect on a Windows laptop (audit
   # finding A18, item 4). It runs the commands as the page gives them, in PowerShell.
@@ -180,6 +186,12 @@ jobs:
       # model's scene and check its magic, then stopped; its token must not reach stderr.
       - name: Show the models in 3D, as a browser would ask for them
         run: uv run python scripts/view_smoke.py
+
+      # The rest of the Duplex, ELE and PLU, with --viewer (ARC and MEP are loaded above;
+      # MEP gets its scene in place), all four checked, then the nine questions through
+      # ifc-sql serve over stdio, each compared with the script.
+      - name: The scripted Duplex demo, checked
+        run: uv run python scripts/demo.py --check
 
       - name: The embedded database's own tests
         run: uv run pytest tests/integration/test_embedded.py -p no:cacheprovider

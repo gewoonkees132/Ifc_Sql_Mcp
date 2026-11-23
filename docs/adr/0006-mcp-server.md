@@ -1,6 +1,11 @@
 # ADR 6: An MCP server of read-only tools on the read-only role, with run_sql behind four layers
 
-- Status: accepted; decision 8 amended by [ADR 9](0009-schema-discovery-tool.md)
+- Status: accepted; decision 8 amended by [ADR 9](0009-schema-discovery-tool.md);
+  decisions 2 and 10 amended by [ADR 14](0014-viewer.md) (decision 4): with
+  `IFC_SQL_VIEWER_FEED=1`, each call is followed by a committed `READ ONLY` transaction,
+  in a session of its own, that only sends a notification; and the notification carries
+  `run_sql`'s text, clipped, to whoever listens on the database, and PostgreSQL's
+  notification queue (`pg_notify/` in the data folder) holds it until it is read
 - Date: 2026-11-17
 
 ## Context

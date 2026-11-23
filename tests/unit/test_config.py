@@ -81,3 +81,21 @@ def test_a_data_dir_and_a_database_url_are_refused_together(tmp_path: Path) -> N
         Settings.from_env(
             {"IFC_SQL_DATA_DIR": str(tmp_path), "IFC_SQL_DATABASE_URL": DEFAULT_DATABASE_URL}
         )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [("1", True), (" true ", True), ("Yes", True), ("on", True), ("0", False), ("false", False),
+     ("NO", False), ("off", False), ("", False), ("  ", False)],
+)  # fmt: skip
+def test_the_viewer_feed_is_a_boolean(raw: str, expected: bool) -> None:
+    assert Settings.from_env({"IFC_SQL_VIEWER_FEED": raw}).viewer_feed is expected
+
+
+def test_the_viewer_feed_is_off_unless_asked_for() -> None:
+    assert Settings.from_env({}).viewer_feed is False
+
+
+def test_a_viewer_feed_that_is_no_boolean_names_the_variable() -> None:
+    with pytest.raises(SettingsError, match=r"IFC_SQL_VIEWER_FEED must be 1 or 0 \(.*\), got '2'"):
+        Settings.from_env({"IFC_SQL_VIEWER_FEED": "2"})

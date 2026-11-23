@@ -23,6 +23,9 @@ DEFAULT_LOG_LEVEL = "INFO"
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 
+TRUE_WORDS = ("1", "true", "yes", "on")
+FALSE_WORDS = ("0", "false", "no", "off", "")
+
 
 class SettingsError(ValueError):
     """Raised when an environment variable holds a value we cannot use."""
@@ -52,12 +55,16 @@ class Settings:
         data_dir: With ``IFC_SQL_DATA_DIR``, the folder of an embedded PostgreSQL that
             ifc-sql runs itself (``db/embedded.py``); ``database_url`` is then that
             server's, filled in when a command first needs it.
+        viewer_feed: ``IFC_SQL_VIEWER_FEED``: ``ifc-sql serve`` publishes every tool call
+            to the viewer's feed, one PostgreSQL notification each (ADR 14, decision 4).
+            Off unless set.
     """
 
     database_url: str
     reader_password: str
     log_level: str
     data_dir: Path | None = None
+    viewer_feed: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":
@@ -97,4 +104,20 @@ class Settings:
             reader_password=reader_password,
             log_level=log_level,
             data_dir=data_dir,
+            viewer_feed=_boolean(
+                f"{ENV_PREFIX}VIEWER_FEED", source.get(f"{ENV_PREFIX}VIEWER_FEED")
+            ),
         )
+
+
+def _boolean(name: str, value: str | None) -> bool:
+    """Read a switch: 1, true, yes or on; 0, false, no, off or empty; unset is off."""
+    word = (value or "").strip().lower()
+    if word in TRUE_WORDS:
+        return True
+    if word in FALSE_WORDS:
+        return False
+    raise SettingsError(
+        f"{name} must be 1 or 0 ({', '.join(TRUE_WORDS)} or {', '.join(FALSE_WORDS[:-1])}), "
+        f"got {value!r}"
+    )

@@ -340,6 +340,17 @@ ELEMENT_FILTERS = {
 }
 
 
+def _element_filter(model_id: int, filters: Mapping[str, str | None]) -> tuple[str, dict[str, Any]]:
+    """The WHERE clause on v_element of the given filters, and its parameters.
+
+    One clause for ``find_elements`` and the viewer's :func:`find_element_ids`, so that
+    the elements lit up are always the elements found.
+    """
+    given = {name: value for name, value in filters.items() if value is not None}
+    where = " AND ".join(["e.model_id = :model_id", *(ELEMENT_FILTERS[name] for name in given)])
+    return where, {"model_id": model_id, **given}
+
+
 def find_elements(
     connection: Connection,
     model_id: int,
@@ -350,9 +361,7 @@ def find_elements(
 ) -> ElementPage:
     """One page of the model's elements that match every given filter, by object id."""
     _require_model(connection, model_id)
-    given = {name: value for name, value in filters.items() if value is not None}
-    where = " AND ".join(["e.model_id = :model_id", *(ELEMENT_FILTERS[name] for name in given)])
-    params: dict[str, Any] = {"model_id": model_id, **given}
+    where, params = _element_filter(model_id, filters)
     # The SQL is put together from the constant conditions above; values are parameters.
     total = connection.execute(
         text(f"SELECT count(*) FROM ifc.v_element AS e WHERE {where}"),  # noqa: S608
@@ -1195,37 +1204,15 @@ def schedule(
                 "lists an element's properties"
             )
 
-    labels = [SCHEDULE_KEYS[key].label for key in keys]
-    columns = ", ".join(f"{label} AS g{n}" for n, label in enumerate(labels))
-    group_columns = ", ".join(f"g{n}" for n in range(len(labels)))
-    conditions = ["e.model_id = :model_id", ELEMENT_FILTERS["ifc_class"]]
-    params: dict[str, Any] = {"model_id": model_id, "ifc_class": ifc_class}
-    if storey_name is not None:
-        conditions.append(ELEMENT_FILTERS["storey_name"])
-        params["storey_name"] = storey_name
-    # Put together from the constant expressions above; values are parameters.
-    elements = (
-        f"SELECT e.*, {columns} FROM ifc.v_element AS e "  # noqa: S608
-        f"WHERE {' AND '.join(conditions)}"
-    )
-    order = [SCHEDULE_KEYS[key].order for key in keys if SCHEDULE_KEYS[key].order]
-    groups = connection.execute(
-        text(
-            f"SELECT {group_columns}, count(*) AS elements FROM ({elements}) AS e "  # noqa: S608
-            f"GROUP BY {group_columns} "
-            f"ORDER BY {', '.join([*order, 'elements DESC'])}, {group_columns}"
-        ),
-        params,
-    ).all()
+    elements, group_columns, params = _schedule_elements(model_id, ifc_class, keys, storey_name)
+    groups = _schedule_groups(connection, elements, group_columns, keys, params)
     rows = {
         tuple(row[:-1]): ScheduleRow(group=list(row[:-1]), elements=row[-1], fields={})
         for row in groups
     }
     missing = []
     for field in wanted:
-        summaries = _field_summaries(
-            connection, elements, group_columns, len(labels), field, params
-        )
+        summaries = _field_summaries(connection, elements, group_columns, len(keys), field, params)
         for key, row in rows.items():
             row.fields[field] = summaries.get(key, _EMPTY_FIELD)
         if groups and not summaries:
@@ -1257,6 +1244,43 @@ def schedule(
         truncated=len(kept) < len(rows),
         note=note,
     )
+
+
+def _schedule_elements(
+    model_id: int, ifc_class: str, keys: Sequence[ScheduleGroupBy], storey_name: str | None
+) -> tuple[str, str, dict[str, Any]]:
+    """The elements a schedule covers, with their group columns g0, g1, ….
+
+    Returns the query, the group columns and the parameters; shared with
+    :func:`schedule_element_ids`.
+    """
+    labels = [SCHEDULE_KEYS[key].label for key in keys]
+    columns = ", ".join(f"{label} AS g{n}" for n, label in enumerate(labels))
+    group_columns = ", ".join(f"g{n}" for n in range(len(labels)))
+    filters = {"ifc_class": ifc_class, "storey_name": storey_name}
+    where, params = _element_filter(model_id, filters)
+    # Put together from the constant expressions above; values are parameters.
+    elements = f"SELECT e.*, {columns} FROM ifc.v_element AS e WHERE {where}"  # noqa: S608
+    return elements, group_columns, params
+
+
+def _schedule_groups(
+    connection: Connection,
+    elements: str,
+    group_columns: str,
+    keys: Sequence[ScheduleGroupBy],
+    params: dict[str, Any],
+) -> Sequence[Any]:
+    """A schedule's groups and their element counts, in the schedule's order."""
+    order = [SCHEDULE_KEYS[key].order for key in keys if SCHEDULE_KEYS[key].order]
+    return connection.execute(
+        text(
+            f"SELECT {group_columns}, count(*) AS elements FROM ({elements}) AS e "  # noqa: S608
+            f"GROUP BY {group_columns} "
+            f"ORDER BY {', '.join([*order, 'elements DESC'])}, {group_columns}"
+        ),
+        params,
+    ).all()
 
 
 _EMPTY_FIELD = FieldSummary(
@@ -1550,3 +1574,276 @@ def data_quality_report(
         rules=rules,
         rules_without_findings=list(quiet),
     )
+
+
+# --------------------------------------------------------------------------- selections
+#
+# ``ifc-sql view`` lights up what a call found (ADR 14, decision 4). Each function below
+# resolves one tool's whole filter, not just the page it returned, with the tool's own
+# SQL, and returns (group, object_id) pairs: at most ``limit`` of them, so a caller that
+# asks for one more than it shows knows when there were more. None of them takes SQL
+# from anywhere: every value is a bind parameter, every name a constant above.
+
+MAX_SELECTION = 20_000
+"""Most objects the viewer lights for one call."""
+
+type Found = list[tuple[str | None, int]]
+"""Objects found for the viewer, in order: each one's group label and ``object_id``."""
+
+SPACE_GROUPS = ("rooms", "rooms exported again (duplicate_of)", "Revit Areas")
+"""The groups of a ``space_schedule`` selection, in order: rooms, their copies, area plans."""
+
+SEVERITIES = ("error", "warning", "info")
+
+
+def find_element_ids(
+    connection: Connection,
+    model_id: int,
+    filters: Mapping[str, str | None],
+    *,
+    limit: int = MAX_SELECTION + 1,
+) -> Found:
+    """Every element ``find_elements`` finds with ``filters``, on all its pages, in one group."""
+    _require_model(connection, model_id)
+    where, params = _element_filter(model_id, filters)
+    rows = connection.execute(
+        text(
+            f"SELECT e.object_id FROM ifc.v_element AS e WHERE {where} "  # noqa: S608
+            "ORDER BY e.object_id LIMIT :limit"
+        ),
+        {**params, "limit": limit},
+    ).scalars()
+    return [(None, object_id) for object_id in rows]
+
+
+def schedule_element_ids(
+    connection: Connection,
+    model_id: int,
+    ifc_class: str,
+    group_by: list[ScheduleGroupBy],
+    *,
+    storey_name: str | None = None,
+    limit: int = MAX_SELECTION + 1,
+) -> Found:
+    """The elements a ``schedule`` covers, by its groups, in its order."""
+    _require_model(connection, model_id)
+    keys = list(dict.fromkeys(group_by))
+    elements, group_columns, params = _schedule_elements(model_id, ifc_class, keys, storey_name)
+    order = [
+        tuple(row[:-1])
+        for row in _schedule_groups(connection, elements, group_columns, keys, params)
+    ]
+    members: dict[tuple[Any, ...], list[int]] = {key: [] for key in order}
+    for row in connection.execute(
+        text(
+            f"SELECT {group_columns}, e.object_id FROM ({elements}) AS e "  # noqa: S608
+            "ORDER BY e.object_id LIMIT :limit"
+        ),
+        {**params, "limit": limit},
+    ):
+        members[tuple(row[:-1])].append(row[-1])
+    return [(_group_label(key), object_id) for key in order for object_id in members[key]]
+
+
+def takeoff_element_ids(
+    connection: Connection,
+    model_id: int,
+    group_by: Literal["storey", "ifc_class", "revit_type"],
+    *,
+    include_openings: bool = False,
+    limit: int = MAX_SELECTION + 1,
+) -> Found:
+    """The elements of each group of a ``quantity_takeoff``, the largest group first.
+
+    By storey, ifc_class or revit_type, as the takeoff groups them; openings are left out
+    unless ``include_openings``. A takeoff by material totals materials, not elements, and
+    has no selection.
+    """
+    _require_model(connection, model_id)
+    grouping = ELEMENT_GROUPINGS[group_by]
+    features = "" if include_openings else f" AND {NOT_FEATURE}"
+    # The takeoff's own grouping, counted, gives the order of the groups.
+    order = connection.execute(
+        text(
+            f"SELECT {grouping.label} AS label, count(*) AS value "  # noqa: S608
+            f"FROM ifc.v_element AS e WHERE e.model_id = :model_id{features} "
+            f"GROUP BY {grouping.group_by} ORDER BY {grouping.order_by}"
+        ),
+        {"model_id": model_id},
+    ).scalars()
+    members: dict[str | None, list[int]] = {label: [] for label in order}
+    for label, object_id in connection.execute(
+        text(
+            f"SELECT {grouping.label} AS label, e.object_id "  # noqa: S608
+            f"FROM ifc.v_element AS e WHERE e.model_id = :model_id{features} "
+            "ORDER BY e.object_id LIMIT :limit"
+        ),
+        {"model_id": model_id, "limit": limit},
+    ):
+        members[label].append(object_id)
+    return [(label, object_id) for label, ids in members.items() for object_id in ids]
+
+
+def space_ids(connection: Connection, model_id: int, *, limit: int = MAX_SELECTION + 1) -> Found:
+    """Every space of a ``space_schedule``, on all its pages: rooms, copies, then Areas.
+
+    A copy is a space with ``duplicate_of`` and an area plan one of category Areas, as
+    ``space_schedule`` marks them (:data:`SPACE_GROUPS`).
+    """
+    _require_model(connection, model_id)
+    rows = connection.execute(
+        text(
+            """
+            SELECT CASE WHEN coalesce(category = :areas, false) THEN 2
+                        WHEN duplicate_of IS NOT NULL THEN 1
+                        ELSE 0 END AS kind,
+                   object_id
+            FROM ifc.v_space_schedule
+            WHERE model_id = :model_id
+            ORDER BY kind, object_id
+            LIMIT :limit
+            """
+        ),
+        {"model_id": model_id, "areas": REVIT_AREAS, "limit": limit},
+    )
+    return [(SPACE_GROUPS[kind], object_id) for kind, object_id in rows]
+
+
+def finding_object_ids(
+    connection: Connection,
+    model_id: int,
+    *,
+    severity: Severity | None = None,
+    rule_id: str | None = None,
+    scope: Scope | None = None,
+    limit: int = MAX_SELECTION + 1,
+) -> Found:
+    """The objects with a finding in the model's latest run that ``data_quality_report`` shows.
+
+    With ``rule_id``, one group named after the rule; without it, a group per severity,
+    each object in that of its worst finding, errors first. The report's filters apply.
+    Findings about the whole model have no object, and are left out.
+
+    Raises:
+        ToolInputError: The model or the rule does not exist.
+    """
+    _require_model(connection, model_id)
+    conditions = ["f.model_id = :model_id", "f.object_id IS NOT NULL"]
+    params: dict[str, Any] = {"model_id": model_id, "limit": limit}
+    if rule_id is not None:
+        known = connection.execute(
+            text("SELECT 1 FROM ifc.dq_rule WHERE rule_id = :rule_id"), {"rule_id": rule_id}
+        ).scalar()
+        if known is None:
+            raise ToolInputError(f"no rule {rule_id!r}")
+        conditions.append("f.rule_id = :rule_id")
+        params["rule_id"] = rule_id
+    if severity is not None:
+        conditions.append("f.severity = :severity")
+        params["severity"] = severity
+    if scope is not None:
+        conditions.append("f.scope = :scope")
+        params["scope"] = scope
+    # Put together from the constant conditions above; values are parameters.
+    rows = connection.execute(
+        text(
+            f"SELECT f.object_id, min({_severity_order('f.severity')}) AS worst "  # noqa: S608
+            f"FROM ifc.v_dq_finding AS f WHERE {' AND '.join(conditions)} "
+            "GROUP BY f.object_id ORDER BY worst, f.object_id LIMIT :limit"
+        ),
+        params,
+    )
+    if rule_id is not None:
+        return [(rule_id, object_id) for object_id, _ in rows]
+    return [(SEVERITIES[worst - 1], object_id) for object_id, worst in rows]
+
+
+def existing_object_ids(connection: Connection, object_ids: Sequence[int]) -> list[int]:
+    """Those of ``object_ids`` that are loaded, in the order given."""
+    found = set(
+        connection.execute(
+            text("SELECT object_id FROM ifc.object WHERE object_id = ANY(:ids)"),
+            {"ids": list(object_ids)},
+        ).scalars()
+    )
+    return [object_id for object_id in dict.fromkeys(object_ids) if object_id in found]
+
+
+def object_ids_by_global_id(
+    connection: Connection, global_ids: Sequence[tuple[int, str]]
+) -> list[int]:
+    """The ``object_id`` of each (model id, GlobalId) that is loaded, in the order given."""
+    rows = connection.execute(
+        text(
+            "SELECT g.n, o.object_id "
+            "FROM unnest(CAST(:models AS bigint[]), CAST(:global_ids AS text[])) "
+            "WITH ORDINALITY AS g(model_id, global_id, n) "
+            "JOIN ifc.object AS o ON o.model_id = g.model_id AND o.global_id = g.global_id "
+            "ORDER BY g.n"
+        ),
+        {
+            "models": [model_id for model_id, _ in global_ids],
+            "global_ids": [global_id for _, global_id in global_ids],
+        },
+    )
+    return list(dict.fromkeys(object_id for _, object_id in rows))
+
+
+class SelectedObject(NamedTuple):
+    """One object of a selection, as the viewer draws it.
+
+    ``kind`` says which of the scene's chunks holds it (ADR 14, decision 1): ``element``,
+    ``opening`` (never drawn), ``space``, ``space_copy`` (a space that repeats a room),
+    ``area`` (a Revit area plan) or ``spatial`` (a storey, building or site, not drawn).
+    """
+
+    object_id: int
+    model_id: int
+    global_id: str
+    kind: str
+    storey_id: int | None
+    storey_name: str | None
+    storey_elevation_m: float | None
+
+
+def selected_objects(connection: Connection, object_ids: Sequence[int]) -> list[SelectedObject]:
+    """What the viewer needs of each object: its model, GlobalId, kind and storey.
+
+    An element's storey is ``element.storey_id``; a space's the storey it belongs to, as
+    ``get_element`` and the scene place them.
+    """
+    rows = connection.execute(
+        text(
+            """
+            SELECT o.object_id, o.model_id, o.global_id,
+                   CASE WHEN e.object_id IS NOT NULL THEN
+                            CASE WHEN e.is_feature THEN 'opening' ELSE 'element' END
+                        WHEN o.ifc_class_base = 'IfcSpace' THEN
+                            CASE WHEN s.revit_category = :areas THEN 'area'
+                                 WHEN s.repeats_id IS NOT NULL THEN 'space_copy'
+                                 ELSE 'space' END
+                        ELSE 'spatial' END AS kind,
+                   storey.object_id AS storey_id, storey.name AS storey_name,
+                   storey_detail.elevation_m AS storey_elevation_m
+            FROM ifc.object AS o
+            LEFT JOIN ifc.element AS e ON e.object_id = o.object_id
+            LEFT JOIN ifc.spatial_element AS s ON s.object_id = o.object_id
+            LEFT JOIN ifc.object AS parent ON parent.object_id = s.parent_id
+            LEFT JOIN ifc.object AS storey ON storey.object_id = coalesce(
+                e.storey_id,
+                CASE WHEN o.ifc_class_base = 'IfcSpace'
+                      AND parent.ifc_class_base = 'IfcBuildingStorey' THEN parent.object_id END)
+            LEFT JOIN ifc.spatial_element AS storey_detail
+                ON storey_detail.object_id = storey.object_id
+            WHERE o.object_id = ANY(:ids)
+            """
+        ),
+        {"ids": list(object_ids), "areas": REVIT_AREAS},
+    )
+    by_id = {row.object_id: SelectedObject(*row) for row in rows}
+    return [by_id[object_id] for object_id in object_ids if object_id in by_id]
+
+
+def _group_label(values: Sequence[Any]) -> str:
+    """A schedule group's values as one label: "Level 1 / M_Single-Flush:0864 x 2032mm"."""
+    return " / ".join("(none)" if value is None else str(value) for value in values)

@@ -11,7 +11,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const BACKGROUND = 0xeef0f3;
-const ACCENT = new THREE.Color(0xff5722);
+const ACCENT = '#ff5722';
+const GHOST = new THREE.Color(0xd5d9de);
 const SPACE_ALPHA = 0.25;
 const TINT_WEIGHT = 0.6;
 const CLICK_SLOP_PX = 5;
@@ -78,6 +79,7 @@ export class SceneView extends EventTarget {
     this.chunks = []; // { modelId, kind, storey, group, batches, instances }
     this.elements = new Map(); // "model id/GlobalId" → [{ batch, id }]
     this.selected = [];
+    this.ghosted = false;
     this.only = false;
     this.moved = false;
   }
@@ -185,21 +187,66 @@ export class SceneView extends EventTarget {
     return hit ? hit.object.userData.owners[hit.batchId] : null;
   }
 
-  /**
-   * Light the elements of `keys` ([model id, GlobalId] pairs) in the accent colour; the
-   * others keep theirs. Returns how many of them are drawn.
-   */
+  /** Light the elements of `keys` ([model id, GlobalId] pairs) in the accent colour: a click. */
   select(keys) {
-    for (const { batch, id } of this.selected) batch.setColorAt(id, batch.userData.colours[id]);
-    const drawn = keys.map(([modelId, globalId]) => this.elements.get(elementKey(modelId, globalId))).filter(Boolean);
-    this.selected = drawn.flat();
+    return this.highlight(keys.length ? [{ colour: ACCENT, keys }] : []);
+  }
+
+  /**
+   * Light each group of `groups` ([{colour, keys: [[model id, GlobalId], …]}]) in its
+   * colour. With `ghost`, everything else is drawn opaque light grey, so the selection
+   * stands out without see-through walls; without it, the rest keeps its colours.
+   * Returns how many of the keys are drawn: an aggregate counts once, through its parts.
+   */
+  highlight(groups, ghost = false) {
+    this.restore();
     const colour = new THREE.Vector4();
-    for (const { batch, id } of this.selected) {
-      colour.set(ACCENT.r, ACCENT.g, ACCENT.b, Math.max(batch.userData.colours[id].w, 0.85));
-      batch.setColorAt(id, colour);
+    let drawn = 0;
+    for (const group of groups) {
+      const tint = new THREE.Color(group.colour);
+      for (const [modelId, globalId] of group.keys) {
+        const instances = this.elements.get(elementKey(modelId, globalId));
+        if (!instances) continue;
+        drawn += 1;
+        for (const instance of instances) {
+          const { batch, id } = instance;
+          colour.set(tint.r, tint.g, tint.b, Math.max(batch.userData.colours[id].w, 0.85));
+          batch.setColorAt(id, colour);
+          this.selected.push(instance);
+        }
+      }
+    }
+    if (ghost) {
+      this.ghosted = true;
+      const keep = new Set(this.selected.map(({ batch, id }) => `${batch.id}:${id}`));
+      this.eachInstance((batch, id) => {
+        if (keep.has(`${batch.id}:${id}`)) return;
+        colour.set(GHOST.r, GHOST.g, GHOST.b, batch.userData.colours[id].w);
+        batch.setColorAt(id, colour);
+      });
     }
     this.showOnly(this.only && this.selected.length > 0);
-    return drawn.length;
+    return drawn;
+  }
+
+  /** Give every instance lit or greyed its own colour back. */
+  restore() {
+    if (this.ghosted) {
+      this.eachInstance((batch, id) => batch.setColorAt(id, batch.userData.colours[id]));
+    } else {
+      for (const { batch, id } of this.selected) batch.setColorAt(id, batch.userData.colours[id]);
+    }
+    this.selected = [];
+    this.ghosted = false;
+    this.requestRender();
+  }
+
+  eachInstance(visit) {
+    for (const chunk of this.chunks) {
+      for (const batch of chunk.batches) {
+        for (let id = 0; id < batch.userData.owners.length; id++) visit(batch, id);
+      }
+    }
   }
 
   /** Hide everything but the selection, or show everything again. */
@@ -226,8 +273,8 @@ export class SceneView extends EventTarget {
     this.frame(box);
   }
 
-  /** Frame the selection. */
-  fitSelection() {
+  /** Frame the selection, at least `margin` metres around it. */
+  fitSelection(margin = 0.5) {
     const box = new THREE.Box3();
     const part = new THREE.Box3();
     const matrix = new THREE.Matrix4();
@@ -237,13 +284,13 @@ export class SceneView extends EventTarget {
       part.applyMatrix4(batch.getMatrixAt(id, matrix)).applyMatrix4(batch.matrixWorld);
       box.union(part);
     }
-    this.frame(box);
+    this.frame(box, margin);
   }
 
-  frame(box) {
+  frame(box, margin = 0.5) {
     if (box.isEmpty()) return;
     const centre = box.getCenter(new THREE.Vector3());
-    const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.5);
+    const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, margin);
     const direction = this.camera.position.clone().sub(this.controls.target);
     if (direction.lengthSq() === 0) direction.set(1, 0.75, 1);
     direction.normalize();

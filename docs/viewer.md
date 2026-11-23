@@ -4,17 +4,19 @@
 every discipline of a project together, storey by storey, with an element's details on a
 click. It reads the scenes that `ifc-sql ingest --viewer` built
 ([ADR 14](adr/0014-viewer.md), decision 1) and nothing else of the files, which the
-database does not keep. The design is in ADR 14, decisions 2, 3 and 6; what the port
-allows is in [SECURITY.md](../SECURITY.md#the-viewers-port-ifc-sql-view).
+database does not keep. Beside the models it lists the calls of every MCP server on the
+same database that runs with `IFC_SQL_VIEWER_FEED=1`, and lights up what each one found:
+[the feed](#the-mcp-servers-calls-the-feed). `ifc-sql demo` plays a script of questions
+through the real server, with no LLM, so the page lights up without one:
+[the scripted demo](#the-scripted-demo). The design is in ADR 14, decisions 2 to 6; what
+the port allows, and who can read and send the feed, is in
+[SECURITY.md](../SECURITY.md#the-viewers-port-ifc-sql-view).
 
 ![The four Duplex models in ifc-sql view, Roof hidden, a ceiling of the architectural model clicked and its details open](images/viewer-duplex.png)
 
 *The four Duplex models, after `make ingest-samples`, in `uv run ifc-sql view`: the
 storey Roof hidden, a ceiling of the ARC model clicked. Microsoft Edge 158 on Windows 11,
 2026-11-23.*
-
-Coming in Phase 3 of [the plan](plans/2026-11-ifc-viewer.md): the MCP server's calls in
-the page, with the elements each one found lit up, and a scripted demo.
 
 ## Start it
 
@@ -67,8 +69,8 @@ another port, so restart `view` then, as `serve` ([ADR 13](adr/0013-embedded-pos
   models is one row), highest first, with its elevation and its elements; a row hides or
   shows its chunks. "show all" brings back the hidden ones.
 - **Rooms.** The spaces, see-through, loaded when the box is ticked. The spaces that
-  repeat a room and Revit's area plans are kept apart in their own chunks, and are never
-  drawn yet: Phase 3 draws them when a call selects one.
+  repeat a room and Revit's area plans are kept apart in their own chunks, drawn only
+  when a call selects one, so that they do not cover the rooms.
 - **A click** lights the element in orange, names it over the view, and opens a drawer
   with what `get_element` returns: identity, storey and room, quantities with their
   source, property sets, materials, classifications and data quality findings. A click
@@ -76,8 +78,175 @@ another port, so restart `view` then, as `serve` ([ADR 13](adr/0013-embedded-pos
 - **fit**, **fit selection** and **only selection** frame what is shown, frame the
   selection, or hide everything else.
 
+- **The feed.** Every call of an MCP server with the feed on, newest first: when it came,
+  what it asked (or the demo's question), and how many objects it found. A dot says
+  whether calls arrive: live, connecting, interrupted (the page says why) or off. The
+  newest call is lit as it arrives; a click on an older one lights it again. A `run_sql`
+  call shows its query, as text.
+- **A call's caption.** Over the view: who asked (the server's process, or "scripted
+  demo, no LLM"), the question, the call in one line (`find_elements: IfcWall on
+  'Level 1', model 1`), the counts (`21 found · 21 shown · 0 without shape`, and the
+  openings, which are never drawn), what the server says besides (why nothing is lit, or
+  that only the first 20,000 are), and a legend of the groups' colours.
+- **A call's selection.** Each group in its colour, everything else opaque light grey.
+  When every object found lies on one storey, the storeys above it are hidden ("Level 2,
+  Roof hidden · show all"). A call that finds only spaces shows nothing else, since the
+  rooms are inside the walls. `get_element` moves the camera to its object and opens its
+  details. A call that lights nothing by nature (`list_models`, `list_storeys`,
+  `describe_schema`) leaves the view as it is.
+
 Every model is placed at its scene's origin less the first model's: the models of a
 project line up, as the Duplex's four and the audit's A and D do (ADR 14, P4).
+
+## The scripted demo
+
+No LLM, no MCP client of yours, and no configuration: from a fresh clone,
+
+```bash
+make demo              # Linux, after `make up` or with IFC_SQL_DATA_DIR set
+```
+
+```powershell
+uv sync --locked --extra embedded
+$env:IFC_SQL_DATA_DIR = "$env:LOCALAPPDATA\ifc-sql\data"
+uv run python scripts/demo.py
+```
+
+`scripts/demo.py` downloads the four Duplex files (pinned and checked by SHA-256), runs
+`ifc-sql migrate`, loads each file with `--viewer` (a file already loaded gets its scene
+in place, or keeps it), checks every model with `ifc-sql dq`, and runs `ifc-sql demo`. It
+stops at the first command that fails, with that command's exit code.
+
+`ifc-sql demo` is the client. It starts `ifc-sql serve` over stdio, as Claude Desktop
+does, with `IFC_SQL_VIEWER_FEED=1`, serves the page, prints its URL and opens it, and asks
+nine questions a few seconds apart. Each call takes the path a real client's takes:
+`serve` publishes it, the listener receives it, the feed resolves what it found, and the
+page lights it. The page says "scripted demo, no LLM", and numbers the questions. After
+the last one the page stays up until Ctrl+C.
+
+| # | Question | Tool call | What it shows | Lights |
+|---|---|---|---|---|
+| 1 | What is loaded? | `list_models` | 4 models: 268, 926, 103 and 498 elements | nothing; the four disciplines are shown |
+| 2 | The architectural walls on Level 1 | `find_elements` ARC, `IfcWall`, `Level 1` | 21 walls | 21 walls; Level 2 and Roof hidden |
+| 3 | Which walls are external, by type? | `run_sql`: the README's query, with `array_agg(e.object_id) AS object_ids` per type | 12, 4, 4 and 3 walls of four types | 23 walls in 4 colours |
+| 4 | The door schedule | `schedule` ARC, `IfcDoor`, by `revit_type`, `width_m` and `Pset_DoorCommon.FireRating` | 14 doors in 4 types; every fire rating the placeholder `'Fire Rating'` | 14 doors in 4 colours: 6, 4, 2, 2 |
+| 5 | The rooms | `space_schedule` ARC | 21 spaces, 422.0 m² | 21 rooms |
+| 6 | Rooms counted twice | `space_schedule` MEP | 42 spaces, 21 of them an MEP Space over a room | 21 rooms and their 21 copies, in two colours |
+| 7 | What lacks a fire rating? | `data_quality_report` ARC, `rule_id=missing_fire_rating` | 78 walls, doors and slabs | 78 elements |
+| 8 | One wall in full | `get_element` ARC, GlobalId `0iEHWY1$XA8eQeeULq4jDb` | everything stored about it: 16,353 characters of compact JSON | the wall; the camera goes to it, its details open |
+| 9 | A write is refused | `run_sql` `DELETE FROM ifc.property` | `query refused: only a query that reads data is allowed …` | nothing; the feed shows `refused` |
+
+The models are found by their files' SHA-256, never by id: ids depend on the order the
+files were loaded in. Step 8's 16,353 characters are those of a database where the ARC
+file was loaded first, as above; the ids in the result have as many digits there as in
+the docs' examples. `tests/samples/test_duplex_demo.py` pins every figure and every
+selection of the table.
+
+| Option | What it does |
+|---|---|
+| `--check` | Serve no page: ask every question, compare each call's outcome, figure and selection with the script, print a line per question, and exit 1 when one differs. CI runs it on Linux and on Windows. |
+| `--pause SECONDS` | Seconds between two questions (5 by default). |
+| `--step` | Wait for Enter before each question. |
+| `--port N`, `--no-open` | As for `view`. |
+| `--script duplex` | The questions: the Duplex's, the only script yet. |
+
+`uv run python scripts/demo.py --check` on Windows 11, with the PostgreSQL 16 of the
+`embedded` extra, on 2026-11-23:
+
+```
+1/9 What is loaded? [list_models, ok, 2,496 characters]: 4 models: 268, 926, 103 and 498 elements; lights nothing (feed only): ok
+2/9 The architectural walls on Level 1 [find_elements, ok, 8,189 characters]: 21 walls; lights 21 objects: ok
+3/9 Which walls are external, by type? [run_sql, ok, 518 characters]: 12, 4, 4 and 3 walls of four types; lights 23 objects in 4 groups (12, 4, 4, 3): ok
+4/9 The door schedule [schedule, ok, 1,815 characters]: 14 doors in 4 types, every fire rating the placeholder 'Fire Rating'; lights 14 objects in 4 groups (6, 4, 2, 2): ok
+5/9 The rooms [space_schedule, ok, 7,145 characters]: 21 spaces, 422.0 m²; lights 21 objects: ok
+6/9 Rooms counted twice [space_schedule, ok, 14,354 characters]: 42 spaces, 21 of them an MEP Space over a room; lights 42 objects in 2 groups (21, 21): ok
+7/9 What lacks a fire rating? [data_quality_report, ok, 2,222 characters]: 78 walls, doors and slabs without a fire rating; lights 78 objects: ok
+8/9 One wall in full [get_element, ok, 16,353 characters]: everything stored about one wall: its properties, materials and findings; lights 1 object: ok
+9/9 A write is refused [run_sql, refused, 149 characters]: refused before it reaches the database; lights nothing: ok
+all 9 steps as the script says
+```
+
+The characters are those of each result's text: what an LLM would have read.
+
+## The MCP server's calls (the feed)
+
+To see the calls of your own client, run the server it starts with the feed on, and keep
+`ifc-sql view` open on the same database:
+
+```bash
+IFC_SQL_VIEWER_FEED=1 uv run ifc-sql serve     # as your MCP client starts it
+uv run ifc-sql view                            # every view on the database receives them
+```
+
+[docs/mcp.md](mcp.md#running-it) lists the setting. With it, `ifc-sql serve` stays
+stdio-only, as ever: after every call, once the call's own read-only transaction has
+rolled back, it opens one more session, sends one PostgreSQL notification on the channel
+`ifc_viewer_feed` in a committed `READ ONLY` transaction that does nothing else, and
+closes it (ADR 14, decision 4). A notification that fails is logged and changes nothing
+else; the client gets its result either way. With the feed off, nothing is sent and no
+session is opened. A call the SDK refuses before any code runs (an argument of the wrong
+type, say) never reaches the server's code, and so never reaches the feed.
+
+`ifc-sql view` always listens: one session as `ifc_reader`, `ifc-sql-mcp-viewer-feed` in
+`pg_stat_activity`, in a thread of its own. When it loses that session (the database
+restarted, someone ended it) the page says "interrupted", and it connects again, waiting
+a little longer each time; a call made meanwhile is not shown. The embedded database,
+stopped and started again, listens on another port, so restart `view` and the client's
+`serve` then ([ADR 13](adr/0013-embedded-postgresql.md)). A `serve` and a `view` on two
+databases see nothing of each other: the page names the database it listens on.
+
+### What a call lights
+
+`view` resolves each call when it arrives, with fixed queries of the tools' own SQL and
+the call's arguments as bind parameters: the whole filter, not the page the call
+returned. At most 20,000 objects; the caption says when there were more. A data quality
+run or a load after the call can change what it would light later; what the page shows
+is what it found when it came.
+
+| Tool | What is lit |
+|---|---|
+| `find_elements` | Every match of the filter, on all pages: `tools.find_element_ids` shares the WHERE clause with `find_elements`, so the two never disagree. |
+| `schedule` | The same elements, one colour per group of `group_by`, in the schedule's order. |
+| `quantity_takeoff` | By `storey`, `ifc_class` or `revit_type`: each group's elements, one colour per group, openings left out unless `include_openings`. By `material`: nothing, and the caption says why: an element of three materials counts three times. |
+| `get_element` | The one object; the camera goes to it and its details open. |
+| `space_schedule` | Every space of the model: rooms, the copies of rooms (`duplicate_of`) and Revit Areas, in three colours; their chunks are shown. |
+| `data_quality_report` | With `rule_id`: every object with a finding of that rule in the model's latest run. Without it: every object with a finding, coloured by its worst severity (red, amber, blue). The report's `severity` and `scope` apply. A model never checked says so. |
+| `compare_models` | The newer model's objects added since the older one, and those whose properties changed, in two colours. Removed objects are only in the older model: the caption counts them. |
+| `run_sql` | The ids its rows hold: an `object_id` column (one group), an `object_ids` array column (one group per row, labelled by the row's first column), or `global_id` or `global_ids` beside a `model_id` column (GlobalIds are unique per model only). With the feed on, the tool's description tells the LLM so. |
+| `list_models`, `list_storeys`, `describe_schema` | Nothing: they are listed, and the view stays as it is. |
+
+A call that failed lights nothing, and the caption says how it ended.
+
+### The event
+
+One notification per call, JSON, at most 7,999 bytes of UTF-8: PostgreSQL refuses a
+payload of 8,000 or more (ADR 14, P7). Version 1:
+
+| Field | Holds |
+|---|---|
+| `v` | 1. |
+| `src` | The `serve` process: `{pid, started_at}`. |
+| `n`, `at` | The call's number in that process, and when it ended (UTC). |
+| `tool`, `arguments` | The call, as the tool received it; for `run_sql` without its text. A text longer than 200 bytes is clipped, and named in `clipped`: such a call lights nothing. |
+| `outcome`, `seconds`, `rows` | As `serve`'s log line has them: `ok`, `invalid`, `refused`, `timeout`, `database_error`, `unavailable` or `error`. |
+| `sql` | For `run_sql`: `{text, chars, sha256_16}`, the text clipped to what fits, its length, and the fingerprint of the log line. |
+| `ids` | For `run_sql` and `get_element`, whose result holds the selection itself: `{groups: [{label, object_ids, global_ids}], truncated}`, at most 500 ids and 4,800 bytes. |
+
+The ids come first, the SQL text gets what is left. Measured by
+`tests/unit/viewer/test_event.py`: 500 object ids of seven digits take 4,076 bytes of the
+event, and with 20,000 non-ASCII characters of SQL beside them the event is 7,999 bytes,
+the text clipped to its first 1,821 characters. The event never carries text from an
+IFC file: the summary the page shows ("find_elements: IfcWall on 'Level 1', model 1") is
+made from the arguments.
+
+Any login to the database can send a notification on the channel, so `view` trusts none:
+it drops an unknown version, a field of the wrong type, a tool that does not exist, an id
+that is not a positive integer, a GlobalId that is not one, more than 500 ids, arguments
+that a real call of the tool could not have (checked with the tool's own argument model,
+as the MCP SDK checks them), and more than 10 events a second after a burst of 30. It
+numbers what it keeps itself, keeps the last 200 calls (the selections of the last 50),
+counts what it dropped by reason, and logs a reason once, never the payload. It never
+runs SQL that came from an event: `run_sql`'s text is shown, as text.
 
 ## Measured
 
@@ -122,10 +291,16 @@ through the project's stderr logger, two seconds to finish on Ctrl+C.
 | `GET /api/models/{id}/scene` | The manifest: the origin, the counts, and each chunk's number, kind, storey, elements, bytes and SHA-256. |
 | `GET /api/models/{id}/scene/{chunk_no}.glb` | The chunk, `model/gltf-binary`, with its SHA-256 as `ETag`: a reload revalidates it and gets a 304. |
 | `GET /api/models/{id}/objects/{global_id}` | `get_element`, clipped as the MCP server clips it. |
+| `GET /api/feed` | The feed: the listener's status and the calls kept, each with what it lit. |
+| `GET /api/events` | The same as server-sent events: `status` when it changes, `call` per call. A stream begins with every call kept, or, when the browser comes back with `Last-Event-ID`, with those after it. `EventSource` cannot send a header, so this route alone also takes the token as `?t=`. |
 
 Every `/api/` route reads as `ifc_reader` in a read-only transaction with the MCP server's
-limits (5 s per statement), at most three at once. No route runs SQL that came from a
-request.
+limits (5 s per statement); the routes and the feed's selections together hold at most
+three sessions at once, and the listener one more (`ifc_reader` allows 20, shared with
+every MCP call on the cluster). No route runs SQL that came from a request or an event.
+`tests/samples/test_duplex_demo.py` samples `pg_stat_activity` while the Duplex demo
+plays, and checks that it stays within those numbers, with `serve` at one session at a
+time: a call's own session is closed before its notification's opens.
 
 The page is plain ES modules, with no build step and no npm, in
 `src/ifc_sql_mcp/viewer/static/`:
@@ -133,10 +308,11 @@ The page is plain ES modules, with no build step and no npm, in
 | File | Does |
 |---|---|
 | `index.html`, `viewer.css` | The layout. The import map is the only inline script. |
-| `main.js` | The sidebar, the loading of the chunks (four at a time), the toggles, the selection. |
-| `scene.js` | Each chunk into two BatchedMeshes, one opaque and one transparent, one instance per primitive; the map from GlobalId to instances; picking, fitting, `measure`. |
+| `main.js` | The sidebar, the loading of the chunks (four at a time), the toggles, the selection, a call's caption. |
+| `feed.js` | The list of calls from the event stream, the feed's state, a call's selection handed to the view. |
+| `scene.js` | Each chunk into two BatchedMeshes, one opaque and one transparent, one instance per primitive; the map from GlobalId to instances; picking, lighting groups in their colours with the rest grey, fitting, `measure`. |
 | `details.js` | The drawer. |
-| `api.js` | The one seam for data: the token, and `fetch` with `Authorization: Bearer`. |
+| `api.js` | The one seam for data: the token, `fetch` with `Authorization: Bearer`, and the `EventSource` of the feed. |
 | `dom.js` | The one way the page makes elements: text as `textContent`, never HTML. |
 | `vendor/three/` | three.js r187, unminified, with its MIT licence and `SHA256SUMS`. |
 

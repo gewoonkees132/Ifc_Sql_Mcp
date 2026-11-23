@@ -31,10 +31,10 @@ undoes the setting. The validator refuses ``set_config`` anyway.
 """
 
 import json
-from typing import Literal
+from typing import Any, Literal
 
 import psycopg
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 from sqlalchemy import Connection
 
 from ifc_sql_mcp.db.engine import psycopg_connection
@@ -92,10 +92,20 @@ class SqlResult(ToolResult):
         "a note that gives their length."
     )
     note: str | None = Field(description="What to do when the result was truncated.")
+    _records: list[tuple[Any, ...]] = PrivateAttr(default_factory=list)
 
     def logged_rows(self) -> int:
         """Return the number of rows returned."""
         return self.row_count
+
+    def records(self) -> list[tuple[Any, ...]]:
+        """The rows returned, as psycopg gave them: before any value was clipped.
+
+        Not part of the result the client gets. The viewer's feed reads its ids from them
+        (ADR 14, decision 4): an ``array_agg(object_id)`` longer than a value may be is
+        text in ``rows``, but whole here.
+        """
+        return self._records
 
 
 def execute_query(connection: Connection, sql: str, max_rows: int) -> SqlResult:
@@ -140,7 +150,7 @@ def execute_query(connection: Connection, sql: str, max_rows: int) -> SqlResult:
     else:
         if len(fetched) > max_rows:
             truncated_by = "max_rows"
-    return SqlResult(
+    result = SqlResult(
         columns=columns,
         rows=rows,
         row_count=len(rows),
@@ -149,6 +159,8 @@ def execute_query(connection: Connection, sql: str, max_rows: int) -> SqlResult:
         values_cut=values_cut,
         note=_note(truncated_by, max_rows),
     )
+    result._records = [tuple(record) for record in fetched[: len(rows)]]
+    return result
 
 
 def _note(truncated_by: Literal["max_rows", "size"] | None, max_rows: int) -> str | None:
