@@ -1,8 +1,9 @@
 # Plan: a viewer for the loaded models and the MCP server's queries
 
-- Status: revised after review ([the review](2026-11-ifc-viewer-review.md)), and again
-  after Phases 0 and 1 ([Changes after Phases 0 and 1](#changes-after-phases-0-and-1)).
-  Phase 0 is done (the draft [ADR 14](../adr/0014-viewer.md)); Phase 1 is PR 1.
+- Status: revised after review ([the review](2026-11-ifc-viewer-review.md)), again
+  after Phases 0 and 1 ([Changes after Phases 0 and 1](#changes-after-phases-0-and-1)),
+  and after Phase 2 ([Changes after Phase 2](#changes-after-phase-2)). Phase 0 is done
+  (the draft [ADR 14](../adr/0014-viewer.md)); Phase 1 is PR 1, Phase 2 PR 2.
 - Date: 2026-11-22
 - For: a separate session that implements it, one pull request per phase. This plan is
   complete on its own; the review records why it changed.
@@ -1027,3 +1028,50 @@ otherwise. The user decided the first and the last:
 - `tests/modern` loads A and B with plain `--geometry` again (`measured`), and every
   audit file's scene into a database of its own (`scenes`); A5's figures are pinned on
   both, so the two ways of measuring agree. It costs one more pass over file B.
+
+## Changes after Phase 2
+
+Phase 2 (PR 2, [docs/viewer.md](../viewer.md), ADR 14 decisions 2, 3 and 6) followed the
+code where the plan did not fit it:
+
+- **`create_app(engine, token, *, port, project, model_ids)`**, not `(engine, token,
+  feed)`: the Host check needs the port, and `--project` and `--model` reach the page
+  through the app. Phase 3 adds the feed.
+- **The project shown first** is that of the newest model *with a scene*, not of the most
+  recently loaded model: a file loaded afterwards without `--viewer` would otherwise leave
+  the page empty. `view` checks `--project` and `--model` when it starts (exit 2), and
+  refuses both together.
+- **The middleware wraps the whole Starlette app**, outside Starlette's own error
+  handling, which a `middleware=` entry would sit inside: a 500 carries the headers too.
+- **The page's files are served from memory**, read when the app is made, by an explicit
+  list of media types, not by Starlette's `StaticFiles`, which takes them from
+  `mimetypes` and so from the Windows registry; with `nosniff`, a module served as
+  `text/plain` does not run.
+- **The page is served with LF line endings, and hashed so**: the browser hashes the
+  import map after its parser turned CRLF into LF, and git on Windows checks
+  `index.html` out with CRLF.
+- **The chunks go through `api.js`'s `fetch`** and `GLTFLoader.parseAsync`, not
+  `GLTFLoader.load` with `setRequestHeader`, so that all data passes the one seam.
+- **The vendor folder** is `vendor/three/` with `three.module.js` and `three.core.js` at
+  its top and the addons under `addons/` (three.js's own `three/addons/` name), not
+  three.js's `build/` and `examples/jsm/`: `.gitignore` ignores every `build/`.
+  `.gitattributes` keeps git from converting the vendored files' line endings, which
+  `SHA256SUMS` pins.
+- **A seventh module, `dom.js`**: the one helper that makes elements, with text as
+  `textContent`; it refuses `on…` attributes. And a favicon, so the browser does not ask
+  for a missing one.
+- **Rooms** are a layer the page loads and shows on request, see-through. Copies and Areas
+  stay undrawn until Phase 3's selections.
+- **`window.ifcViewer`** also has `ready_ms`, `stats()` and `measure(seconds)`: the
+  figures in `docs/viewer.md` come from them.
+- **uvicorn** also runs with `ws="none"`, and its INFO lines are silenced: they repeat
+  `view`'s own log line, with ANSI colours in an extra field. `make_reader_engine` takes
+  an `application` name, so the viewer's sessions are `ifc-sql-mcp-viewer`.
+- **`scripts/view_smoke.py`** (`make view-smoke`) runs `ifc-sql view --no-open` and
+  fetches a chunk over its port; the windows job and the real-socket tests run it.
+- **Dependencies**: `anyio` moved from the dev group to the project's, beside
+  `starlette`, `uvicorn` and `sse-starlette`; `uv lock` changed nothing else (the lock
+  file's own revision stays 3).
+- **Measured on a desktop**, the Phase 0 machine, with r187 in Microsoft Edge 158: file B
+  in 76 draw calls at 144.1 frames per second, ready 0.93 s after the page starts
+  loading. **The laptop figure is still missing**: no laptop was at hand.
