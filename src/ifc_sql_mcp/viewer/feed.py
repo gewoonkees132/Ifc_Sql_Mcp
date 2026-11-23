@@ -46,7 +46,7 @@ PER_SECOND = 10.0
 
 DEMO = "scripted demo, no LLM"
 
-type State = Literal["off", "connecting", "live", "interrupted"]
+type State = Literal["off", "connecting", "live", "interrupted", "recorded"]
 
 
 class Status(BaseModel):
@@ -54,7 +54,7 @@ class Status(BaseModel):
 
     state: State = Field(
         description="off: no feed. connecting, live, or interrupted (the listener "
-        "reconnects by itself)."
+        "reconnects by itself). recorded: the static demo, played back from its file."
     )
     database: str | None = Field(description="Where the listener listens: host, port, database.")
     since: str | None = Field(description="When the state began, ISO 8601, UTC.")
@@ -260,10 +260,8 @@ class Feed:
             self._demo_source = source
             self._status = self._status.model_copy(update={"demo": True})
             for index, entry in enumerate(self._entries):
-                if entry.src == source and not entry.demo:
-                    self._entries[index] = entry.model_copy(
-                        update={"demo": True, "source": f"{DEMO} ({entry.source})"}
-                    )
+                if entry.src == source:
+                    self._entries[index] = demo_entry(entry)
             self._changed.notify_all()
 
     def close(self) -> None:
@@ -299,6 +297,13 @@ class Feed:
         (logger.warning if first else logger.debug)(
             "viewer feed: notification dropped", extra={"reason": reason}
         )
+
+
+def demo_entry(entry: Entry) -> Entry:
+    """``entry``, labelled as a call of the scripted demo's own ``serve``."""
+    if entry.demo:
+        return entry
+    return entry.model_copy(update={"demo": True, "source": f"{DEMO} ({entry.source})"})
 
 
 def _now() -> str:

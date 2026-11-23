@@ -10,10 +10,13 @@ The counts are those of ``viewer/demo_script.py``, and docs/viewer.md quotes the
 """
 
 import dataclasses
+import json
 import threading
 import time
 from collections import Counter
 from collections.abc import Callable, Iterator
+from pathlib import Path
+from typing import Any
 
 import pytest
 from mcp_client import connect
@@ -27,7 +30,7 @@ from ifc_sql_mcp.db.engine import make_reader_engine
 from ifc_sql_mcp.dq.run import DqResult
 from ifc_sql_mcp.ingest.pipeline import IngestResult
 from ifc_sql_mcp.server.app import argument_checks, build_server
-from ifc_sql_mcp.viewer import demo
+from ifc_sql_mcp.viewer import demo, export
 from ifc_sql_mcp.viewer.demo_script import DUPLEX
 from ifc_sql_mcp.viewer.feed import Feed, Resolver
 from ifc_sql_mcp.viewer.listener import Listener, listen_connection
@@ -200,3 +203,40 @@ def test_demo_check_plays_through_a_real_serve_over_stdio(
     assert lines[0].startswith("1/9 What is loaded? [list_models, ok, ")
     assert lines[2].endswith("lights 23 objects in 4 groups (12, 4, 4, 3): ok")
     assert lines[-1] == "all 9 steps as the script says"
+
+
+async def test_the_duplex_demo_exports_as_the_static_copy_pages_publishes(
+    database: Settings, listening: tuple[Engine, Reader, Feed], tmp_path: Path
+) -> None:
+    _, reader, feed = listening
+    played = await _play(database, reader, feed)
+    models = demo.find_models(reader, DUPLEX)
+    site = tmp_path / "site"
+
+    exported = export.export(reader, DUPLEX, played, models, site, pause_seconds=5)
+
+    def read(path: str) -> Any:
+        return json.loads((site / path).read_text(encoding="utf-8"))
+
+    # The page and its 16 files, 4 data files, and 4 scenes of 7, 9, 4 and 4 chunks.
+    assert exported.files == 1 + 16 + 4 + 4 + 24
+    ids = [models[key] for key in ("arc", "mep", "ele", "plu")]
+    assert [model["model_id"] for model in read(export.MODELS)["models"]] == ids
+    scenes = [read(export.SCENE.format(model_id=model_id)) for model_id in ids]
+    assert [len(scene["chunks"]) for scene in scenes] == [7, 9, 4, 4]
+    entries = read(export.EVENTS)["entries"]
+    assert [
+        None if e["selection"] is None else tuple(g["count"] for g in e["selection"]["groups"])
+        for e in entries
+    ] == LIT
+    assert [entry["step"]["index"] for entry in entries] == list(range(1, 10))
+    # Every element a scene can draw, and the spaces: ARC's 218 drawn and 21 rooms.
+    elements = read(export.ELEMENTS)["models"]
+    assert [len(elements[str(model_id)]["objects"]) for model_id in ids] == [239, 968, 104, 499]
+    # The one object the script looks up: the wall of step 8.
+    details = read(export.DETAILS)["models"]
+    assert {model: list(objects) for model, objects in details.items()} == {
+        str(models["arc"]): ["0iEHWY1$XA8eQeeULq4jDb"]
+    }
+    wall = details[str(models["arc"])]["0iEHWY1$XA8eQeeULq4jDb"]
+    assert wall["name"] == "Basic Wall:Interior - Furring (152 mm Stud):190774"

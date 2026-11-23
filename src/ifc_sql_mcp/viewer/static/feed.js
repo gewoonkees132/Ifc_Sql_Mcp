@@ -1,7 +1,8 @@
 // The feed: every MCP call that ifc-sql serve published, and what each one found
-// (ADR 14, decision 4). The server checks and resolves every call; this module lists
-// them, says whether calls arrive, and hands the page a call's selection to light.
-// Everything in a call is text from the network: it is set with textContent only.
+// (ADR 14, decision 4), or on the static copy the calls the demo recorded, played back
+// (decision 7). The server checks and resolves every call; this module lists them, says
+// whether calls arrive, and hands the page a call's selection to light. Everything in a
+// call is text from the network: it is set with textContent only.
 
 import { el, number } from './dom.js';
 
@@ -12,7 +13,11 @@ const STATES = {
   connecting: 'connecting…',
   live: 'live',
   interrupted: 'interrupted',
+  recorded: 'recorded',
 };
+
+/** The states whose status carries a message to show. */
+const EXPLAINED = new Set(['off', 'interrupted', 'recorded']);
 
 /** The time of an ISO 8601 instant, as hh:mm:ss in the browser's own zone. */
 function clock(iso) {
@@ -49,9 +54,9 @@ export class FeedPanel {
         this.render();
       },
       call: (entry) => this.add(entry),
-      error: (closed) => {
+      error: (closed, message) => {
         this.connected = !closed;
-        if (closed) this.status = { ...this.status, state: 'off', message: 'the page lost the server: reload it, or open the URL ifc-sql view printed' };
+        if (closed) this.status = { ...this.status, state: 'off', message: message ?? 'the page lost the server: reload it, or open the URL ifc-sql view printed' };
         this.render();
       },
       open: () => {
@@ -81,7 +86,7 @@ export class FeedPanel {
     state.dataset.state = status.state;
     const parts = [];
     if (status.demo) parts.push('Scripted demo, no LLM: ifc-sql demo asks through ifc-sql serve.');
-    if (status.state === 'interrupted' || status.state === 'off') parts.push(status.message ?? '');
+    if (EXPLAINED.has(status.state)) parts.push(status.message ?? '');
     if (status.state === 'live' && this.entries.size === 0) {
       parts.push(
         `Listening on ${status.database ?? 'the database'}. No call yet: run an MCP client whose ifc-sql serve has IFC_SQL_VIEWER_FEED=1 and the same database, or ifc-sql demo.`,

@@ -1,4 +1,5 @@
-// The drawer that opens on a click: everything `get_element` says about one element.
+// The drawer that opens on a click: everything `get_element` says about one element, or
+// on the static copy, for an element it holds no details of, its class, name and storey.
 // Every value from the IFC file is set as text (dom.js), never parsed as HTML.
 
 import { el, metres, number } from './dom.js';
@@ -28,13 +29,18 @@ export class Details {
     this.body.replaceChildren(el('p', { className: 'error', text: message }));
   }
 
-  /** Show `detail`, an ElementDetail of `get_element`. */
+  /** Show `detail`, an ElementDetail of `get_element`, or the static copy's brief record. */
   show(detail) {
     this.root.hidden = false;
     this.title.replaceChildren(
       el('div', { className: 'kicker', text: `${detail.ifc_class} · ${detail.discipline}` }),
       el('div', { className: 'name', text: detail.name ?? '(no name)' }),
     );
+    if (detail.brief) {
+      const storey = section('Location', facts([['Storey', detail.storey_name]]));
+      this.body.replaceChildren(identity(detail), storey, el('p', { className: 'muted', text: detail.note }));
+      return;
+    }
     const sections = [
       identity(detail),
       location(detail),
@@ -81,7 +87,7 @@ function identity(detail) {
     facts([
       ['GlobalId', globalId],
       ['Model', `${detail.model_id} (${detail.discipline})`],
-      ['Class', detail.ifc_class === detail.ifc_class_base ? detail.ifc_class : `${detail.ifc_class} (${detail.ifc_class_base})`],
+      ['Class', !detail.ifc_class_base || detail.ifc_class === detail.ifc_class_base ? detail.ifc_class : `${detail.ifc_class} (${detail.ifc_class_base})`],
       ['Revit family', detail.revit_family],
       ['Revit type', detail.revit_type],
       ['Revit ElementId', detail.revit_element_id],

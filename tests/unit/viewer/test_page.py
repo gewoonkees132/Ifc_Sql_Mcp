@@ -86,7 +86,7 @@ def test_the_pages_one_inline_script_is_its_import_map() -> None:
 
     assert [(attributes, body.strip() != "") for attributes, body in scripts] == [
         (' type="importmap"', True),
-        (' type="module" src="/static/main.js"', False),
+        (' type="module" src="static/main.js"', False),
     ]
 
 
@@ -101,20 +101,21 @@ def test_the_page_has_no_inline_handlers_or_styles() -> None:
 def test_every_module_the_page_imports_is_one_of_its_files() -> None:
     imports = json.loads(re.search(r'type="importmap">(.*?)</script>', _page(), re.DOTALL)[1])
     prefixes = imports["imports"]
+    # Relative to the page: the static copy is served below a folder (ADR 14, decision 7).
     assert prefixes == {
-        "three": "/static/vendor/three/three.module.js",
-        "three/addons/": "/static/vendor/three/addons/",
+        "three": "./static/vendor/three/three.module.js",
+        "three/addons/": "./static/vendor/three/addons/",
     }
 
     def resolve(specifier: str, importer: Path) -> Path:
         if specifier.startswith("."):
             return (importer.parent / specifier).resolve()
         if specifier == "three":
-            return STATIC / prefixes["three"].removeprefix("/static/")
+            return STATIC / prefixes["three"].removeprefix("./static/")
         assert specifier.startswith("three/addons/")
         return (
             STATIC
-            / prefixes["three/addons/"].removeprefix("/static/")
+            / prefixes["three/addons/"].removeprefix("./static/")
             / specifier.removeprefix("three/addons/")
         )
 

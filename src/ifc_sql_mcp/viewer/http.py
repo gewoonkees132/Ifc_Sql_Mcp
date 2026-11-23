@@ -259,7 +259,7 @@ def shown(
 
 
 @dataclass(frozen=True, slots=True)
-class _File:
+class PageFile:
     """One file of the page, held in memory."""
 
     body: bytes
@@ -267,17 +267,30 @@ class _File:
     etag: str
 
     @classmethod
-    def of(cls, body: bytes, media_type: str) -> "_File":
+    def of(cls, body: bytes, media_type: str) -> "PageFile":
+        """The file of ``body``, its SHA-256 as its ``ETag``."""
         return cls(body, media_type, f'"{hashlib.sha256(body).hexdigest()}"')
 
 
-def _static_files(folder: Path) -> dict[str, _File]:
-    """The page's files under ``folder``, by their path below it, the page itself apart."""
-    files: dict[str, _File] = {}
+def page_text() -> str:
+    """The page, ``index.html``, with LF line endings.
+
+    The browser hashes the import map after turning CRLF into LF, as git on Windows may
+    have written the file; so the page is served, and hashed, with LF.
+    """
+    return (STATIC / PAGE).read_text(encoding="utf-8").replace("\r\n", "\n")
+
+
+def page_files(folder: Path) -> dict[str, PageFile]:
+    """The page's files under ``folder``, by their path below it, the page itself apart.
+
+    What ``view`` serves under ``/static/``, and the static demo copies.
+    """
+    files: dict[str, PageFile] = {}
     for path in sorted(folder.rglob("*")):
         if path.is_file() and path.suffix in MEDIA_TYPES and path.name != PAGE:
             relative = path.relative_to(folder).as_posix()
-            files[relative] = _File.of(path.read_bytes(), MEDIA_TYPES[path.suffix])
+            files[relative] = PageFile.of(path.read_bytes(), MEDIA_TYPES[path.suffix])
     return files
 
 
@@ -355,8 +368,8 @@ class _Viewer:
         self.project = project
         self.model_ids = tuple(model_ids)
         self.limiter = anyio.CapacityLimiter(SESSIONS)
-        self.page = _File.of(page.encode("utf-8"), "text/html; charset=utf-8")
-        self.files = _static_files(STATIC)
+        self.page = PageFile.of(page.encode("utf-8"), "text/html; charset=utf-8")
+        self.files = page_files(STATIC)
 
     # ----------------------------------------------------------------- the page
 
@@ -370,7 +383,7 @@ class _Viewer:
         return self._file(request, found)
 
     @staticmethod
-    def _file(request: Request, file: _File) -> Response:
+    def _file(request: Request, file: PageFile) -> Response:
         headers = {"ETag": file.etag, "Cache-Control": "no-cache"}
         if file.etag.strip('"') in _matches(request):
             return Response(status_code=304, headers=headers)
@@ -379,11 +392,15 @@ class _Viewer:
     # ----------------------------------------------------------------- the data
 
     async def models(self, request: Request) -> Response:
-        return await self._read(lambda connection: _json(self._catalogue(connection)))
+        return await self._read(
+            lambda connection: _json(
+                catalogue(connection, project=self.project, model_ids=self.model_ids)
+            )
+        )
 
     async def scene(self, request: Request) -> Response:
         model_id: int = request.path_params["model_id"]
-        return await self._read(lambda connection: _json(self._manifest(connection, model_id)))
+        return await self._read(lambda connection: _json(manifest(connection, model_id)))
 
     async def chunk(self, request: Request) -> Response:
         model_id: int = request.path_params["model_id"]
@@ -395,7 +412,7 @@ class _Viewer:
                 text(CHUNK), {"model_id": model_id, "chunk_no": chunk_no, "etags": etags}
             ).one_or_none()
             if row is None:
-                count = self._scene_row(connection, model_id)["chunk_count"]
+                count = scene_row(connection, model_id)["chunk_count"]
                 raise NotFoundError(
                     f"model {model_id}'s scene has no chunk {chunk_no}: it has {count} chunks, "
                     f"numbered from 0"
@@ -414,7 +431,7 @@ class _Viewer:
             return _error(404, "not an IFC GlobalId: 22 characters of 0-9, A-Z, a-z, _ and $")
 
         def work(connection: Connection) -> Response:
-            self._model_row(connection, model_id)
+            model_row(connection, model_id)
             detail = tools.get_element(
                 connection, object_id=None, model_id=model_id, global_id=global_id
             )
@@ -470,62 +487,96 @@ class _Viewer:
             logger.warning("viewer request failed", extra={"error": describe_error(exc)})
             return _error(503, "the database did not answer; the log of ifc-sql view says why")
 
-    def _catalogue(self, connection: Connection) -> Catalogue:
-        listed = tools.list_models(connection, include_replaced=True)
-        scenes = {row["model_id"]: row for row in connection.execute(text(SCENES)).mappings()}
-        models = [
-            ViewerModel.model_validate(
-                {
-                    **model.model_dump(),
-                    "scene": self._summary(scenes.get(model.model_id)),
-                    "scene_hint": None
-                    if model.model_id in scenes
-                    else scene_hint(model.file_name, model.discipline),
-                }
-            )
-            for model in listed.models
-        ]
-        sets = projects(listed.models, scenes)
-        return Catalogue(
-            models=models,
-            truncated=listed.truncated,
-            projects=sets,
-            shown=shown(sets, listed.models, project=self.project, model_ids=self.model_ids),
-        )
 
-    @staticmethod
-    def _summary(row: RowMapping | None) -> SceneSummary | None:
-        if row is None:
-            return None
-        counts = row["element_count"], row["without_shape_count"], row["opening_count"]
-        return SceneSummary.model_validate({**row, "summary": scene_summary(*counts)})
+def catalogue(
+    connection: Connection,
+    *,
+    project: str | None = None,
+    model_ids: Sequence[int] = (),
+    only: Container[int] | None = None,
+) -> Catalogue:
+    """``GET /api/models``: every model with its scene, the projects, and the set shown first.
 
-    def _manifest(self, connection: Connection, model_id: int) -> Manifest:
-        row = self._scene_row(connection, model_id)
-        chunks = connection.execute(text(CHUNKS), {"model_id": model_id}).mappings()
-        counts = row["element_count"], row["without_shape_count"], row["opening_count"]
-        return Manifest.model_validate(
+    Args:
+        connection: A read-only transaction.
+        project: The project shown first, from ``--project``.
+        model_ids: The models shown first, from ``--model``; before ``project``.
+        only: List these models alone, as if no other were loaded: the static demo's.
+    """
+    listed = tools.list_models(connection, include_replaced=True)
+    summaries = [model for model in listed.models if only is None or model.model_id in only]
+    scenes = {row["model_id"]: row for row in connection.execute(text(SCENES)).mappings()}
+    models = [
+        ViewerModel.model_validate(
             {
-                **row,
-                "origin_m": [row["origin_x_m"], row["origin_y_m"], row["origin_z_m"]],
-                "summary": scene_summary(*counts),
-                "chunks": [dict(chunk) for chunk in chunks],
+                **model.model_dump(),
+                "scene": _summary(scenes.get(model.model_id)),
+                "scene_hint": None
+                if model.model_id in scenes
+                else scene_hint(model.file_name, model.discipline),
             }
         )
+        for model in summaries
+    ]
+    sets = projects(summaries, scenes)
+    return Catalogue(
+        models=models,
+        truncated=listed.truncated and only is None,
+        projects=sets,
+        shown=shown(sets, summaries, project=project, model_ids=model_ids),
+    )
 
-    @staticmethod
-    def _model_row(connection: Connection, model_id: int) -> RowMapping:
-        row = connection.execute(text(MODEL), {"model_id": model_id}).mappings().one_or_none()
-        if row is None:
-            raise NotFoundError(f"no model with id {model_id}: reload the page for those loaded")
-        return row
 
-    def _scene_row(self, connection: Connection, model_id: int) -> RowMapping:
-        row = self._model_row(connection, model_id)
-        if row["format_version"] is None:
-            hint = scene_hint(row["file_name"], row["discipline"])
-            raise NotFoundError(f"model {model_id} has no scene: {hint}")
-        return row
+def manifest(connection: Connection, model_id: int) -> Manifest:
+    """``GET /api/models/{id}/scene``: the scene's origin, counts and chunks.
+
+    Raises:
+        NotFoundError: The model does not exist, or has no scene.
+    """
+    row = scene_row(connection, model_id)
+    chunks = connection.execute(text(CHUNKS), {"model_id": model_id}).mappings()
+    counts = row["element_count"], row["without_shape_count"], row["opening_count"]
+    return Manifest.model_validate(
+        {
+            **row,
+            "origin_m": [row["origin_x_m"], row["origin_y_m"], row["origin_z_m"]],
+            "summary": scene_summary(*counts),
+            "chunks": [dict(chunk) for chunk in chunks],
+        }
+    )
+
+
+def model_row(connection: Connection, model_id: int) -> RowMapping:
+    """The model and its scene's row, if any.
+
+    Raises:
+        NotFoundError: The model does not exist.
+    """
+    row = connection.execute(text(MODEL), {"model_id": model_id}).mappings().one_or_none()
+    if row is None:
+        raise NotFoundError(f"no model with id {model_id}: reload the page for those loaded")
+    return row
+
+
+def scene_row(connection: Connection, model_id: int) -> RowMapping:
+    """The model and its scene's row.
+
+    Raises:
+        NotFoundError: The model does not exist, or has no scene; the message says how to
+            build one.
+    """
+    row = model_row(connection, model_id)
+    if row["format_version"] is None:
+        hint = scene_hint(row["file_name"], row["discipline"])
+        raise NotFoundError(f"model {model_id} has no scene: {hint}")
+    return row
+
+
+def _summary(row: RowMapping | None) -> SceneSummary | None:
+    if row is None:
+        return None
+    counts = row["element_count"], row["without_shape_count"], row["opening_count"]
+    return SceneSummary.model_validate({**row, "summary": scene_summary(*counts)})
 
 
 def create_app(
@@ -556,9 +607,7 @@ def create_app(
         The ASGI app. Its ``app`` is the Starlette app, whose ``routes`` are the table
         above.
     """
-    # The browser hashes the import map after turning CRLF into LF, as git on Windows may
-    # have written the file; so the page is served, and hashed, with LF.
-    page = (STATIC / PAGE).read_text(encoding="utf-8").replace("\r\n", "\n")
+    page = page_text()
     viewer = _Viewer(
         reader or Reader(engine, limits),
         page,

@@ -9,7 +9,7 @@ export
 
 .PHONY: help install up down reset-db migrate psql lint fmt typecheck test test-unit test-samples
 .PHONY: check samples ingest-samples dq dq-samples serve smoke bench-load fixture quirks
-.PHONY: audit-samples test-modern view view-smoke demo demo-audit
+.PHONY: audit-samples test-modern view view-smoke demo demo-audit demo-export
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -93,6 +93,9 @@ demo: ## The scripted Duplex demo, no LLM: download, load with --viewer, check, 
 
 demo-audit: ## The scripted audit demo on four Revit exports, local only (scripts/demo.py --script audit)
 	$(UV) run python scripts/demo.py --script audit
+
+demo-export: ## The Duplex demo as a static site in _site/, as GitHub Pages publishes it (_site/ must be new or empty)
+	$(UV) run python scripts/demo.py --export _site
 
 bench-load: ## Time the load stage on the MEP sample in a throwaway database (needs `make up`)
 	$(UV) run python scripts/bench_load.py

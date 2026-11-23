@@ -52,13 +52,18 @@ def new_token() -> str:
     return secrets.token_urlsafe(TOKEN_BYTES)
 
 
-def content_security_policy(page: str) -> str:
+def content_security_policy(page: str, *, meta: bool = False) -> str:
     """Return the policy for ``page``, the ``index.html`` the app serves.
 
     Scripts come only from the server itself, plus the page's one inline script, its
     import map, allowed by its SHA-256. The hash is of the text the browser sees: the
     HTML parser turns every CRLF into LF before it hashes, so ``page`` must already have
     LF line endings.
+
+    Args:
+        page: The page, with LF line endings.
+        meta: The policy of a ``<meta http-equiv>`` tag, for the static demo, which no
+            server of ours serves: without ``frame-ancestors``, which browsers ignore there.
 
     Raises:
         ValueError: if the page has no import map.
@@ -67,18 +72,17 @@ def content_security_policy(page: str) -> str:
     if match is None:
         raise ValueError('the page has no <script type="importmap">')
     digest = base64.b64encode(hashlib.sha256(match.group(1).encode("utf-8")).digest())
-    return "; ".join(
-        [
-            "default-src 'none'",
-            f"script-src 'self' 'sha256-{digest.decode('ascii')}'",
-            "style-src 'self'",
-            "img-src 'self'",
-            "connect-src 'self'",
-            "frame-ancestors 'none'",
-            "base-uri 'none'",
-            "form-action 'none'",
-        ]
-    )
+    directives = [
+        "default-src 'none'",
+        f"script-src 'self' 'sha256-{digest.decode('ascii')}'",
+        "style-src 'self'",
+        "img-src 'self'",
+        "connect-src 'self'",
+        "frame-ancestors 'none'",
+        "base-uri 'none'",
+        "form-action 'none'",
+    ]
+    return "; ".join(d for d in directives if not (meta and d.startswith("frame-ancestors")))
 
 
 class Security:

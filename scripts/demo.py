@@ -7,6 +7,7 @@ Usage::
     uv run python scripts/demo.py --check       # play and compare, no page (CI)
     uv run python scripts/demo.py --step        # Enter before each question
     uv run python scripts/demo.py --script audit   # the audit's Revit exports, local only
+    uv run python scripts/demo.py --export _site   # check, then write the static copy (Pages)
 
 It runs, in order, stopping at the first that fails:
 
@@ -20,7 +21,8 @@ It runs, in order, stopping at the first that fails:
    with D as A's new version (``--replaces``, A's model id read from its ingest);
 4. ``ifc-sql dq``, which checks every model loaded;
 5. ``ifc-sql demo``, with the options given here: it opens the page and plays the
-   questions, or with ``--check`` compares each with the script.
+   questions, or with ``--check`` compares each with the script, or with ``--export DIR``
+   compares them, then writes the static copy of the Duplex demo into DIR.
 
 The commands read this shell's IFC_SQL_* variables, as any ifc-sql command does: set
 IFC_SQL_DATA_DIR for the embedded database, or IFC_SQL_DATABASE_URL for a server.
