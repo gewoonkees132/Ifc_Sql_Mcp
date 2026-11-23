@@ -771,8 +771,12 @@ def _serve_client(errlog: TextIO) -> Client:
 def demo(
     ctx: typer.Context,
     script: Annotated[
-        Literal["duplex"],  # the names of SCRIPTS; Phase 4 of the plan adds audit
-        typer.Option("--script", help="The questions to play. duplex: the four Duplex models."),
+        Literal["duplex", "audit"],  # the names of SCRIPTS
+        typer.Option(
+            "--script",
+            help="The questions to play. duplex: the four Duplex models. audit: four of the "
+            "audit's Revit exports, local only (scripts/demo.py --script audit loads them).",
+        ),
     ] = "duplex",
     step: Annotated[
         bool, typer.Option("--step", help="Wait for Enter before each question.")
@@ -804,7 +808,9 @@ def demo(
     No LLM and no MCP client of yours: the demo starts ifc-sql serve over stdio, as a
     client would, with IFC_SQL_VIEWER_FEED=1, and calls its tools; the page of ifc-sql
     view lights what each call found. Its files must be loaded with --viewer and checked:
-    scripts/demo.py does that, then runs this. With --check it serves no page and exits
+    scripts/demo.py (--script audit for the audit's) does that, then runs this. The page
+    follows the calls: one that lights a model of another project shows that project.
+    With --check it serves no page and exits
     1 when a step differs from the script. Exit codes: 0 when stopped (or checked); 1
     when the database is unreachable, not at the latest migration or lacks the files, the
     feed or the MCP server does not start, a step differs, or the port is taken.
@@ -841,7 +847,7 @@ def demo(
                     reader,
                     feed,
                     project=None,
-                    model_ids=list(models.values()),
+                    model_ids=played.first_models(models),
                     no_open=no_open,
                 )
                 _play(lambda client: _show(played, client, feed, models, server, sock, pause, step))

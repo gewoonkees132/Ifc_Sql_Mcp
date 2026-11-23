@@ -46,9 +46,6 @@ PER_SECOND = 10.0
 
 DEMO = "scripted demo, no LLM"
 
-FEED_ONLY = ("list_models", "list_storeys", "describe_schema")
-"""Tools whose calls light nothing: they are listed, and the view stays as it is."""
-
 type State = Literal["off", "connecting", "live", "interrupted"]
 
 
@@ -171,7 +168,7 @@ class Feed:
             self._drop(str(exc))
             return None
         try:
-            found = None if event.tool in FEED_ONLY else self.resolver.resolve(wanted)
+            found = self.resolver.resolve(wanted) if wanted.lights else None
         except Exception as exc:  # the database, after the event was accepted
             logger.warning("viewer feed: selection not read", extra={"error": describe_error(exc)})
             found = selection.nothing(

@@ -191,8 +191,9 @@ def ingest_file(
     Raises:
         ValueError: if ``discipline`` is not a valid code or ``project_key`` is blank;
             nothing is written.
-        ReplacesError: if ``replaces`` names no model, or one already replaced; nothing
-            is written.
+        ReplacesError: if ``replaces`` names no model, or one another file already
+            replaces; nothing is written. A file already loaded as the model that replaces
+            it is a repeat, skipped as any other.
         OSError: if the file cannot be read; nothing is written.
         IngestError: if extract, transform or load fails; the run is recorded as failed.
     """
@@ -201,10 +202,10 @@ def ingest_file(
         project_key = project_key.strip()
         if not project_key:
             raise ValueError("the project key must not be blank")
+    sha256 = sha256_file(path)
     if replaces is not None:
         with engine.connect() as connection:
-            project_key = _check_replaces(connection, replaces, project_key)
-    sha256 = sha256_file(path)
+            project_key, replaces = _check_replaces(connection, replaces, project_key, sha256)
 
     with engine.begin() as connection:
         existing = _loaded_model(connection, sha256)
@@ -523,8 +524,16 @@ def _current_scene(connection: Connection, model_id: int) -> SceneOutcome | None
     )
 
 
-def _check_replaces(connection: Connection, replaces: int, project_key: str | None) -> str | None:
-    """Check that ``replaces`` can be replaced; return the project key the new model gets."""
+def _check_replaces(
+    connection: Connection, replaces: int, project_key: str | None, sha256: str
+) -> tuple[str | None, int | None]:
+    """Check that ``replaces`` can be replaced by the file of ``sha256``.
+
+    Returns:
+        The project key the new model gets, and the model it replaces. When the file is
+        already loaded as the model that replaces ``replaces``, the replacement holds
+        already: the key as given and ``None``, so the run is a repeat like any other.
+    """
     model = schema.model
     row = connection.execute(
         select(model.c.project_key).where(model.c.model_id == replaces)
@@ -532,13 +541,16 @@ def _check_replaces(connection: Connection, replaces: int, project_key: str | No
     if row is None:
         raise ReplacesError(f"there is no model {replaces} to replace")
     later = connection.execute(
-        select(model.c.model_id).where(model.c.replaces_model_id == replaces)
-    ).scalar()
+        select(model.c.model_id, model.c.file_sha256).where(model.c.replaces_model_id == replaces)
+    ).one_or_none()
+    if later is not None and later.file_sha256 == sha256:
+        return project_key, None
     if later is not None:
         raise ReplacesError(
-            f"model {replaces} is already replaced by model {later}; replace model {later}"
+            f"model {replaces} is already replaced by model {later.model_id}; replace model "
+            f"{later.model_id}"
         )
-    return project_key if project_key is not None else row.project_key
+    return (project_key if project_key is not None else row.project_key), replaces
 
 
 def _is_placeholder(value: str | None) -> bool:

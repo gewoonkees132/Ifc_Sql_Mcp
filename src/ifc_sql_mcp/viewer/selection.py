@@ -21,7 +21,8 @@ data_quality_report     The objects with a finding of the run: one group with
                         ``rule_id``, else one per worst severity.
 compare_models          The newer model's added objects and those whose properties
                         changed; removed ones are counted.
-run_sql                 The ids its rows held (``viewer/event.py``).
+run_sql                 The ids its rows held (``viewer/event.py``); rows with no id
+                        column (a count), nothing: the feed only.
 others                  Nothing: they appear in the feed only.
 ======================  ===============================================================
 
@@ -82,10 +83,9 @@ FAILED = {
 }
 """Why a call that failed lights nothing, by its outcome."""
 
-NO_COLUMNS = (
-    "its rows have no object_id or object_ids column, nor global_id or global_ids beside "
-    "model_id, so nothing is lit"
-)
+FEED_ONLY = ("list_models", "list_storeys", "describe_schema")
+"""The tools that light nothing by nature: they appear in the feed only."""
+
 CLIPPED = "an argument was too long for the feed, so nothing is lit"
 BY_MATERIAL = (
     "a takeoff by material totals materials, not elements (an element of three materials "
@@ -104,6 +104,8 @@ class Request:
         zoom: The page moves the camera to the selection (``get_element``).
         note: What the caption says besides the counts: why nothing is lit, or that the
             event carried only some of the ids.
+        lights: False for a call that lights nothing by nature: it has no selection,
+            and the page leaves what it lit as it is.
     """
 
     query: Query
@@ -111,6 +113,7 @@ class Request:
     groups: tuple[IdGroup, ...] = ()
     zoom: bool = False
     note: str | None = None
+    lights: bool = True
 
 
 class ModelObjects(BaseModel):
@@ -166,11 +169,11 @@ def request(event: Event, checks: Checks) -> Request:
         raise EventRejectedError("invalid arguments") from exc
     if event.outcome != "ok":
         return Request("nothing", note=f"nothing is lit: {FAILED[event.outcome]}")
-    if event.tool in ("list_models", "list_storeys", "describe_schema"):
-        return Request("nothing")
+    if event.tool in FEED_ONLY:
+        return Request("nothing", lights=False)
     if event.tool in ("run_sql", "get_element"):
-        if event.ids is None:
-            return Request("nothing", note=NO_COLUMNS)
+        if event.ids is None:  # rows with no id column: a count, not a choice of objects
+            return Request("nothing", lights=False)
         note = None
         if event.ids.truncated:
             note = "the rows held more ids than the feed carries: the first of them are lit"
@@ -368,9 +371,20 @@ def _selection(
     )
 
 
+FIXED_GROUPS: dict[Query, tuple[str, ...]] = {
+    "space_schedule": tools.SPACE_GROUPS,
+    "compare_models": compare.CHANGE_GROUPS,
+}
+"""The tools whose groups are fixed kinds: each kind keeps its colour, so that Revit
+Areas are the third colour on a model with no copies of rooms too (file E)."""
+
+
 def _colour(wanted: Request, label: str | None, index: int) -> str:
     if wanted.query == "data_quality_report" and label in SEVERITY_COLOURS:
         return SEVERITY_COLOURS[label]
+    kinds = FIXED_GROUPS.get(wanted.query, ())
+    if label in kinds:
+        index = kinds.index(label)
     return PALETTE[index % len(PALETTE)]
 
 

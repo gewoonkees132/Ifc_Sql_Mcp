@@ -156,6 +156,81 @@ startup error if there is one and a line per tool call, is written to
 `mcp-server-ifc-sql.log` in `~/Library/Logs/Claude` (macOS) or `%APPDATA%\Claude\logs`
 (Windows).
 
+### With the viewer's feed on
+
+To see a client's calls light up in 3D, give its server `IFC_SQL_VIEWER_FEED=1` beside
+the database, and keep [`ifc-sql view`](viewer.md#the-mcp-servers-calls-the-feed) open on
+the same database, in a terminal of its own:
+
+```powershell
+uv run ifc-sql view     # keep it open: it prints the page's address and opens it
+```
+
+Then register the server as above, with one more variable. On the embedded database
+([ADR 13](adr/0013-embedded-postgresql.md), [windows.md](windows.md)), in PowerShell,
+from your clone (`(Get-Command uv).Source` is the full path of `uv.exe`). Quote the `'--'`:
+PowerShell drops a bare `--` before `claude` sees it, and `claude` then takes `--directory`
+for an option of its own ("error: unknown option '--directory'").
+
+```powershell
+claude mcp add --env IFC_SQL_DATA_DIR="$env:LOCALAPPDATA\ifc-sql\data" --env IFC_SQL_VIEWER_FEED=1 `
+  --transport stdio ifc-sql '--' (Get-Command uv).Source run --directory $PWD ifc-sql serve
+```
+
+On a server, in bash:
+
+```bash
+claude mcp add --env IFC_SQL_DATABASE_URL=postgresql+psycopg://localhost:5432/ifc \
+  --env IFC_SQL_READER_PASSWORD=ifc-reader-dev-only --env IFC_SQL_VIEWER_FEED=1 \
+  --transport stdio ifc-sql -- /path/to/uv run --directory /path/to/Ifc_Sql_Mcp ifc-sql serve
+```
+
+In Claude Desktop, the same variables go in the server's `env` block of
+`claude_desktop_config.json`, on the embedded database (backslashes doubled):
+
+```json
+      "env": {
+        "IFC_SQL_DATA_DIR": "C:\\Users\\you\\AppData\\Local\\ifc-sql\\data",
+        "IFC_SQL_VIEWER_FEED": "1"
+      }
+```
+
+or on a server:
+
+```json
+      "env": {
+        "IFC_SQL_DATABASE_URL": "postgresql+psycopg://localhost:5432/ifc",
+        "IFC_SQL_READER_PASSWORD": "ifc-reader-dev-only",
+        "IFC_SQL_VIEWER_FEED": "1"
+      }
+```
+
+With the feed on, the server's first log line ends in `viewer_feed=on`, and `run_sql`'s
+description tells the LLM to select `object_id`, or `array_agg(object_id) AS
+object_ids` per group, to show rows in the viewer. Then ask, for example, "Which walls of
+the architectural Duplex are external? Show them in the viewer."
+
+- **`ifc-sql view` must stay open.** It receives the calls as they are made; a call made
+  while no `view` listens is not kept anywhere. Every `view` on the database receives
+  every call of every server on it that has the feed on, so one page shows the calls of
+  all your clients, Claude Code's, Claude Desktop's and `ifc-sql demo`'s, each labelled
+  with its server's process.
+- **Claude Desktop runs one server for all its conversations**, so the calls of two
+  conversations arrive mixed, under one process. Claude Code starts a server per
+  session.
+- **A call about a model of another project** makes the page show that project, then
+  light what the call found.
+- **When nothing arrives**, the page's feed says "live" and "No call yet", and names the
+  database it listens on. Check:
+  - that the server uses the same database: its first log line names it
+    (`msg=serving database=…`, in Claude Desktop's `mcp-server-ifc-sql.log`), and ends in
+    `viewer_feed=on`. With the embedded database, both need the same `IFC_SQL_DATA_DIR`;
+  - that the embedded database did not stop and start again since `view` or the server
+    started (it was stopped, or its process ended): it comes back on another port, while
+    a running `view` and a running server keep the port they found when they started.
+    Restart `view`, then the client: quit and reopen Claude Desktop, or start a new
+    Claude Code session.
+
 ## Tools
 
 Every tool is annotated read-only, idempotent and closed-world. A result is a JSON

@@ -79,7 +79,8 @@ class Played:
 def find_models(reader: Reader, script: Script) -> dict[str, int]:
     """The model of each of the script's files, found by its SHA-256.
 
-    The current model of that file: a file whose exact bytes are loaded is loaded once.
+    The current model of that file: a file whose exact bytes are loaded is loaded once. A
+    replaced model is never one of them: the audit's script names D, not the A it replaces.
 
     Raises:
         DemoError: A file is not loaded; the message says how to load it.
@@ -99,9 +100,12 @@ def find_models(reader: Reader, script: Script) -> dict[str, int]:
     )
     missing = [sample.file_name for sample in script.samples if sample.sha256 not in found]
     if missing:
+        command = "scripts/demo.py"
+        if script.name != "duplex":
+            command += f" --script {script.name}"
         raise DemoError(
             f"the demo needs {', '.join(missing)} loaded with --viewer, and checked: run "
-            "`uv run python scripts/demo.py`, which downloads, loads and checks them"
+            f"`uv run python {command}`, which downloads, loads and checks them"
         )
     return {sample.key: found[sample.sha256] for sample in script.samples}
 

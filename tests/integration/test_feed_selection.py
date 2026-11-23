@@ -275,10 +275,15 @@ def test_run_sql_lights_global_ids_beside_a_model_id(
     assert _global_ids(lit) == [pair[1] for pair in pairs]
 
 
-def test_run_sql_without_ids_lights_nothing_and_says_how(checks: selection.Checks) -> None:
+def test_run_sql_without_an_id_column_lights_nothing_by_nature(checks: selection.Checks) -> None:
+    """Like list_models: an aggregate after the query that lit the walls leaves them lit."""
     wanted = selection.request(_event("run_sql", {"max_rows": 5}, sql="SELECT 1"), checks)
+    found = selection.request(
+        _event("run_sql", {"max_rows": 5}, sql="SELECT 1", selected=[]), checks
+    )
 
-    assert wanted == Request("nothing", note=selection.NO_COLUMNS)
+    assert wanted == Request("nothing", lights=False)
+    assert (found.query, found.lights, found.groups) == ("ids", True, ())
 
 
 def test_ids_the_event_cut_say_so(checks: selection.Checks) -> None:
@@ -438,6 +443,40 @@ def test_space_schedule_lights_rooms_copies_and_areas_apart(
     assert _global_ids(lit) == [gids[room], gids[copy], gids[area]]
     assert lit.layers == ["areas", "space_copies", "spaces"]
     assert lit.storey == "Level 1"
+
+
+def test_a_kind_of_space_or_of_change_keeps_its_colour_when_another_kind_is_missing(
+    owner: Connection, checks: selection.Checks
+) -> None:
+    """Areas are the third colour, after rooms and copies, in a model that has no copies."""
+    model = add_model(owner)
+    level = add_spatial(owner, model, "IfcBuildingStorey", "Level 1", elevation_m=0.0)
+    add_spatial(owner, model, "IfcSpace", "A101", parent_id=level, footprint_m2=12.0)
+    add_spatial(owner, model, "IfcSpace", "1", parent_id=level, revit_category="Areas")
+    old = add_model(owner, project_name="001-00")
+    new = add_model(owner, project_name="001-00", replaces_model_id=old)
+    for version in (old, new):
+        wall = add_element(owner, version, "IfcWall", "Basic Wall:Generic:1")
+        owner.execute(
+            text("UPDATE ifc.object SET global_id = '0wall_________________' WHERE object_id = :o"),
+            {"o": wall},
+        )
+    add_property(
+        owner, wall, "Pset_WallCommon", "FireRating", value_type="IfcLabel", value_text="M2"
+    )
+
+    spaces = _lit(owner, checks, "space_schedule", model_id=model)
+    changes = _lit(owner, checks, "compare_models", new_model_id=new)
+
+    rooms, copies, areas = selection.PALETTE[:3]
+    assert [(group.label, group.colour) for group in spaces.groups] == [
+        ("rooms", rooms),
+        ("Revit Areas", areas),
+    ]
+    assert [(group.label, group.colour) for group in changes.groups] == [
+        ("properties changed", selection.PALETTE[1])
+    ]
+    assert copies != areas
 
 
 def test_compare_models_lights_what_changed_in_the_newer_model(

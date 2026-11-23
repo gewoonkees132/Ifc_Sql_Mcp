@@ -2,10 +2,11 @@
 
 - Status: revised after review ([the review](2026-11-ifc-viewer-review.md)), again
   after Phases 0 and 1 ([Changes after Phases 0 and 1](#changes-after-phases-0-and-1)),
-  after Phase 2 ([Changes after Phase 2](#changes-after-phase-2)) and after Phase 3
-  ([Changes after Phase 3](#changes-after-phase-3)). Phase 0 is done
+  after Phase 2 ([Changes after Phase 2](#changes-after-phase-2)), after Phase 3
+  ([Changes after Phase 3](#changes-after-phase-3)) and after Phase 4
+  ([Changes after Phase 4](#changes-after-phase-4)). Phase 0 is done
   ([ADR 14](../adr/0014-viewer.md), accepted with Phase 3); Phase 1 is PR 1, Phase 2
-  PR 2, Phase 3 PR 3.
+  PR 2, Phase 3 PR 3, Phase 4 PR 4.
 - Date: 2026-11-22
 - For: a separate session that implements it, one pull request per phase. This plan is
   complete on its own; the review records why it changed.
@@ -1134,3 +1135,48 @@ followed the code where the plan did not fit it, and measured where the plan est
 - **The plan's line numbers** predate Phases 1 and 2; on `d30c24e` `_Calls` is at
   `server/app.py:302`, `build_server` at `:420`, `ELEMENT_FILTERS` at
   `server/tools.py:333`, and `create_app` at `viewer/http.py:473`.
+
+## Changes after Phase 4
+
+Phase 4 (PR 4; [docs/viewer.md](../viewer.md#the-audits-script),
+[docs/mcp.md](../mcp.md#with-the-viewers-feed-on), ADR 14 decisions 4 to 6) measured
+where the plan estimated, and followed the files where the plan did not fit them:
+
+- **The audit's script names B, C, D and E, not A.** `find_models` finds only current
+  models, and A is the model D replaces. `compare_models` without `old_model_id` compares
+  D with it, as the tool's description offers; teaching `find_models` that a file may be
+  a replaced model would have been more code for the same call.
+- **Step 4 lights 55 objects, not "51 elements of D"**: 4 added and 51 whose properties
+  changed, the selection Phase 3 gives a comparison. The 4 added are the openings Revit
+  gave new GlobalIds (audit finding A15); they are never drawn, and the caption counts
+  them, so 51 are drawn. The 4 removed are only in A, and counted.
+- **Every other figure held as the plan gives it**, pinned by
+  `tests/modern/test_audit_demo.py`: file C's 163 spaces, 75 of them copies (88 rooms and
+  75 copies lit; 8,090.7 m² with them, 4,721.4 m² without); file E's 25 Areas of
+  22,905.9 m² beside 282 rooms (7,438.8 m²), with no copies; file B's 159 doors on
+  `XX_AR_L01` in 6 types (77, 25, 21, 15, 14, 7). No step was dropped.
+- **Areas keep the third colour.** A group's colour was its place in the selection, so on
+  file E, which has no copies, the Areas took the copies' colour. The groups of
+  `space_schedule` and `compare_models` are fixed kinds, and now keep their kind's colour.
+- **The page follows the calls.** A call whose selection lies wholly outside the models
+  shown shows the project of its first model, then lights it. The demo opens on the
+  models its script names first: all four for the Duplex, as before, and file C for the
+  audit, whose four buildings are four projects. A live client gets the same.
+- **`scripts/demo.py --script audit`**, one command (`make demo-audit`): it downloads the
+  five files, loads them A to E with `--viewer`, D with `--replaces` and the model id A's
+  ingest printed, runs `ifc-sql dq`, and plays. Measured on a fresh embedded database on
+  the Phase 0 machine, the files downloaded: 107.8 s, the five ingests about 98 s of it
+  (file B 32.8 s). Run again, `ingest D --replaces A` used to exit 2, A being "already
+  replaced"; a file already loaded as the model that replaces A is now a repeat like any
+  other, skipped without a warning.
+- **The live check found a gap.** With Claude Code 2.1.293 and `claude-fable-5-1`, the 23
+  external walls lit, then went out when Claude counted the walls in its next query: an
+  aggregate carried ids with no groups, the same as a query that found no object, and
+  the page cleared the view. Now rows with no id column carry no ids, and such a call
+  lights nothing by nature, as `list_models` does; recorded in docs/viewer.md, with the
+  calls and their SQL. The LLM selected `object_id` in both runs, so `run_sql`'s
+  description is unchanged.
+- **The PowerShell registration needs `'--'` quoted**: PowerShell drops a bare `--`
+  before npm's `claude.ps1` sees it, and `claude mcp add` then fails with "unknown option
+  '--directory'". Found by running the documented command.
+- **Still open**: Claude Desktop's live check, and the laptop's frames per second.
