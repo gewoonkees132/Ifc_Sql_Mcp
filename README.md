@@ -51,22 +51,28 @@ make install dq-samples smoke
 ```
 
 `make dq-samples` downloads the buildingSMART Duplex Apartment models (CC BY 4.0,
-checksum-verified, not stored in this repository), then loads and checks them. On an
-empty database:
+checksum-verified, not stored in this repository), then loads and checks them. It loads
+them with `ingest --viewer`, which also builds each model's 3D scene for the viewer
+([ADR 14](docs/adr/0014-viewer.md); the page itself is not built yet). On an empty
+database:
 
 ```
-loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,545 property values, 0 issues (run 1)
-loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property values, 46 issues (run 2)
-loaded Duplex_Electrical_20121207.ifc as model 3 (ELE): 109 objects, 6,862 property values, 88 issues (run 3)
-loaded Duplex_Plumbing_20121113.ifc as model 4 (PLU): 504 objects, 41,649 property values, 550 issues (run 4)
+loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,545 property values, 0 issues (run 1); scene built: 218 elements drawn, 0 without shape, 50 openings not drawn, 7 chunks, 0.5 MB
+loaded Duplex_MEP_20110907.ifc as model 2 (MEP): 973 objects, 63,683 property values, 46 issues (run 2); scene built: 926 elements drawn, 0 without shape, 0 openings not drawn, 9 chunks, 4.7 MB
+loaded Duplex_Electrical_20121207.ifc as model 3 (ELE): 109 objects, 6,862 property values, 88 issues (run 3); scene built: 103 elements drawn, 0 without shape, 0 openings not drawn, 4 chunks, 0.4 MB
+loaded Duplex_Plumbing_20121113.ifc as model 4 (PLU): 504 objects, 41,649 property values, 550 issues (run 4); scene built: 498 elements drawn, 0 without shape, 0 openings not drawn, 4 chunks, 4.7 MB
 checked model 1 (ARC, Duplex_A_20110907.ifc) in dq run 1: 0 error, 7,651 warning, 551 info findings (model content 0 / 7,651 / 551, loader coverage 0 / 0 / 0)
 checked model 2 (MEP, Duplex_MEP_20110907.ifc) in dq run 2: 0 error, 30,035 warning, 1,961 info findings (model content 0 / 30,035 / 1,961, loader coverage 0 / 0 / 0)
 checked model 3 (ELE, Duplex_Electrical_20121207.ifc) in dq run 3: 0 error, 90 warning, 3,291 info findings (model content 0 / 90 / 3,291, loader coverage 0 / 0 / 0)
 checked model 4 (PLU, Duplex_Plumbing_20121113.ifc) in dq run 4: 0 error, 1,472 warning, 13,223 info findings (model content 0 / 1,472 / 13,223, loader coverage 0 / 0 / 0)
 ```
 
-Running it again loads nothing more: each file is identified by its SHA-256, and a
-repeat is recorded as a skipped run (the check runs again, as a new recorded run).
+A scene's three counts add up to the model's elements: the Duplex ARC model's 268 are 218
+drawn (two stairs and a roof among them, drawn through their parts), none without a shape,
+and 50 openings, which IfcOpenShell cuts out of their walls. The bytes may differ a little
+on another platform. Running it again loads nothing more: each file is identified by its
+SHA-256, a repeat is recorded as a skipped run, and a scene that is current is kept (the
+check runs again, as a new recorded run).
 `make smoke` then talks to the server over stdio:
 
 ```
@@ -89,6 +95,11 @@ claude mcp add --env IFC_SQL_DATABASE_URL=postgresql+psycopg://localhost:5432/if
 The passwords in this repository are public development defaults, safe only because
 PostgreSQL listens on loopback. Anywhere else, set your own (`.env.example`,
 [SECURITY.md](SECURITY.md)).
+
+**After pulling a new version**, run `ifc-sql migrate` (`make migrate`): `ifc-sql serve`
+refuses a database at an older revision and says so. Migration 0020 adds the viewer's
+schema, `ifc_viewer`; a model loaded before it gets its scene from
+`ifc-sql ingest <file> --discipline … --viewer`, which builds it in place.
 
 ## What the sample files show
 
@@ -184,7 +195,7 @@ DELETE statement`.
 
 ## Quality
 
-- **Tests**: 1,087 unit and integration tests at 100 % branch coverage, plus 130 on the
+- **Tests**: 1,174 unit and integration tests at 100 % branch coverage, plus 148 on the
   real files: the four Duplex models (`make test-samples`) and the audit's five Revit
   2019–2022 exports, whose acceptance tests pin every audit and re-check finding
   (`make test-modern`, [docs/audit/](docs/audit/2026-11-implementation.md)). Integration tests run against real
@@ -207,8 +218,9 @@ src/ifc_sql_mcp/
   config.py              settings from IFC_SQL_* environment variables
   logging_config.py      key=value logs on stderr (stdout is the MCP protocol)
   watch.py               ifc-sql watch: load and check each export saved to a folder
-  db/                    schema.py, engines, embedded PostgreSQL, migrations 0001-0019, view SQL
+  db/                    schema.py, engines, embedded PostgreSQL, migrations 0001-0020, view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
+  viewer/                the 3D scenes of ingest --viewer: chunks per storey, a GLB writer
   dq/                    rule catalogue, sync, runs
   rules/dq_rules.yaml    the 45 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema description
@@ -233,7 +245,7 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
 | [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
 | [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder; CI runs it on Windows |
-| [docs/adr/](docs/adr/README.md) | Thirteen architecture decision records |
+| [docs/adr/](docs/adr/README.md) | Fourteen architecture decision records; the fourteenth, the viewer, a draft |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-recheck.md](docs/audit/2026-11-recheck.md) | The audit's workflow repeated on the fixed tool, and the four findings it made (R1–R4) |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog and the re-check's findings were implemented: per finding, the issue, the commits and the figures before and after |

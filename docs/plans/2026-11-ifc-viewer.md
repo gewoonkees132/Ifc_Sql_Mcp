@@ -1,6 +1,8 @@
 # Plan: a viewer for the loaded models and the MCP server's queries
 
-- Status: proposed, revised after review ([the review](2026-11-ifc-viewer-review.md)); not started
+- Status: revised after review ([the review](2026-11-ifc-viewer-review.md)), and again
+  after Phases 0 and 1 ([Changes after Phases 0 and 1](#changes-after-phases-0-and-1)).
+  Phase 0 is done (the draft [ADR 14](../adr/0014-viewer.md)); Phase 1 is PR 1.
 - Date: 2026-11-22
 - For: a separate session that implements it, one pull request per phase. This plan is
   complete on its own; the review records why it changed.
@@ -42,7 +44,7 @@ through the conversation, and the MCP server keeps its eleven tools.
 ```mermaid
 flowchart LR
     ifc["IFC file"] --> extract["extract → transform → load"] --> db[("schema ifc")]
-    extract --> tri["geometry.triangulate_scene<br/>IfcOpenShell, world coordinates"]
+    extract --> tri["geometry.triangulate_scene<br/>IfcOpenShell, local coordinates<br/>+ placement matrix"]
     tri --> glb["viewer/glb.py<br/>pure: one GLB per chunk"] --> scene[("schema ifc_viewer")]
     db --> serve["ifc-sql serve<br/>MCP over stdio only"]
     serve <--> client["MCP client<br/>Claude, or ifc-sql demo"]
@@ -71,10 +73,11 @@ And three costs to accept:
 - **Time.** Triangulating every element costs more than `--geometry`, which triangulates
   only the measured classes (`geometry.py:46-60`). Measured with `--geometry` on file B:
   54 s for 8,285 shapes on 4 cores (`docs/audit/2026-11-implementation.md:617`), and 59.5 s
-  in the round-2 figures (`docs/audit/evidence/figures_after.md:53`). A scene of all of
-  B's drawable elements (about 11,300) is estimated at 40–60 s more. That is not
-  measured: Phase 0 measures it. So `--viewer` stays opt-in, and every documented demo
-  path passes it.
+  in the round-2 figures (`docs/audit/evidence/figures_after.md:53`). Phase 0 measured
+  the scene of B's 11,297 drawn elements: 26.8 s on 4 threads, triangulated in local
+  coordinates, and one pass serves `--geometry` too (28.8 s for both, ADR 14, P1). That
+  is three times B's extract and transform, so `--viewer` stays opt-in (P2), and every
+  documented demo path passes it.
 - **Coverage.** pytest cannot measure browser code. The JavaScript stays thin, every rule
   that can live in Python does, and a browser test (Phase 6) checks the page.
 - **Feed confidentiality.** A notification can be read by any session on the database
@@ -174,8 +177,9 @@ uv run ifc-sql view      # keep it open; it prints and opens the page
   - Spaces are placed by `spatial_element.parent_id`, elements by
     `ifc.element.storey_id`.
 - **Chunks follow the storeys**, so the page can load and toggle storey by storey.
-  - A storey above a cap is split into several chunks. Phase 0 sets the cap; the plan's
-    starting point is 2,000 elements or 16 MB. File C's Level 1 has 3,386 elements.
+  - A storey above a cap is split into several chunks. Phase 0 set the caps: 2,000
+    elements or 16 MB (ADR 14, P3). They split file C's Level 1 (3,314 elements drawn)
+    and file E's Plan 01 (2,659).
   - Elements without a storey get their own chunk.
 - **The writer is our own** (`viewer/glb.py`): pure, with deterministic bytes.
   - Meshes are sorted by STEP id first: `_triangulated` yields shapes as its worker
@@ -192,9 +196,12 @@ uv run ifc-sql view      # keep it open; it prints and opens the page
   - `extract.read_model(path, geometry=…, viewer=…)` gains `viewer`, and `RawModel` gains
     `meshes`.
   - With `viewer`, `geometry.triangulate_scene(model, threads)` triangulates the elements
-    and the spaces in world coordinates. The space plans that every ingest makes
-    (`measure_space_plans`, `extract.py:159`) are then made from the same space shapes,
-    not from a second pass.
+    and the spaces once, each in its local coordinates, and moves the vertices to world
+    coordinates with the shape's placement matrix (`ifcopenshell.util.shape.get_shape_matrix`),
+    in numpy: 1.4 to 4 times faster than `use-world-coords`, with the same triangles
+    (ADR 14, P1). The space plans that every ingest makes (`measure_space_plans`) and,
+    with `--geometry`, the measures are then made from the same shapes, not from a second
+    pass.
   - `ingest --viewer` builds the scene after the load commits, in its own transaction,
     with the model row locked (as `_measure_in_place` does, `pipeline.py:274-279`).
   - On a file already loaded, `ingest --viewer` builds the scene in place, as ADR 12
@@ -208,8 +215,10 @@ uv run ifc-sql view      # keep it open; it prints and opens the page
 - **Not an `ingestion_run`.** A scene writes nothing to schema `ifc`, can be rebuilt at
   any time, and its own row records when it was built and how long it took. ADR 14
   names the rejected alternative: a `scene_seconds` column on `ingestion_run`.
-- **No new data quality rule.** The scene's counts are shown on the page ("268 elements:
-  216 drawn, 50 openings not drawn, 2 without shape").
+- **No new data quality rule.** The scene's counts are shown on the page. On the Duplex
+  ARC model, as Phase 0 counted them: "268 elements: 218 drawn, 0 without shape, 50
+  openings not drawn" (215 with a body, and two stairs and a roof drawn through their
+  parts).
 
 ### 2. `ifc-sql view`: the only port
 
@@ -432,11 +441,12 @@ non-ASCII characters of SQL, plus 500 ids. The summary line ("find_elements: Ifc
 - **three.js is vendored and committed** in `viewer/static/vendor/three/`, with
   `SHA256SUMS`, which a unit test checks, and its MIT licence, named in the README's
   Licences section.
-  - Pin a release of r171 or later, so the minified module build, split into
-    `three.module.min.js` and `three.core.min.js`, stays under pre-commit's 500 KB limit.
-    At r172 the two are 339,437 and 366,322 bytes. Also BatchedMesh's instance API
-    (`addInstance`, `setColorAt` by instance) needs r166.
-  - Take the newest release that is at least two weeks old when Phase 2 starts.
+  - Pin **r187, unminified** (ADR 14, P5): the newest release at least two weeks old when
+    Phase 0 ran. r186 and later publish no `three.module.min.js` or `three.core.min.js`,
+    so the plan's premise, a minified build under pre-commit's 500 KB limit, no longer
+    holds: r187's `three.module.js` (658,900 bytes) imports `three.core.js` (1,474,799
+    bytes). BatchedMesh's instance API (`addInstance`, `setColorAt` by instance) needs
+    r166, and r187 has it.
   - Vendor `GLTFLoader` and whatever it imports at that release (r187's imports
     `BufferGeometryUtils` and `SkeletonUtils`), plus `OrbitControls`.
   - `.pre-commit-config.yaml` excludes `^src/ifc_sql_mcp/viewer/static/vendor/` from
@@ -553,7 +563,7 @@ ADR 14. IfcOpenShell's serializer is not compared again (decision 1 says why).
 | `src/ifc_sql_mcp/db/migrations/versions/0020_add_viewer_scenes.py` | New: the schema, both tables with comments, the deferrable foreign key, the explicit grants, the downgrade. |
 | `src/ifc_sql_mcp/db/schema.py` | `VIEWER_SCHEMA = "ifc_viewer"` and the tables `scene` and `scene_chunk`, with `schema=VIEWER_SCHEMA`. |
 | `src/ifc_sql_mcp/db/migrate.py` | `include_name` (`:41`) admits `ifc_viewer` too. |
-| `src/ifc_sql_mcp/ingest/raw.py` | `RawMesh`: GlobalId, STEP id, the buffers, the material of each group of faces, the aggregate's GlobalId if any. |
+| `src/ifc_sql_mcp/ingest/raw.py` | `RawMesh`: GlobalId, STEP id, the buffers, the colour of each material. `RawElement.aggregate_global_id`: the element it is a part of (`IfcRelAggregates`), on the element rather than the mesh, because an aggregate drawn through its parts has no mesh and can be a part itself. |
 | `src/ifc_sql_mcp/ingest/extract.py` | `read_model(…, viewer=False)`; `RawModel.meshes`. |
 | `src/ifc_sql_mcp/ingest/geometry.py` | `triangulate_scene(model, threads)`; space plans from the same shapes when it runs. |
 | `src/ifc_sql_mcp/viewer/__init__.py`, `viewer/glb.py`, `viewer/scene.py` | New. `glb.py` is the pure writer. `scene.py` turns meshes into chunks, sets the origin, nests parts, and makes the rows. |
@@ -583,8 +593,9 @@ ADR 14. IfcOpenShell's serializer is not compared again (decision 1 says why).
     cannot write them; the list of what it can read outside `ifc` grows by these two;
   - `test_run_sql`: `ifc_viewer.scene_chunk` is refused;
   - `test_schema_discovery`: `describe_schema` does not list it;
-  - `ingest --viewer` on `tests/support/geometry_model.py`, extended with a stair with
-    two flights (one stair with a body of its own, one without) and an `IfcSpace` copy:
+  - `ingest --viewer` on `tests/support/geometry_model.py`, extended (with `scene=True`,
+    so the `--geometry` tests keep their figures) with two stairs of two flights each
+    (one stair with a body of its own, one without) and an `IfcSpace` copy:
     - the wall, slab, space and column are in the scene, and the opening is not;
     - the point-bodied beam counts as without shape;
     - the flights are children of the stair, and the copy is in `space_copies`;
@@ -788,14 +799,17 @@ and the README links to it.
 
 ## Open questions
 
-Phase 0 settles each; the plan's defaults are:
+Phase 0 settled each ([ADR 14](../adr/0014-viewer.md)):
 
-1. **`--viewer` opt-in or on by default?** Default: opt-in, with every demo path passing
-   it.
-2. **Chunk caps?** Default: 2,000 elements or 16 MB.
-3. **One triangulation for `--geometry` and `--viewer`?** Default: two, unless Phase 0
-   shows that `--geometry --viewer` on file B is too slow.
-4. **The Duplex models do not line up?** Default: they do; if not, one model at a time.
+1. **`--viewer` opt-in or on by default?** Opt-in, with every demo path passing it (P2):
+   B's scene takes three times its extract and transform.
+2. **Chunk caps?** 2,000 elements or 16 MB (P3). The element cap splits two storeys of the
+   nine files; the largest chunk is 7.87 MB.
+3. **One triangulation for `--geometry` and `--viewer`?** One, in local coordinates (P1).
+   The plan's default was two. On file B, `--geometry --viewer` takes 28.84 s against
+   27.65 s for `--geometry` alone; two passes would take 93.5 s.
+4. **The Duplex models do not line up?** They do, and so do A and D (P4): the page shows
+   the models of a project together.
 
 ## Risks
 
@@ -944,3 +958,72 @@ evidence.
   file and has no extras; its `y-up` setting does nothing for glTF.
 - **Pins:** element and chunk counts for all nine files, and bytes only within a
   tolerance. Before, only Duplex ARC was pinned.
+
+## Changes after Phases 0 and 1
+
+**Phase 0** ([ADR 14](../adr/0014-viewer.md)) changed the design where it measured
+otherwise. The user decided the first and the last:
+
+- **Local coordinates and the placement matrix**, not `use-world-coords`: IfcOpenShell
+  triangulates each shape in its own coordinates, and `geometry.py` moves the vertices to
+  world coordinates in numpy. It is 1.4 to 4 times faster, gives the same triangles, and
+  lets one pass serve the scene, the space plans and `--geometry`'s measures (P1).
+- **Open question 3 is answered: one triangulation.** On file B, `--geometry --viewer`
+  takes 28.84 s against 27.65 s for `--geometry` alone.
+- **The Duplex ARC counts** are 218 drawn (215 with a body and 3 aggregates drawn
+  through their parts), 0 without shape and 50 openings, of 268 elements. The plan's
+  "216 drawn, 2 without shape" was only an example.
+- **three.js r187, unminified** (P5): r186 and later publish no minified build. Phase 2
+  vendors it; the vendor folder is excluded from `check-added-large-files`, as before.
+- **Each primitive gets its own vertices** (P6): BatchedMesh copies a primitive's whole
+  vertex buffer, so primitives that shared one would be copied once each.
+
+**Phase 1** followed the code where the plan was silent or did not fit it:
+
+- The aggregate's GlobalId is on `RawElement` (`aggregate_global_id`), not on `RawMesh`:
+  an aggregate drawn through its parts has no mesh, and can itself be a part.
+- The transform sorts its records by GlobalId, so within a storey the nodes come by
+  GlobalId. Meshes are still taken by STEP id. The chunks are numbered kind by kind, and
+  storey by storey from the lowest elevation.
+- `scene_chunk.glb_sha256` is a generated column, so it cannot disagree with `glb`; a
+  CHECK requires the GLB's magic bytes; `scene_chunk.model_id` references
+  `ifc_viewer.scene`.
+- Building a scene in place records the skipped run every repeat records (ADR 4); nothing
+  of the model in schema `ifc` is written.
+- `--viewer` on a model whose scene is current adds no warning: the summary line says
+  "scene kept", and `make dq-samples`, which passes `--viewer`, would otherwise warn four
+  times on every run. The skip warning still names `--project`, `--replaces` and
+  `--geometry`.
+- The synthetic fixture's stairs and space copy are added with `scene=True`, so the
+  `--geometry` tests keep their figures.
+- A mesh without a triangle is left out by `viewer/scene.py`; IfcOpenShell yields none,
+  so the rule is tested on hand-made meshes.
+- The positions' buffer view has a `byteStride` of 12, which glTF requires when several
+  accessors share a view. With the own vertices of P6, the chunks are 0.0 to 2.9 % larger
+  than Phase 0's sketch (file B 1.4 %).
+- An ingest that loses the race to load a file stores its scene for the winner's model,
+  which holds the same records (after the review below; before, it built none).
+- `uv run alembic downgrade 0019` needs `IFC_SQL_DATABASE_URL`: the plain `alembic`
+  command does not start the embedded database.
+
+**The review of PR 1** found eight defects; each is fixed, with a test that failed before:
+
+- A triangulation that raises no longer fails the ingest: `read_model` records it in
+  `RawModel.scene_error` and falls back to the two passes of an ingest without
+  `--viewer`; the scene is reported failed, and the model loads.
+- The loser of the race to load a file stores its scene for the winner's model. The test
+  loads the file's real records in the other transaction.
+- A mesh with a NaN or infinite vertex is left out, and its element counts as without
+  shape, instead of failing the whole scene.
+- Of two objects that share a GlobalId, only the one the transform keeps is triangulated,
+  in the transform's order (`geometry.kept_by_global_id`). The same rule serves the plans
+  and the measures with or without `--viewer`: plain `--geometry` used to measure both
+  objects, whose second area and volume broke `ifc.quantity`'s key and failed the load.
+- The summary after a race says "scene built" without "nothing written".
+- `--geometry --viewer` on a model already measured but without a scene warns again that
+  `--geometry` was not applied.
+- `scene.built_at` is written with `clock_timestamp()`, as `_finish_run` writes
+  `finished_at`.
+- `tests/modern` loads A and B with plain `--geometry` again (`measured`), and every
+  audit file's scene into a database of its own (`scenes`); A5's figures are pinned on
+  both, so the two ways of measuring agree. It costs one more pass over file B.

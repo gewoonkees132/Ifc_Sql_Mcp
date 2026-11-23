@@ -24,6 +24,17 @@ It also gives every space its plan, in world coordinates (:func:`measure_space_p
 That runs on every ingest, not only with ``--geometry``: comparing plans is how rooms
 exported twice are found (``footprints.py``, re-check finding R1), and spaces are few.
 
+With ``--viewer``, :func:`triangulate_scene` makes one pass over every element and space
+instead, for the viewer's scene (ADR 14). IfcOpenShell triangulates each shape in its own
+local coordinates, as for the measures, and the vertices are moved to world coordinates
+with the shape's placement matrix, in numpy. On the nine reference files that is 1.4 to 4
+times faster than IfcOpenShell's ``use-world-coords``, with the same triangles, so the one
+pass also gives the space plans and, with ``--geometry``, the measures.
+
+Each pass triangulates only the objects the transform keeps: of two that share a GlobalId,
+the first in the transform's order (:func:`kept_by_global_id`). The body of an object it
+skips is then never drawn, planned or measured under the GlobalId of the one it keeps.
+
 This module and ``extract`` are the only ones that touch IfcOpenShell.
 """
 
@@ -31,17 +42,22 @@ import math
 import os
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 import ifcopenshell
 import ifcopenshell.geom
 import ifcopenshell.util.shape
+import numpy as np
 
 from ifc_sql_mcp.ingest.footprints import plan_from_triangles
 from ifc_sql_mcp.ingest.issues import Issue, IssueCode
-from ifc_sql_mcp.ingest.raw import RawFootprint, RawShape
+from ifc_sql_mcp.ingest.raw import DEFAULT_RGBA, RawFootprint, RawMesh, RawShape
 
 type Entity = Any
+
+IFCOPENSHELL_VERSION: str = ifcopenshell.version
+"""The IfcOpenShell release that triangulates; each scene records it."""
 
 MEASURED_CLASSES = (
     "IfcWall",
@@ -76,10 +92,10 @@ def measure_shapes(
     """
     started = time.perf_counter()
     targets = {
-        entity.id(): entity
-        for ifc_class in MEASURED_CLASSES
-        for entity in model.by_type(ifc_class)
+        entity_id: entity
+        for entity_id, entity in kept_by_global_id(model).items()
         if entity.Representation is not None
+        and any(entity.is_a(ifc_class) for ifc_class in MEASURED_CLASSES)
     }
     shapes: list[RawShape] = []
     issues: list[Issue] = []
@@ -112,9 +128,9 @@ def measure_space_plans(
     """
     started = time.perf_counter()
     targets = {
-        entity.id(): entity
-        for entity in model.by_type("IfcSpace")
-        if entity.Representation is not None
+        entity_id: entity
+        for entity_id, entity in kept_by_global_id(model).items()
+        if entity.is_a("IfcSpace") and entity.Representation is not None
     }
     plans: dict[int, RawFootprint] = {}
     if targets:
@@ -127,6 +143,149 @@ def measure_space_plans(
     ]
     ordered = tuple(plans[entity_id] for entity_id in sorted(plans))
     return ordered, issues, time.perf_counter() - started
+
+
+@dataclass(frozen=True, slots=True)
+class SceneTriangulation:
+    """What one pass of :func:`triangulate_scene` gives, each part ordered by STEP id.
+
+    Attributes:
+        meshes: The body of every element and space IfcOpenShell triangulated.
+        footprints: Every space's plan, as :func:`measure_space_plans` gives it.
+        shapes: The measures of :func:`measure_shapes`; empty unless asked for.
+        issues: The spaces without a plan, then (when measured) the bodies that could not
+            be measured or triangulated, with the messages the two functions give.
+        seconds: How long the pass took.
+    """
+
+    meshes: tuple[RawMesh, ...]
+    footprints: tuple[RawFootprint, ...]
+    shapes: tuple[RawShape, ...]
+    issues: tuple[Issue, ...]
+    seconds: float
+
+
+def triangulate_scene(
+    model: Entity, threads: int | None = None, *, measure: bool = False
+) -> SceneTriangulation:
+    """Triangulate every element and space once: for the scene, the plans and the measures.
+
+    The targets are every ``IfcElement`` with a body, feature elements (openings) left out,
+    and every ``IfcSpace`` with a body, of those the transform keeps
+    (:func:`kept_by_global_id`). IfcOpenShell cuts the openings out of their hosts, since
+    ``disable-opening-subtractions`` stays off.
+
+    Args:
+        model: The open IfcOpenShell file.
+        threads: Worker threads; by default one per CPU.
+        measure: Also measure the :data:`MEASURED_CLASSES` shapes, as ``--geometry`` does.
+
+    Returns:
+        The meshes, plans, measures and issues, ordered by STEP id, so that IfcOpenShell's
+        worker threads cannot change them from one run to the next.
+    """
+    started = time.perf_counter()
+    targets = {
+        entity_id: entity
+        for entity_id, entity in kept_by_global_id(model).items()
+        if (entity.is_a("IfcElement") or entity.is_a("IfcSpace"))
+        and entity.Representation is not None
+        and not entity.is_a("IfcFeatureElement")
+    }
+    spaces = {entity_id for entity_id, entity in targets.items() if entity.is_a("IfcSpace")}
+    measured = {
+        entity_id
+        for entity_id, entity in targets.items()
+        if measure and any(entity.is_a(ifc_class) for ifc_class in MEASURED_CLASSES)
+    }
+    meshes: dict[int, RawMesh] = {}
+    plans: dict[int, RawFootprint] = {}
+    shapes: dict[int, RawShape] = {}
+    failed: dict[int, Issue] = {}
+    seen: set[int] = set()
+    if targets:
+        for shape, entity in _triangulated(model, targets, threads):
+            entity_id = entity.id()
+            seen.add(entity_id)
+            vertices = _world_vertices(shape)
+            meshes[entity_id] = _mesh(entity, shape.geometry, vertices)
+            if entity_id in spaces:
+                faces = np.frombuffer(shape.geometry.faces_buffer, dtype=np.int32)
+                plan = plan_from_triangles(vertices.ravel(), faces)
+                if plan is not None:
+                    plans[entity_id] = RawFootprint(global_id=str(entity.GlobalId), plan=plan)
+            if entity_id in measured:
+                try:
+                    shapes[entity_id] = _measure(entity, shape.geometry)
+                except Exception as exc:  # as measure_shapes: each failure is reported
+                    failed[entity_id] = _not_measured(entity, f"could not be measured ({exc})")
+    issues = [_plan_not_measured(targets[entity_id]) for entity_id in sorted(spaces - set(plans))]
+    issues.extend(failed[entity_id] for entity_id in sorted(failed))
+    issues.extend(
+        _not_measured(targets[entity_id], "could not be triangulated")
+        for entity_id in sorted(measured - seen)
+    )
+    return SceneTriangulation(
+        meshes=tuple(meshes[entity_id] for entity_id in sorted(meshes)),
+        footprints=tuple(plans[entity_id] for entity_id in sorted(plans)),
+        shapes=tuple(shapes[entity_id] for entity_id in sorted(shapes)),
+        issues=tuple(issues),
+        seconds=time.perf_counter() - started,
+    )
+
+
+def kept_by_global_id(model: Entity) -> dict[int, Entity]:
+    """The spatial elements and elements the transform keeps, by STEP id.
+
+    ``extract`` reads the spatial elements, then the elements, each in STEP id order, and
+    the transform keeps the first object of each GlobalId (``transform._accept_objects``).
+    This takes the first entity of each GlobalId in that same order. A malformed GlobalId
+    is kept here and skipped by the transform, so its body is left out later.
+    """
+    kept: dict[str, Entity] = {}
+    for ifc_class in ("IfcSpatialStructureElement", "IfcElement"):
+        for entity in sorted(model.by_type(ifc_class), key=lambda entity: entity.id()):
+            kept.setdefault(str(entity.GlobalId), entity)
+    return {int(entity.id()): entity for entity in kept.values()}
+
+
+def _world_vertices(shape: Any) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """A shape's vertices, triangulated in its local coordinates, in world coordinates."""
+    local = np.frombuffer(shape.geometry.verts_buffer, dtype=np.float64).reshape(-1, 3)
+    matrix = np.asarray(ifcopenshell.util.shape.get_shape_matrix(shape), dtype=np.float64)
+    world: np.ndarray[Any, np.dtype[np.float64]] = local @ matrix[:3, :3].T + matrix[:3, 3]
+    return world
+
+
+def _mesh(entity: Entity, geometry: Any, vertices: np.ndarray[Any, Any]) -> RawMesh:
+    return RawMesh(
+        global_id=str(entity.GlobalId),
+        step_id=int(entity.id()),
+        vertices=np.ascontiguousarray(vertices, dtype=np.float64).tobytes(),
+        faces=bytes(geometry.faces_buffer),
+        material_ids=bytes(geometry.material_ids_buffer),
+        materials=tuple(rgba(material) for material in geometry.materials),
+    )
+
+
+def rgba(material: Any) -> tuple[float, float, float, float]:
+    """An IfcOpenShell material's red, green, blue and alpha, each from 0 to 1.
+
+    IfcOpenShell gives a transparency of NaN when the file states none: the material is
+    then opaque. A material without a usable colour is :data:`DEFAULT_RGBA`.
+    """
+    components: Any = getattr(getattr(material, "diffuse", None), "components", None)
+    transparency = getattr(material, "transparency", None)
+    try:
+        red, green, blue = (float(component) for component in components)
+        alpha = 1.0 if transparency is None or math.isnan(transparency) else 1 - transparency
+    except (TypeError, ValueError):
+        return DEFAULT_RGBA
+    values = (red, green, blue, float(alpha))
+    if not all(math.isfinite(value) for value in values):
+        return DEFAULT_RGBA
+    clamped = tuple(min(1.0, max(0.0, value)) for value in values)
+    return clamped[0], clamped[1], clamped[2], clamped[3]
 
 
 def _triangulated(

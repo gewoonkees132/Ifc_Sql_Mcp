@@ -64,11 +64,11 @@ samples: ## Download the pinned, checksum-verified Duplex sample files into data
 audit-samples: ## Download the audit's five pinned Revit exports (about 187 MB) into data/audit/
 	$(UV) run python scripts/download_audit_samples.py
 
-ingest-samples: samples migrate ## Load the four Duplex files as ARC, MEP, ELE and PLU (needs `make up`)
-	$(UV) run ifc-sql ingest data/samples/Duplex_A_20110907.ifc --discipline ARC
-	$(UV) run ifc-sql ingest data/samples/Duplex_MEP_20110907.ifc --discipline MEP
-	$(UV) run ifc-sql ingest data/samples/Duplex_Electrical_20121207.ifc --discipline ELE
-	$(UV) run ifc-sql ingest data/samples/Duplex_Plumbing_20121113.ifc --discipline PLU
+ingest-samples: samples migrate ## Load the four Duplex files as ARC, MEP, ELE and PLU, with their scenes (needs `make up`)
+	$(UV) run ifc-sql ingest data/samples/Duplex_A_20110907.ifc --discipline ARC --viewer
+	$(UV) run ifc-sql ingest data/samples/Duplex_MEP_20110907.ifc --discipline MEP --viewer
+	$(UV) run ifc-sql ingest data/samples/Duplex_Electrical_20121207.ifc --discipline ELE --viewer
+	$(UV) run ifc-sql ingest data/samples/Duplex_Plumbing_20121113.ifc --discipline PLU --viewer
 
 dq: ## Check every loaded model against the data quality rules, as new runs (needs `make up`)
 	$(UV) run ifc-sql dq

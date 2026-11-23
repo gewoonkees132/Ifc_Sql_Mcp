@@ -1,0 +1,9 @@
+{
+ "command": "uv run python -I phase0_alignment.py <repo>",
+ "site_placement": {"ARC": [0.0, 0.0, 0.0], "MEP": [0.0, 0.0, 0.0], "ELE": [0.0, 0.0, 0.0], "PLU": [0.0, 0.0, 0.0]},
+ "ARC rooms vs MEP spaces": {"arc_rooms": 21, "MEP_spaces_with_plan": 42, "best_iou_min": 1.0, "best_iou_median": 1.0, "rooms_iou_over_0.95": 21},
+ "ARC rooms vs ELE spaces": {"ELE_spaces_with_plan": 1, "space": ["R301", "Roof"], "bounds": [0.209, -17.591, 8.591, -0.209]},
+ "ARC rooms vs PLU spaces": {"PLU_spaces_with_plan": 1, "space": ["R301", "Roof"], "bounds": [0.209, -17.591, 8.591, -0.209]},
+ "ARC room bounds (union)": [0.417, -17.383, 8.383, -0.417],
+ "A vs D": {"a_shapes": 442, "d_shapes": 442, "shared_global_ids": 442, "max_bbox_deviation_m": 0.0}
+}

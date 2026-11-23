@@ -1,7 +1,9 @@
 # Data model
 
-Everything lives in one PostgreSQL schema, `ifc`: 14 tables, 8 views and a read-only
-role. It is created by Alembic migrations:
+The data lives in one PostgreSQL schema, `ifc`: 14 tables, 8 views and a read-only
+role. The viewer's 3D scenes, which are derived from the files and can be rebuilt, live in
+a second schema, `ifc_viewer`, of two tables ([below](#the-viewers-scenes-schema-ifc_viewer)).
+Both are created by Alembic migrations:
 
 ```bash
 make up        # PostgreSQL 16 in Docker
@@ -410,6 +412,7 @@ of the same project, counted next to last week's.
 make ingest-samples                          # make samples + make migrate, then the four files
 uv run ifc-sql ingest path/to/model.ifc --discipline ARC
 uv run ifc-sql ingest tower.ifc --discipline ARC --geometry            # measure the shapes too
+uv run ifc-sql ingest tower.ifc --discipline ARC --viewer              # and build its 3D scene
 uv run ifc-sql ingest week_12.ifc --discipline ARC --replaces 4 --project 2024-017
 uv run ifc-sql watch C:/Exports --discipline ARC --project 2024-017    # keep a folder in step
 ```
@@ -528,9 +531,11 @@ is `finished_at - started_at` in `ingestion_run`:
 | `Duplex_Electrical_20121207.ifc` | 7,335 | 0.17 | 0.04 | 0.18 | 0.38 |
 | `Duplex_Plumbing_20121113.ifc` | 43,714 | 1.55 | 0.28 | 0.97 | 2.79 |
 
-A second `make ingest-samples` writes four `skipped` runs (5 to 8) and nothing else.
-`tests/samples/test_duplex_ingest.py` checks that every table holds exactly one row
-per record the transform produced, for each file.
+These were measured before `make ingest-samples` passed `--viewer`, which adds the
+scene's triangulation to the extract ([ADR 14](adr/0014-viewer.md) has its times). A
+second `make ingest-samples` writes four `skipped` runs (5 to 8) and nothing else: each
+scene is current, so it is kept. `tests/samples/test_duplex_ingest.py` checks that every
+table holds exactly one row per record the transform produced, for each file.
 
 ### Quantities after loading
 
@@ -580,6 +585,54 @@ row names its object and says what happened, for example
 `PSet_Revit_Dimensions.Length (IfcReal) is not a measure in m; no length_m` for the MEP
 fitting `M_Transition - Generic:Transition - Generic:Transition - Generic:550098`.
 
+## The viewer's scenes: schema `ifc_viewer`
+
+`ifc-sql ingest --viewer` triangulates every element and space of the file with
+IfcOpenShell and stores the result as one scene per model, for the viewer
+([ADR 14](adr/0014-viewer.md), decision 1). The database keeps no copy of the file, so
+the geometry is made while the file is open. Migration 0020 creates the schema.
+
+| Table | Grain | Notes |
+|---|---|---|
+| `scene` | one model's scene | Its counts (below), its origin in the file's world coordinates (float64, metres), `byte_count`, and when, how fast and with which IfcOpenShell it was built. `format_version` decides whether `ingest --viewer` keeps it (current) or replaces it (older). Deleted with its model. |
+| `scene_chunk` | one part of a scene | `kind` is `elements`, `spaces` (rooms), `space_copies` (spaces that repeat a room, `repeats_id`) or `areas` (Revit area plans); `storey_id` its storey, NULL for objects on none; `glb` the chunk as glTF 2.0 binary; `glb_sha256` computed from it by the database. |
+
+**What a scene draws**, and the counts that add up to the model's elements:
+
+- **drawn** (`element_count`): every element with a body of its own, and every aggregate
+  drawn through its parts. A stair whose flights have the bodies is a node with the
+  flights as children; an aggregate's own body is left out when its parts are drawn.
+- **without shape**: the elements that are neither (no body IfcOpenShell triangulates,
+  or one with a NaN or infinite vertex).
+- **openings**: the feature elements, never drawn, because IfcOpenShell cuts them out of
+  the elements they belong to.
+
+On the Duplex ARC model: 268 elements, of which 218 drawn (215 with a body, plus two
+stairs and a roof drawn through their parts), 0 without shape and 50 openings
+(`tests/samples/test_duplex_scenes.py`).
+
+**Chunks** hold one storey's elements, or spaces of one kind, at most 2,000 objects or
+16 MiB each, so the page can load and hide a storey at a time. They are numbered kind by
+kind, storey by storey from the lowest, the objects on no storey last.
+
+**The GLB**: Y up, metres, float32 positions relative to the scene's origin (the centre of
+the drawn elements' bounding box, rounded to whole metres), POSITION and indices only, one
+node per element named by its GlobalId with its IFC class in `extras`, one primitive per
+material. The bytes depend only on the file and the IfcOpenShell release.
+
+**Why a schema of its own.** The scenes are derived data, megabytes of it per model.
+`ifc_reader` may read them (explicit grants, no default privileges), because `ifc-sql
+view` will; but `run_sql`'s validator reads only schema `ifc`, and `describe_schema` does
+not list them, so an LLM never pulls geometry through the MCP server.
+
+**In place.** On a file already loaded, `ingest --viewer` builds its scene into the same
+model and records the usual `skipped` run; nothing in schema `ifc` changes. With
+`--geometry` too, one triangulation serves both (ADR 14, P1). A scene that fails writes
+nothing; the model stays loaded and the command exits 1. If the triangulation itself
+fails, the plans and measures come from the two passes of an ingest without `--viewer`.
+An ingest that loses the race to load a file stores its scene for the model that won. To
+remove the scenes, `uv run alembic downgrade 0019` drops the schema.
+
 ## The read-only role
 
 `ifc_reader` is the role the MCP server connects as, for every tool and at startup
@@ -592,7 +645,9 @@ these layers:
    `public.alembic_version`, so that `ifc-sql serve` can check the revision without the
    owner's password, and revokes `TEMPORARY` on the database from `PUBLIC`: PostgreSQL
    grants it to every role, and `ifc_reader` could otherwise create and fill temporary
-   tables in a read-write transaction. Beyond that, the role has only what PostgreSQL
+   tables in a read-write transaction. Migration 0020 adds `USAGE` on schema
+   `ifc_viewer` and `SELECT` on its two tables, as explicit grants, for `ifc-sql view`;
+   `run_sql` still reads only `ifc`. Beyond that, the role has only what PostgreSQL
    gives every role: it can read the system catalogues and execute most built-in
    functions, which is why `run_sql` restricts both. It can read no other table, use no
    sequence and call no file function. `REVOKE CREATE ON SCHEMA public FROM PUBLIC`

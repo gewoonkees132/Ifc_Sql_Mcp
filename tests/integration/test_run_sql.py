@@ -77,6 +77,11 @@ def _message(excinfo: pytest.ExceptionInfo[psycopg.Error]) -> str | None:
         ("SELECT pg_sleep(10)", "function pg_sleep() is not allowed"),
         ("SELECT 1; SELECT 2", "send one statement at a time"),
         ("SELECT * FROM pg_stat_activity", "pg_stat_activity is a PostgreSQL system catalogue"),
+        # The viewer's scenes: ifc_reader may read them, run_sql may not (ADR 14).
+        (
+            "SELECT glb FROM ifc_viewer.scene_chunk",
+            "only schema ifc can be read, not ifc_viewer.scene_chunk",
+        ),
     ],
 )
 async def test_the_tool_refuses_what_the_validator_refuses(

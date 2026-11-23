@@ -47,6 +47,8 @@ async def test_without_a_relation_it_lists_every_relation_in_brief(
         schema = await call(client, "describe_schema")
 
     assert [(r["name"], r["kind"]) for r in schema["relations"]] == _relations(conn)
+    # Schema ifc_viewer, the viewer's scenes, is not described (ADR 14).
+    assert not {"scene", "scene_chunk"} & {r["name"] for r in schema["relations"]}
     element = next(r for r in schema["relations"] if r["name"] == "v_element")
     assert element["description"].startswith("One flat row per physical element")
     assert {"ifc_class_base", "revit_type", "area_m2", "width_m"} <= set(element["column_names"])
@@ -82,6 +84,14 @@ async def test_a_view_has_no_keys(server: MCPServer) -> None:
     [view] = schema["relations"]
     assert (view["kind"], view["keys"]) == ("view", None)
     assert "width_m" in [c["name"] for c in view["columns"]]
+
+
+@pytest.mark.parametrize("asked", ["scene_chunk", "ifc_viewer.scene_chunk"])
+async def test_the_viewers_scenes_are_not_described(server: MCPServer, asked: str) -> None:
+    async with connect(server) as client:
+        message = await call_error(client, "describe_schema", relation=asked)
+
+    assert message.startswith(f"schema ifc has no table or view named {asked!r}.")
 
 
 async def test_an_unknown_relation_gets_the_closest_and_all_the_names(server: MCPServer) -> None:

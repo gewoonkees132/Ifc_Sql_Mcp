@@ -26,7 +26,7 @@ from ifc_sql_mcp.db.migrate import (
     migration_engine,
     reader_revision,
 )
-from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA, metadata
+from ifc_sql_mcp.db.schema import READER_ROLE, SCHEMA, VIEWER_SCHEMA, metadata
 from ifc_sql_mcp.ingest.pipeline import ingest_file
 
 CreateDatabase = Callable[[str], Settings]
@@ -47,8 +47,8 @@ def _cluster_state(settings: Settings) -> dict[str, object]:
                     text(
                         """
                         SELECT
-                            (SELECT count(*) FROM pg_namespace WHERE nspname = :schema)
-                                AS schemas,
+                            (SELECT count(*) FROM pg_namespace
+                             WHERE nspname IN (:schema, :viewer_schema)) AS schemas,
                             (SELECT count(*) FROM pg_default_acl) AS default_acls,
                             (SELECT count(*) FROM pg_db_role_setting AS s
                              JOIN pg_database AS d ON s.setdatabase = d.oid
@@ -56,7 +56,7 @@ def _cluster_state(settings: Settings) -> dict[str, object]:
                             (SELECT count(*) FROM pg_roles WHERE rolname = :role) AS roles
                         """
                     ),
-                    {"schema": SCHEMA, "role": READER_ROLE},
+                    {"schema": SCHEMA, "viewer_schema": VIEWER_SCHEMA, "role": READER_ROLE},
                 )
                 .mappings()
                 .one()
@@ -89,6 +89,7 @@ def test_migration_history_is_one_linear_chain() -> None:
         "0017",
         "0018",
         "0019",
+        "0020",
     ]
 
 
@@ -116,8 +117,9 @@ def test_upgrade_downgrade_upgrade_round_trip(create_database: CreateDatabase) -
     command.upgrade(config, "head")
 
     assert current_revision(settings) == head_revision()
+    # ifc and ifc_viewer; still one default ACL, which 0020 does not add to (ADR 14).
     assert _cluster_state(settings) == {
-        "schemas": 1,
+        "schemas": 2,
         "default_acls": 1,
         "role_settings": 1,
         "roles": 1,
@@ -157,10 +159,38 @@ def test_schema_py_matches_migrated_database(test_settings: Settings) -> None:
     assert differences == []
 
 
-def test_database_has_exactly_the_constraints_in_schema_py(engine: Engine) -> None:
+def test_the_comparison_reads_the_viewer_schema_too(test_settings: Settings) -> None:
+    """A column missing from ifc_viewer is found, so the test above covers both schemas."""
+    engine = migration_engine(test_settings.database_url)
+    try:
+        with engine.connect() as connection, warnings.catch_warnings():
+            warnings.filterwarnings("ignore", "Computed default on .* cannot be modified")
+            transaction = connection.begin()
+            try:
+                connection.execute(text("ALTER TABLE ifc_viewer.scene DROP COLUMN byte_count"))
+                context = MigrationContext.configure(connection, opts=AUTOGENERATE_OPTIONS)
+                differences = compare_metadata(context, metadata)
+            finally:
+                transaction.rollback()
+    finally:
+        engine.dispose()
+
+    [(operation, schema, table, column)] = differences
+    assert (operation, schema, table, column.name) == (
+        "add_column",
+        VIEWER_SCHEMA,
+        "scene",
+        "byte_count",
+    )
+
+
+@pytest.mark.parametrize("schema", [SCHEMA, VIEWER_SCHEMA])
+def test_database_has_exactly_the_constraints_in_schema_py(engine: Engine, schema: str) -> None:
+    """Each table's constraints, read from the table's own schema."""
     expected = {
         str(constraint.name)
         for table in metadata.tables.values()
+        if table.schema == schema
         for constraint in table.constraints
     }
 
@@ -171,7 +201,7 @@ def test_database_has_exactly_the_constraints_in_schema_py(engine: Engine) -> No
                     "SELECT conname FROM pg_constraint "
                     "WHERE connamespace = CAST(:schema AS regnamespace)"
                 ),
-                {"schema": SCHEMA},
+                {"schema": schema},
             ).scalars()
         )
 

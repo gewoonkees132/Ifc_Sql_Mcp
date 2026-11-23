@@ -20,6 +20,7 @@ from ifc_sql_mcp import cli
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.embedded import embedded_database_url
 from ifc_sql_mcp.db.engine import make_reader_engine
+from ifc_sql_mcp.db.migrate import head_revision
 from ifc_sql_mcp.server.app import build_server
 
 pytest.importorskip("pixeltable_pgserver")
@@ -56,7 +57,7 @@ async def test_migrate_ingest_check_and_serve_with_no_database_server(data_dir: 
     loaded = _run("ingest", str(fixture), "--discipline", "ARC")
     checked = _run("dq")
 
-    assert migrated == "database is at revision 0019\n"
+    assert migrated == f"database is at revision {head_revision()}\n"
     assert loaded.startswith(f"loaded {fixture.name} as model 1 (ARC)")
     assert checked.startswith(f"checked model 1 (ARC, {fixture.name}) in dq run 1")
     # The MCP server connects as ifc_reader, read-only, as on any server.

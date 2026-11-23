@@ -1,7 +1,9 @@
 """The four Duplex files, ingested and checked once per session in a throwaway database.
 
-Shared by the ingest, data quality and MCP sample tests, so each file is parsed, loaded
-and checked once however many of them run.
+Shared by the ingest, data quality, MCP and scene sample tests, so each file is parsed,
+loaded and checked once however many of them run. They are loaded with ``--viewer``, as
+``make ingest-samples`` and the viewer's demo load them (ADR 14); a scene writes nothing
+in schema ``ifc``, so every other figure is the same as without it.
 """
 
 from collections.abc import Callable, Iterator
@@ -27,7 +29,10 @@ def duplex(
     settings = create_database("test_samples")
     upgrade(settings)
     engine = make_engine(settings.database_url)
-    results = {key: ingest_file(engine, sample_path(key), DISCIPLINES[key]) for key in report.FILES}
+    results = {
+        key: ingest_file(engine, sample_path(key), DISCIPLINES[key], viewer=True)
+        for key in report.FILES
+    }
     yield engine, results
     engine.dispose()
 

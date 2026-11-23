@@ -50,6 +50,15 @@ container:
 | Wrong reader password | 1 | `cannot reach the database at postgresql+psycopg://ifc_reader:***@localhost:5432/ifc: connection failed: … FATAL:  password authentication failed for user "ifc_reader"` |
 | Not migrated | 1 | ``the database at postgresql+psycopg://ifc_reader:***@localhost:5432/ifc_empty is not migrated, but serve needs revision 0009: run `ifc-sql migrate` first`` |
 | Migrated before 0009 | 1 | ``the database at postgresql+psycopg://ifc_reader:***@localhost:5432/ifc_0008 is at a revision before 0009, whose version table ifc_reader may not read, but serve needs revision 0009: run `ifc-sql migrate` first`` |
+| At an older revision, after a pull (here 0019, on the embedded database on Windows) | 1 | ``the database at postgresql+psycopg://ifc_reader:***@127.0.0.1:50920/ifc is at revision 0019, but serve needs revision 0020: run `ifc-sql migrate` first`` |
+
+The revision the server needs is the newest the code has, so after pulling a new
+version, run `ifc-sql migrate` before the client starts the server again. To go back to
+a version before migration 0020, downgrade first, while the newer code is still checked
+out: with `IFC_SQL_DATABASE_URL` naming the database, `uv run alembic downgrade 0019`
+drops schema `ifc_viewer` and every scene in it, and leaves the models in schema `ifc` as
+they are. (The plain `alembic` command reads only `IFC_SQL_DATABASE_URL`; it does not
+start the embedded database.)
 
 stdout carries nothing but JSON-RPC messages; every log line goes to stderr.
 `make serve` runs the same command on your terminal (it waits for JSON-RPC on stdin).

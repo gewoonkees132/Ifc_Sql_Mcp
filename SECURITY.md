@@ -24,11 +24,20 @@ own against PostgreSQL (`tests/integration/test_run_sql.py`):
    lock timeout set with `SET LOCAL`, runs in a session opened for this call alone, and
    is rolled back.
 4. **The privileges of `ifc_reader`**, the boundary: USAGE on schema `ifc` and SELECT on
-   its tables and views, and SELECT on the migration version table. Beyond that it has
-   only what PostgreSQL gives every role (reading the system catalogues, executing most
-   built-in functions, which the validator restricts): no other table, no sequence, no
-   file function, not even a temporary table. The tests check this with the read-only
-   transaction switched off.
+   its tables and views, SELECT on the migration version table, and SELECT on the two
+   tables of schema `ifc_viewer` (below). Beyond that it has only what PostgreSQL gives
+   every role (reading the system catalogues, executing most built-in functions, which
+   the validator restricts): no other table, no sequence, no file function, not even a
+   temporary table. The tests check this with the read-only transaction switched off.
+
+**The viewer's scenes** (schema `ifc_viewer`, [ADR 14](docs/adr/0014-viewer.md)) are
+derived data: the triangulated bodies of the elements and spaces, as glTF chunks, which
+`ingest --viewer` writes and the coming `ifc-sql view` reads as `ifc_reader`. They hold
+nothing the file's model in schema `ifc` does not already say, except the shapes. The
+validator keeps `run_sql` to schema `ifc` anyway, for size: one chunk can be megabytes,
+and a query that read them would fill a result with hex. `ifc_reader` may not write them,
+create anything in the schema, or read a table a later migration adds there without
+granting it.
 
 The server holds no other credentials: it connects only as `ifc_reader`, also at
 startup.
@@ -36,7 +45,8 @@ startup.
 What an LLM can still do through the server:
 
 - **Read everything in schema `ifc`**, including file names and the errors of failed
-  ingest runs. That is the purpose of the server.
+  ingest runs. That is the purpose of the server. Not schema `ifc_viewer`: the
+  validator refuses it, although `ifc_reader` may read it.
 - **Use time and sessions.** Each query can run for up to 5 seconds, and every call
   opens a session; `ifc_reader` allows 20 at once, shared by every server on the
   cluster. There is no rate limit.

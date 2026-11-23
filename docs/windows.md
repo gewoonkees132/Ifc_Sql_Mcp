@@ -28,7 +28,10 @@ uv run ifc-sql migrate
 ```
 
 The first command that needs the database starts it, and the last one to finish stops
-it. `ingest`, `watch` and the MCP server can run at once.
+it. `ingest`, `watch` and the MCP server can run at once. A database that stopped and
+starts again listens on another port, while a running MCP server keeps the port it found
+when it started: if Claude's calls fail with "the database cannot be reached right now",
+restart the server (in Claude Desktop, quit and reopen it).
 
 Keep the folder in your own profile, as `%LOCALAPPDATA%` is. PostgreSQL gives up
 administrator rights when it creates the database. It may then not set the permissions

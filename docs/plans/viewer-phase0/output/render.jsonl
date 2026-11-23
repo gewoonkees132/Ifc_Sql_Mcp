@@ -1,0 +1,4 @@
+{"mode":"meshes","dir":"b_largest","chunks":1,"load_ms":78,"primitives":1483,"draw_calls":1753,"triangles":141752,"fps":143.8,"worst_frame_ms":16,"js_heap_mb":28,"canvas":"1280x800","three":"r185.1","gpu":"ANGLE (NVIDIA, NVIDIA GeForce RTX 4060 Ti Direct3D11 vs_5_0 ps_5_0, D3D11)"}
+{"mode":"batched","dir":"b_largest","chunks":1,"load_ms":43,"build_ms":6,"primitives":1483,"batched_vertices":91822,"draw_calls":3,"triangles":141752,"fps":144.3,"worst_frame_ms":83,"js_heap_mb":36,"canvas":"1280x800","three":"r185.1"}
+{"mode":"meshes","dir":"b_all","chunks":28,"load_ms":212,"primitives":12774,"draw_calls":14492,"triangles":1598866,"fps":22.5,"worst_frame_ms":417,"js_heap_mb":212,"canvas":"1280x800","three":"r185.1"}
+{"mode":"batched","dir":"b_all","chunks":28,"load_ms":184,"build_ms":25,"primitives":12774,"batched_vertices":1040891,"draw_calls":76,"triangles":1598866,"fps":143.8,"worst_frame_ms":49,"js_heap_mb":141,"canvas":"1280x800","three":"r185.1"}

@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Phase 0 render bench</title>
+<style>html,body{margin:0;height:100%;background:#f4f4f4;overflow:hidden}#out{position:fixed;top:4px;left:4px;font:12px monospace;background:#fff8;padding:4px}</style>
+<script type="importmap">{"imports":{"three":"./three/three.module.min.js","three/addons/":"./three/"}}</script>
+</head>
+<body>
+<div id="out">loading…</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const params = new URLSearchParams(location.search);
+const mode = params.get('mode') || 'meshes';
+const dir = params.get('dir') || 'b_largest';
+const count = Number(params.get('n') || 1);
+const seconds = Number(params.get('s') || 10);
+const out = document.getElementById('out');
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf4f4f4);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x888888, 2.5));
+const sun = new THREE.DirectionalLight(0xffffff, 1.5);
+sun.position.set(1, 2, 1.5);
+scene.add(sun);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.5, 5000);
+
+const result = { mode, dir, chunks: count, ready: false };
+window.bench = result;
+const t0 = performance.now();
+const loader = new GLTFLoader();
+const gltfs = await Promise.all(
+  Array.from({ length: count }, (_, i) => loader.loadAsync(`${dir}/chunk_${i}.glb`))
+);
+result.load_ms = Math.round(performance.now() - t0);
+
+let primitives = 0, sharedVertexSum = 0;
+const t1 = performance.now();
+for (const gltf of gltfs) {
+  if (mode === 'meshes') {
+    scene.add(gltf.scene);
+    gltf.scene.traverse((o) => { if (o.isMesh) primitives++; });
+    continue;
+  }
+  // batched: two BatchedMeshes per chunk, one opaque and one transparent
+  const groups = { opaque: [], transparent: [] };
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    primitives++;
+    (o.material.transparent || o.material.opacity < 1 ? groups.transparent : groups.opaque).push(o);
+  });
+  for (const [kind, list] of Object.entries(groups)) {
+    if (!list.length) continue;
+    let v = 0, idx = 0;
+    for (const m of list) { v += m.geometry.attributes.position.count; idx += m.geometry.index.count; }
+    sharedVertexSum += v;
+    const material = new THREE.MeshLambertMaterial({ color: 0xffffff, flatShading: true,
+      transparent: kind === 'transparent', side: THREE.DoubleSide, depthWrite: kind !== 'transparent' });
+    const batch = new THREE.BatchedMesh(list.length, v, idx, material);
+    const colour = new THREE.Vector4();
+    for (const m of list) {
+      const g = batch.addGeometry(m.geometry);
+      const id = batch.addInstance(g);
+      batch.setMatrixAt(id, m.matrixWorld);
+      const c = m.material.color;
+      colour.set(c.r, c.g, c.b, m.material.opacity);
+      batch.setColorAt(id, colour);
+      m.geometry.dispose();
+    }
+    scene.add(batch);
+  }
+}
+result.build_ms = Math.round(performance.now() - t1);
+result.primitives = primitives;
+result.batched_vertices = sharedVertexSum;
+
+const box = new THREE.Box3().setFromObject(scene);
+const centre = box.getCenter(new THREE.Vector3());
+const radius = box.getSize(new THREE.Vector3()).length() / 2;
+camera.position.copy(centre).add(new THREE.Vector3(radius, radius * 0.8, radius));
+camera.lookAt(centre);
+camera.near = radius / 100; camera.far = radius * 10; camera.updateProjectionMatrix();
+
+renderer.render(scene, camera);
+result.draw_calls = renderer.info.render.calls;
+result.triangles = renderer.info.render.triangles;
+result.geometries = renderer.info.memory.geometries;
+
+let frames = 0;
+const start = performance.now();
+let worst = 0, last = start;
+function frame(now) {
+  const angle = (now - start) / 4000;
+  camera.position.set(centre.x + radius * Math.cos(angle) * 1.4, centre.y + radius * 0.8, centre.z + radius * Math.sin(angle) * 1.4);
+  camera.lookAt(centre);
+  renderer.render(scene, camera);
+  frames++;
+  worst = Math.max(worst, now - last); last = now;
+  if (now - start < seconds * 1000) { requestAnimationFrame(frame); return; }
+  result.fps = Math.round((frames * 1000) / (now - start) * 10) / 10;
+  result.worst_frame_ms = Math.round(worst);
+  result.draw_calls_last = renderer.info.render.calls;
+  if (performance.memory) result.js_heap_mb = Math.round(performance.memory.usedJSHeapSize / 2 ** 20);
+  result.canvas = `${renderer.domElement.width}x${renderer.domElement.height}`;
+  result.gpu = (() => { const gl = renderer.getContext(); const ext = gl.getExtension('WEBGL_debug_renderer_info'); return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : 'n/a'; })();
+  result.ready = true;
+  out.textContent = JSON.stringify(result);
+  document.title = 'done';
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

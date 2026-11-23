@@ -39,6 +39,7 @@ from ifc_sql_mcp.ingest.pipeline import (
     IngestError,
     IngestResult,
     ReplacesError,
+    SceneOutcome,
     check_discipline,
     ingest_file,
 )
@@ -165,29 +166,57 @@ def _discipline(value: str) -> str:
 
 
 def _summary(file_name: str, result: IngestResult) -> str:
-    """One line for stdout saying what the run did."""
+    """One line for stdout saying what the run did, and with --viewer what its scene did."""
     model = f"model {result.model_id} ({result.discipline})"
+    scene = "" if result.scene is None else f"; {_scene_summary(result.scene)}"
     if result.status == "succeeded":
         counts = result.row_counts
         return (
             f"loaded {file_name} as {model}: {counts['object']:,} objects, "
             f"{counts['property']:,} property values, {counts['ingest_issue']:,} issues "
-            f"(run {result.run_id})"
+            f"(run {result.run_id}){scene}"
         )
     if result.status == "measured":
         counts = result.row_counts
         return (
             f"measured the shapes of {file_name}, already loaded as {model}: "
             f"{counts['quantity']:,} quantities and {counts['ingest_issue']:,} issues added "
-            f"(run {result.run_id}); check it again with ifc-sql dq {result.model_id}"
+            f"(run {result.run_id}); check it again with ifc-sql dq {result.model_id}{scene}"
         )
     skipped = f"run {result.run_id}, skipped"
-    if result.concurrent:
-        return (
-            f"{file_name} was loaded as {model} by another ingest running at the same time; "
-            f"nothing written ({skipped})"
-        )
-    return f"{file_name} is already loaded as {model}; nothing written ({skipped})"
+    loaded = (
+        f"{file_name} was loaded as {model} by another ingest running at the same time"
+        if result.concurrent
+        else f"{file_name} is already loaded as {model}"
+    )
+    # A scene written into schema ifc_viewer is not "nothing written".
+    if result.scene is not None and result.scene.status in ("built", "replaced"):
+        return f"{loaded}{scene} ({skipped})"
+    return f"{loaded}; nothing written ({skipped}){scene}"
+
+
+def _scene_summary(scene: SceneOutcome) -> str:
+    """What ingest --viewer did with the scene, and what it draws."""
+    if scene.status == "failed":
+        return "its scene was not built"
+    verb = {"built": "scene built", "replaced": "scene rebuilt", "kept": "scene kept"}
+    return (
+        f"{verb[scene.status]}: {scene.element_count:,} elements drawn, "
+        f"{scene.without_shape_count:,} without shape, {scene.opening_count:,} openings not "
+        f"drawn, {scene.chunk_count:,} chunks, {scene.byte_count / 1e6:.1f} MB"
+    )
+
+
+def _scene_failed(result: IngestResult) -> bool:
+    """Say on stderr why the scene was not built; True if it was not."""
+    if result.scene is None or result.scene.status != "failed":
+        return False
+    typer.echo(
+        f"the scene of model {result.model_id} was not built: {result.scene.error}; the model "
+        "is loaded, so run the same command again once that is fixed",
+        err=True,
+    )
+    return True
 
 
 @app.command()
@@ -234,12 +263,23 @@ def ingest(
             "file already loaded without it is measured into the same model.",
         ),
     ] = False,
+    viewer: Annotated[
+        bool,
+        typer.Option(
+            "--viewer",
+            help="Also build the model's 3D scene for the viewer: every element and space "
+            "triangulated, in chunks per storey. On a large file this takes longer than the "
+            "load itself (ADR 14 has the times); with --geometry, both share one pass. A "
+            "file already loaded gets its scene in place.",
+        ),
+    ] = False,
 ) -> None:
     """Load one IFC file. A file whose exact bytes are already loaded is skipped.
 
     Exit codes: 0 when the file was loaded or already was; 1 when the ingest failed
-    (unreadable file, database unreachable or not migrated, load error); 2 for a usage
-    error (no such file, invalid discipline, blank project, no model to replace).
+    (unreadable file, database unreachable or not migrated, load error) or its scene
+    could not be built (the model stays loaded); 2 for a usage error (no such file,
+    invalid discipline, blank project, no model to replace).
     """
     settings = _database_settings(ctx)
     database = redact(settings.database_url)
@@ -248,7 +288,13 @@ def ingest(
     try:
         _require_latest_revision(settings, "ingest")
         result = ingest_file(
-            engine, path, discipline, project_key=project, replaces=replaces, geometry=geometry
+            engine,
+            path,
+            discipline,
+            project_key=project,
+            replaces=replaces,
+            geometry=geometry,
+            viewer=viewer,
         )
     except ReplacesError as exc:
         raise typer.BadParameter(str(exc), param_hint="'--replaces'") from exc
@@ -268,6 +314,8 @@ def ingest(
     typer.echo(_summary(path.name, result))
     for warning in result.warnings:
         typer.echo(f"warning: {warning}", err=True)
+    if _scene_failed(result):
+        raise typer.Exit(1)
 
 
 def _dq_summary(result: DqResult) -> str:
@@ -371,6 +419,9 @@ def watch(
     geometry: Annotated[
         bool, typer.Option("--geometry", help="Also measure the shapes, as ingest --geometry.")
     ] = False,
+    viewer: Annotated[
+        bool, typer.Option("--viewer", help="Also build each model's scene, as ingest --viewer.")
+    ] = False,
     interval: Annotated[
         float, typer.Option("--interval", min=0.5, help="Seconds between two looks.")
     ] = 5.0,
@@ -396,7 +447,15 @@ def watch(
         rules = load_catalogue(CATALOGUE)
         with engine.begin() as connection:
             sync_rules(connection, rules)
-        watcher = Watcher(engine, folder, discipline, rules, project_key=project, geometry=geometry)
+        watcher = Watcher(
+            engine,
+            folder,
+            discipline,
+            rules,
+            project_key=project,
+            geometry=geometry,
+            viewer=viewer,
+        )
         if not once:
             typer.echo(f"watching {folder} every {interval:g} s; stop with Ctrl+C", err=True)
         while True:
