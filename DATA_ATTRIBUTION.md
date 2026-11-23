@@ -18,6 +18,25 @@ upstream commit and verified byte-for-byte against the SHA-256 checksums below.
 (database rows, query results and counts shown in the documentation) is produced by
 running this project's code against the unmodified files.
 
+### The demo on GitHub Pages
+
+The static copy of the scripted Duplex demo, which `.github/workflows/pages.yml` builds
+from `main` with `ifc-sql demo --export` and publishes on GitHub Pages, **does
+redistribute data derived from the four IFC files** (not the files themselves):
+
+- each model's 3D scene, **converted to glTF by IfcOpenShell triangulation, openings
+  cut** from their walls, each element a node named by its GlobalId;
+- the class, name and storey of each element and space;
+- everything stored about one wall (`get_element`: its properties, quantities,
+  materials and data quality findings);
+- the results of the demo's nine questions, as the page lights them.
+
+The page credits the work as the licence asks, with links to the source and to the
+licence: "Duplex Apartment Test Files", buildingSMART International (2020), CC BY 4.0;
+converted to glTF by IfcOpenShell triangulation, openings cut. Only the Duplex is
+published: the audit's files below are never exported (`ifc-sql demo --export` refuses
+their script).
+
 ### Pinned files
 
 Upstream commit `31eb1dd0a0406fb9ebf0ebd823b48e1ec95afc08`, folder

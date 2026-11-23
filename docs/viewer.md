@@ -8,8 +8,10 @@ database does not keep. Beside the models it lists the calls of every MCP server
 same database that runs with `IFC_SQL_VIEWER_FEED=1`, and lights up what each one found:
 [the feed](#the-mcp-servers-calls-the-feed). `ifc-sql demo` plays a script of questions
 through the real server, with no LLM, so the page lights up without one:
-[the scripted demo](#the-scripted-demo). The design is in ADR 14, decisions 2 to 6; what
-the port allows, and who can read and send the feed, is in
+[the scripted demo](#the-scripted-demo). `ifc-sql demo --export` writes a static copy of
+the Duplex demo, which GitHub Pages publishes: [the demo on GitHub
+Pages](#the-demo-on-github-pages). The design is in ADR 14, decisions 2 to 7; what the
+port allows, who can read and send the feed, and what the copy publishes, is in
 [SECURITY.md](../SECURITY.md#the-viewers-port-ifc-sql-view).
 
 ![The four Duplex models in ifc-sql view, Roof hidden, a ceiling of the architectural model clicked and its details open](images/viewer-duplex.png)
@@ -155,6 +157,7 @@ selection of the table.
 | `--step` | Wait for Enter before each question. |
 | `--port N`, `--no-open` | As for `view`. |
 | `--script duplex\|audit` | The questions: the Duplex's (the default), or [the audit's](#the-audits-script), local only. |
+| `--export DIR` | Serve no page: check as `--check` does, then write the static copy of the Duplex demo into DIR, a new or empty folder: [the demo on GitHub Pages](#the-demo-on-github-pages). |
 
 `uv run python scripts/demo.py --check` on Windows 11, with the PostgreSQL 16 of the
 `embedded` extra, on 2026-11-23:
@@ -232,6 +235,78 @@ all 4 steps as the script says
 
 The two room schedules are 41,471 and 45,746 characters, each under the 50,000 at which
 Claude Code saves a result to a file ([mcp.md](mcp.md#claude-code)).
+
+## The demo on GitHub Pages
+
+The scripted Duplex demo as a static copy, to open without installing anything:
+<https://gewoonkees132.github.io/Ifc_Sql_Mcp/>, published from `main` by
+`.github/workflows/pages.yml` (ADR 14, decision 7). To make it yourself, and look at it:
+
+```bash
+make demo-export                              # uv run python scripts/demo.py --export _site
+uv run python -m http.server -d _site         # then open http://localhost:8000/
+```
+
+`ifc-sql demo --export DIR` plays the script as `--check` does, prints the same lines, and
+only when every step is as the script says, writes the page and everything it reads into
+DIR. DIR must be new or empty (exit 2 otherwise): an export never overwrites or deletes a
+file. A model of the script without a scene stops it (exit 1), before anything is
+written. On the database of `scripts/demo.py`, it ends:
+
+```
+all 9 steps as the script says
+exported the demo to _site: 49 files, 13.0 MB; to look at it, serve the folder: uv run python -m http.server -d _site
+```
+
+| File | Holds |
+|---|---|
+| `index.html` | `view`'s page, marked `data-source="static"`, its content security policy and `no-referrer` in `<meta>` tags, the script's title. |
+| `static/…` | The page's own files and three.js, byte for byte as `view` serves them. |
+| `data/models.json` | What `GET /api/models` gives, as if the script's four models alone were loaded. |
+| `data/scenes/{model_id}.json`, `data/scenes/{model_id}/{chunk_no}.glb` | Each model's manifest, and its chunks as the database holds them: 24 chunks, 7, 9, 4 and 4. |
+| `data/events.json` | The nine calls as the feed resolved them, labelled as the demo's and numbered as its steps; the status the page shows ("recorded"), the pause between two calls, and the credit. |
+| `data/elements.json` | The class, name and storey of every element a scene can draw, and every space: 239, 968, 104 and 499 objects. |
+| `data/details.json` | `get_element` of the objects the calls looked up: the wall of step 8. |
+
+The page is `view`'s page, and so is its code: `main.js` sees the mark and takes the
+static source of `api.js` in place of the live one, which reads the same objects from
+these files, by paths relative to the page (Pages serves it below `/Ifc_Sql_Mcp/`). There
+is no token and no server. The recorded calls are played back as the demo asked them, one
+every `--pause` seconds (5 by default), from 1.5 s after the models are drawn; a click on
+one lights it again. The feed says "recorded", and when and by what. The sidebar names
+the script and credits the Duplex, with links to its source and its licence, as CC BY 4.0
+asks ([DATA_ATTRIBUTION.md](../DATA_ATTRIBUTION.md)). A click on any element names it, its
+class and storey; the drawer holds everything only for the wall of step 8, and says so
+for the others. Storeys, disciplines, rooms and "fit" work as in `view`. The copy does not
+open from `file://`: browsers load no ES module from it.
+
+- **Only the Duplex is exported.** A script names how its files must be credited; the
+  audit's has no credit, since its files' licences allow no copy, and `--export` refuses
+  it (exit 2). Of the database, only the script's models are written, whatever else is
+  loaded; the database's address is not.
+- **IFC text stays in JSON values**: the page is `view`'s, the file names are fixed names
+  and ids.
+- **The policy as a `<meta>` tag** is `view`'s header without `frame-ancestors`, which
+  browsers ignore in a `<meta>` tag.
+
+`pages.yml` runs on every push to `main`, and by hand. Its build job has a PostgreSQL 16
+service, runs `scripts/demo.py --export _site` (download, migrate, load with `--viewer`,
+check, play and export) and uploads `_site` with `actions/upload-pages-artifact`; its
+deploy job publishes it with `actions/deploy-pages`. Both are pinned by commit SHA. The
+workflow may only read the repository; the deploy job alone gets `pages: write` and
+`id-token: write`. The repository's Pages must take its source from GitHub Actions
+(Settings → Pages), once. CI's `samples` job exports the same copy on every push and
+keeps it as the artifact `duplex-demo-site`, to look at before it is published.
+
+`tests/integration/test_cli_demo_export.py` checks that the export writes every file the
+page asks for, each chunk as the database holds it, a record for every object a chunk
+draws, `events.json` as `--check` resolved it, and nothing of an IFC file outside JSON
+values; `tests/unit/viewer/test_export.py`, that the static source asks for the files the
+export writes. `tests/samples/test_duplex_demo.py` pins the Duplex's copy. Served below a
+folder as Pages serves it, in Microsoft Edge 158 on Windows 11 (2026-11-23), the nine calls
+played back and lit 21, 23, 14, 21, 42, 78, 1 and 0 objects after the first, as `--check`
+resolved them, step 8 opened the wall's details, and the browser reported no error and no
+violation of the policy.
 
 ## The MCP server's calls (the feed)
 
@@ -403,7 +478,7 @@ The page is plain ES modules, with no build step and no npm, in
 | `feed.js` | The list of calls from the event stream, the feed's state, a call's selection handed to the view. |
 | `scene.js` | Each chunk into two BatchedMeshes, one opaque and one transparent, one instance per primitive; the map from GlobalId to instances; picking, lighting groups in their colours with the rest grey, fitting, `measure`. |
 | `details.js` | The drawer. |
-| `api.js` | The one seam for data: the token, `fetch` with `Authorization: Bearer`, and the `EventSource` of the feed. |
+| `api.js` | The one seam for data, with two sources. Live: the token, `fetch` with `Authorization: Bearer`, and the `EventSource` of the feed. Static: the files of `ifc-sql demo --export`, the recorded calls played back. |
 | `dom.js` | The one way the page makes elements: text as `textContent`, never HTML. |
 | `vendor/three/` | three.js r187, unminified, with its MIT licence and `SHA256SUMS`. |
 

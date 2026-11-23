@@ -7,6 +7,16 @@ a normalised PostgreSQL database, checks their data quality against a catalogue 
 rules, and lets an LLM query them through an [MCP](https://modelcontextprotocol.io)
 server, read-only. `ifc-sql view` shows the models in 3D in your browser.
 
+**[See the demo](https://gewoonkees132.github.io/Ifc_Sql_Mcp/)**, nothing to install: nine
+questions asked through the MCP server, with no LLM, each answer lit in the four Duplex
+models.
+
+[![Step 3 of the demo on GitHub Pages: the 23 external walls of the Duplex, in four colours by type](docs/images/demo-duplex.png)](https://gewoonkees132.github.io/Ifc_Sql_Mcp/)
+
+*Step 3 of the demo, "Which walls are external, by type?": a `run_sql` query, and its 23
+walls lit by type. The static copy made by `uv run python scripts/demo.py --export _site`
+at commit `c75601b`, in Microsoft Edge 158 on Windows 11, 2026-11-23.*
+
 ```mermaid
 flowchart LR
     ifc["IFC file<br/>exported by Revit"] --> extract["extract<br/>IfcOpenShell"]
@@ -41,6 +51,7 @@ make up            # PostgreSQL 16 in Docker, bound to 127.0.0.1
 make dq-samples    # download the four sample files, migrate, load and check them
 make smoke         # start the MCP server as a client would and call a few tools
 make view          # look at the four models in 3D in your browser (Ctrl+C stops it)
+make demo          # nine questions through the MCP server, no LLM, each lit in the browser
 ```
 
 Without Docker, for one user, skip `make up`: with `IFC_SQL_DATA_DIR` set, the commands
@@ -96,7 +107,8 @@ prints carries a token, new on every start, that the page needs:
 questions through the MCP server with no LLM, lighting each answer in the page
 ([docs/viewer.md](docs/viewer.md#the-scripted-demo)). `make demo-audit` (`scripts/demo.py
 --script audit`) does the same with four questions on the audit's Revit exports, which
-stay local. With `IFC_SQL_VIEWER_FEED=1`, the server your own client starts does the same
+stay local. `make demo-export` writes the Duplex demo as the static copy that GitHub Pages
+publishes ([docs/viewer.md](docs/viewer.md#the-demo-on-github-pages)). With `IFC_SQL_VIEWER_FEED=1`, the server your own client starts does the same
 for every call, and the page shows the calls of every client on the database
 ([docs/mcp.md](docs/mcp.md#with-the-viewers-feed-on)).
 
@@ -243,7 +255,7 @@ DELETE statement`.
 
 ```
 src/ifc_sql_mcp/
-  cli.py                 ifc-sql: migrate, ingest, dq, watch, serve, view
+  cli.py                 ifc-sql: migrate, ingest, dq, watch, serve, view, demo
   config.py              settings from IFC_SQL_* environment variables
   logging_config.py      key=value logs on stderr (stdout is the MCP protocol)
   watch.py               ifc-sql watch: load and check each export saved to a folder
@@ -251,7 +263,7 @@ src/ifc_sql_mcp/
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   viewer/                3D scenes (ingest --viewer) and ifc-sql view: its app, its port's
                          checks, the feed of MCP calls and what they light, the scripted
-                         demo, and the page in static/, three.js vendored
+                         demo and its static copy, and the page in static/, three.js vendored
   dq/                    rule catalogue, sync, runs
   rules/dq_rules.yaml    the 45 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema description
@@ -274,14 +286,14 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
-| [docs/viewer.md](docs/viewer.md) | `ifc-sql view` and `ifc-sql demo`: starting them, what the page shows, the scripted demo, the feed of MCP calls and what each lights, the event, the routes, the frames per second on file B, and upgrading three.js |
+| [docs/viewer.md](docs/viewer.md) | `ifc-sql view` and `ifc-sql demo`: starting them, what the page shows, the scripted demo and its static copy on GitHub Pages, the feed of MCP calls and what each lights, the event, the routes, the frames per second on file B, and upgrading three.js |
 | [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
 | [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder and `ifc-sql view`; CI runs it on Windows |
 | [docs/adr/](docs/adr/README.md) | Fourteen architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-recheck.md](docs/audit/2026-11-recheck.md) | The audit's workflow repeated on the fixed tool, and the four findings it made (R1–R4) |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog and the re-check's findings were implemented: per finding, the issue, the commits and the figures before and after |
-| [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials, the viewer's port and its feed |
+| [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials, the viewer's port, its feed and the static demo |
 
 `make help` lists every target.
 
@@ -306,8 +318,10 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
   listens on 127.0.0.1 only, behind a token ([SECURITY.md](SECURITY.md)).
 - The viewer's feed reaches every login to the database, which can also send to it; it is
   off unless `IFC_SQL_VIEWER_FEED=1` ([SECURITY.md](SECURITY.md#the-viewers-feed-ifc_sql_viewer_feed)).
-  The demo on GitHub Pages is the next phase of
-  [the viewer's plan](docs/plans/2026-11-ifc-viewer.md).
+- The demo on GitHub Pages is a recording: it plays the scripted questions back and asks
+  nothing, and it holds every element's class, name and storey but everything only of the
+  one wall its questions look up. Only the Duplex is published
+  ([DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md#the-demo-on-github-pages)).
 
 ## Licences
 

@@ -177,6 +177,33 @@ session for it.
   session as `ifc_reader`, one committed `READ ONLY` transaction that only calls
   `pg_notify`. It can write nothing else: the role's privileges still hold.
 
+### The static demo (`ifc-sql demo --export`, GitHub Pages)
+
+`ifc-sql demo --export DIR` writes a copy of the scripted Duplex demo that any static
+server can serve, and `.github/workflows/pages.yml` publishes it from `main`
+([ADR 14](docs/adr/0014-viewer.md), decision 7;
+[docs/viewer.md](docs/viewer.md#the-demo-on-github-pages)). It has no server of ours, no
+token and no database: it is files.
+
+- **What it publishes**: the four Duplex models' scenes, their objects' class, name and
+  storey, `get_element` of the one wall the script looks up, the script's nine calls as
+  the feed resolved them (with the clipped SQL of its two `run_sql` calls), and the page
+  with three.js. Of the models, only the script's: another model in the same database is
+  left out, whatever it is. The Duplex is CC BY 4.0, and the page credits it
+  ([DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md)). A script whose files' licence does not
+  allow a copy has no credit, and `--export` refuses it: the audit's files are never
+  exported.
+- **What it does not publish**: the database's address (the recorded feed's `database`
+  is empty), the token, and any other model's name or file.
+- **IFC text stays in JSON values.** The page is `view`'s own, marked static; every file
+  name is a fixed name or an id; a test checks both. In the page, the text is set as
+  text, as above.
+- **What the page may do**: the same content security policy, as a `<meta>` tag, since
+  GitHub Pages sends no header of ours; without `frame-ancestors`, which browsers ignore
+  in a `<meta>` tag, so the copy can be framed. `no-referrer` is a `<meta>` tag too. The
+  credit's links go to `https` addresses only.
+- **An export never overwrites**: it writes only into a new or empty folder.
+
 ### The embedded database
 
 With `IFC_SQL_DATA_DIR`, ifc-sql runs PostgreSQL itself, in that folder
