@@ -1,13 +1,12 @@
 # ADR 14: A viewer for the loaded models and the MCP server's calls
 
 - Status: accepted. It holds the Phase 0 spike's findings, decision 1 (Phase 1: scenes
-  in the pipeline), decisions 2, 3 and 6 (Phase 2: `ifc-sql view` and the page) and
-  decisions 4 and 5 (Phase 3: the feed and the scripted demo). Phase 4 added the audit's
-  script to decision 5; the colours of a fixed kind, and a `run_sql` with no id column
-  among the calls that light nothing by nature, to decision 4; and the page following the
-  calls to decision 6. Decision 7, the static demo on GitHub Pages, is recorded with
-  Phase 5 of [the plan](../plans/2026-11-ifc-viewer.md).
-- Date: 2026-11-22; accepted 2026-11-23; Phase 4's additions 2026-11-23
+  in the pipeline), decisions 2, 3 and 6 (Phase 2: `ifc-sql view` and the page),
+  decisions 4 and 5 (Phase 3: the feed and the scripted demo) and decision 7 (Phase 5:
+  the static demo on GitHub Pages). Phase 4 added the audit's script to decision 5; the
+  colours of a fixed kind, and a `run_sql` with no id column among the calls that light
+  nothing by nature, to decision 4; and the page following the calls to decision 6.
+- Date: 2026-11-22; accepted 2026-11-23; Phases 4 and 5's additions 2026-11-23
 - Amends: [ADR 1](0001-postgresql.md) (a second schema, `ifc_viewer`);
   [ADR 6](0006-mcp-server.md) decisions 2 and 10 (the feed's notification, decision 4);
   [ADR 13](0013-embedded-postgresql.md) decision 3 (`view` and `demo` attach to the
@@ -169,8 +168,6 @@ Not run: NOTIFY on Linux. There is no Linux machine or Docker here. Phase 3's li
 tests run against PostgreSQL 16 on Linux in CI.
 
 ## Decisions
-
-Decision 7 is recorded by Phase 5, as the plan's "Design, to record in ADR 14" gives it.
 
 ### 1. A scene per model, built at ingest, in its own schema
 
@@ -557,9 +554,51 @@ starts loading, in 76 draw calls, at 144.1 frames per second (the display's cap)
 68 MB JS heap, 173 MB in the tab's process and 219 MB in the GPU process. Its batches hold
 831,231 vertices, the file's own: P6's fix holds. A laptop figure is still missing.
 
+### 7. The static demo on GitHub Pages
+
+`ifc-sql demo --export DIR` plays the script as `--check` does and, only when every step
+is as the script says, writes a static copy of the demo into DIR, a new or empty folder:
+`view`'s page, marked `data-source="static"`, with its files and three.js; the script's
+models as `GET /api/models` would list them were they alone, their manifests and chunks;
+`events.json`, the script's calls as the feed resolved them, with the status "recorded",
+the pause between two calls and the credit; `elements.json`, the class, name and storey
+of every element and space a scene can draw; and `details.json`, `get_element` of the
+objects the calls looked up. The files are named by fixed names and ids only; every value
+of an IFC file is a JSON value.
+
+**The page is `view`'s.** `api.js` has a second source, which reads those files by paths
+relative to the page, so that it works below the repository's folder on Pages, and plays
+the recorded calls back one every `--pause` seconds; `main.js` takes it when the page is
+marked static, and otherwise nothing changes. The page's paths are relative for `view`
+too: served at `/`, they are the same addresses. The content security policy is `view`'s,
+as a `<meta>` tag, without `frame-ancestors`, which browsers ignore there; `no-referrer`
+is a `<meta>` tag too. The sidebar names the script and credits its files with links to
+their source and licence, `https` only. A click names any element from `elements.json`;
+the drawer holds everything for the objects in `details.json`, and says so for the rest.
+
+**Only the Duplex.** It is CC BY 4.0; files A, C and D of the audit state no licence, and
+B and E were posted to web-ifc's issues. A script names how its files must be credited
+(`Script.credit`); the audit's has none, and `--export` refuses a script without one
+(exit 2). Only the script's models are written, whatever else the database holds, and
+not the database's address. `DATA_ATTRIBUTION.md` says what the copy redistributes and
+what changed: "converted to glTF by IfcOpenShell triangulation, openings cut".
+
+**`pages.yml`**, apart from CI, runs on pushes to `main` and by hand: a PostgreSQL 16
+service, `scripts/demo.py --export _site`, then `actions/upload-pages-artifact` and
+`actions/deploy-pages`, pinned by commit SHA. The workflow keeps `contents: read`; the
+deploy job alone gets `pages: write` and `id-token: write`. CI's `samples` job runs the
+same export on every push in place of `--check`, which it includes, and keeps the copy as
+an artifact, so a pull request shows the copy before `main` publishes it.
+
+**Measured** on the Duplex, from `scripts/demo.py` on a fresh embedded database on the
+Phase 0 machine: 49 files, 13.0 MB, of which 10.3 MB are the 24 chunks and 2.3 MB
+three.js; `elements.json` is 245 KB. Served below a folder in Microsoft Edge 158, the nine
+calls played back light what `--check` resolved, and the browser reports no violation of
+the policy.
+
 ## Alternatives considered
 
-To be completed with decision 7. Phase 0 rejected:
+Phase 0 rejected:
 
 - **Triangulating in world coordinates** (`use-world-coords`): 1.4 to 4 times slower, and
   `--geometry` would need a second pass in local coordinates (P1).
@@ -663,3 +702,25 @@ Phase 4 rejected, for the audit's script and the page:
 - **Keeping what is lit after every call that lights nothing**, failed calls and empty
   finds included. The page would then show an old answer under a new question that found
   nothing; a failed call still clears the view, and its caption says how it ended.
+
+Decision 7 rejected:
+
+- **A page of its own for the static copy**, or a build step that writes one. Two pages
+  would drift; with one page and two sources in `api.js`, the copy runs `view`'s code, and
+  the live demo checks it.
+- **`details/<GlobalId>.json`, a file per object**, the plan's layout. GlobalIds are
+  unique per model only, and differ by case alone where Windows and macOS file names do
+  not, so two objects could share a file; `details.json` is keyed by model id and
+  GlobalId.
+- **`get_element` of every object** in place of `elements.json`'s class, name and storey.
+  Several megabytes of properties and findings that no step shows, for a demo whose
+  questions name one wall; `make demo` shows them all.
+- **Exporting the audit's script too.** Its files' licences allow no copy (above); the
+  rule is data, a script's credit, not a list of names.
+- **Writing into a folder that holds files**, overwriting or emptying it first. A chunk of
+  an older export would stay behind, or a file of the user's would go; a new or empty
+  folder is the only safe target.
+- **Deploying from CI's `samples` job.** Every branch would need the Pages permissions;
+  `pages.yml` alone holds them, and only on `main`.
+- **`actions/configure-pages` with `enablement`.** It needs a token that may change the
+  repository's settings; Pages is switched to GitHub Actions once, by hand.
