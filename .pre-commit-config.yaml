@@ -3,19 +3,23 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
-      # The audit's evidence is recorded output (tool calls, transcripts, readings), kept
-      # byte for byte as it was written, so the whitespace fixers leave it alone.
+      # The audit's evidence is recorded output (tool calls, transcripts, readings), and
+      # three.js is vendored (viewer/static/vendor/, pinned by its SHA256SUMS): both are
+      # kept byte for byte as they were written, so the whitespace fixers leave them alone.
       - id: trailing-whitespace
-        exclude: ^docs/audit/evidence/
+        exclude: ^(docs/audit/evidence/|src/ifc_sql_mcp/viewer/static/vendor/)
       - id: end-of-file-fixer
-        exclude: ^docs/audit/evidence/
+        exclude: ^(docs/audit/evidence/|src/ifc_sql_mcp/viewer/static/vendor/)
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
       - id: detect-private-key
       # Keeps sample IFC files (MBs) out of git; the synthetic fixture is far smaller.
+      # three.js r187 ships no minified build, so its 1.5 MB three.core.js is vendored as
+      # it is (ADR 14, P5).
       - id: check-added-large-files
         args: ["--maxkb=500"]
+        exclude: ^src/ifc_sql_mcp/viewer/static/vendor/
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.5  # keep in step with the ruff version in uv.lock
