@@ -254,6 +254,120 @@ input[type="checkbox"] {
   text-decoration: underline;
 }
 
+/* The feed: the MCP server's calls, newest first. */
+
+.feed-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.feed-state::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a6acb3;
+}
+
+.feed-state[data-state="live"]::before {
+  background: #2e7d32;
+}
+
+.feed-state[data-state="connecting"]::before {
+  background: #f9a825;
+}
+
+.feed-state[data-state="interrupted"]::before {
+  background: var(--error);
+}
+
+.feed-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.feed-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.call {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.call:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.call:disabled {
+  cursor: default;
+}
+
+.call.applied {
+  border-left-color: var(--accent);
+  background: var(--hover);
+}
+
+.call .when {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.call .what {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call .count {
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.call.failed .count {
+  color: var(--error);
+}
+
+.sql {
+  margin: 0 0 4px 12px;
+  font-size: 12px;
+}
+
+.sql summary {
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sql pre {
+  max-height: 160px;
+  margin: 4px 0 0;
+  padding: 6px;
+  overflow: auto;
+  border-radius: 4px;
+  background: var(--hover);
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
 .status {
   margin-top: auto;
   padding: 10px 16px;
@@ -296,6 +410,40 @@ input[type="checkbox"] {
   max-width: min(520px, calc(100% - 340px));
   padding: 8px 12px;
   border-left: 3px solid var(--accent);
+}
+
+.figure {
+  margin-top: 2px;
+}
+
+.counts {
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.swatch {
+  --swatch: var(--accent);
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--swatch);
 }
 
 .kicker {

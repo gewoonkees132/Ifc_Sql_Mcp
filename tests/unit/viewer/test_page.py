@@ -58,6 +58,7 @@ def test_the_page_has_its_own_modules() -> None:
         "api.js",
         "details.js",
         "dom.js",
+        "feed.js",
         "main.js",
         "scene.js",
     ]
