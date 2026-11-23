@@ -10,6 +10,7 @@ from collections.abc import Callable, Iterator
 
 import make_revit_quirks
 import pytest
+from geometry_model import write_measured_model
 from sqlalchemy import Connection, Engine, text
 
 from ifc_sql_mcp.config import Settings
@@ -122,5 +123,39 @@ def mcp_settings(
 def mcp_engine(mcp_settings: Settings) -> Iterator[Engine]:
     """The MCP server's own engine on that database: ifc_reader, read-only, no pool."""
     engine = make_reader_engine(mcp_settings)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def view_settings(
+    create_database: CreateDatabase, tmp_path_factory: pytest.TempPathFactory
+) -> Settings:
+    """A database for ``ifc-sql view``, which only reads: two projects, one without scenes.
+
+    Models 1 (ARC) and 2 (MEP, the same file one byte longer) are the scene fixture of
+    ``geometry_model.py``, loaded with ``--viewer``: project ``G-1``, a scene each. Model 3
+    (ELE) is the Revit fixture, loaded without it: project ``0042``, no scene.
+    """
+    settings = create_database("test_view")
+    upgrade(settings)
+    folder = tmp_path_factory.mktemp("view")
+    scene = write_measured_model(folder / "scene.ifc", scene=True)
+    longer = folder / "scene_mep.ifc"
+    longer.write_bytes(scene.read_bytes() + b"\n")
+    engine = make_engine(settings.database_url)
+    try:
+        ingest_file(engine, scene, "ARC", viewer=True)
+        ingest_file(engine, longer, "MEP", viewer=True)
+        ingest_file(engine, FIXTURE, "ELE")
+    finally:
+        engine.dispose()
+    return settings
+
+
+@pytest.fixture(scope="session")
+def view_engine(view_settings: Settings) -> Iterator[Engine]:
+    """``ifc-sql view``'s own engine on that database: ifc_reader, read-only, no pool."""
+    engine = make_reader_engine(view_settings, application="viewer")
     yield engine
     engine.dispose()

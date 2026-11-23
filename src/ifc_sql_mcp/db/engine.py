@@ -44,7 +44,7 @@ def reader_database_url(database_url: str, reader_password: str) -> str:
     return url.render_as_string(hide_password=False)
 
 
-def make_reader_engine(settings: Settings) -> Engine:
+def make_reader_engine(settings: Settings, *, application: str = "server") -> Engine:
     """Create the MCP server's engine: the read-only role, read-only transactions, no pool.
 
     * It connects as ``ifc_reader`` (:func:`reader_database_url`), so the server needs no
@@ -56,13 +56,19 @@ def make_reader_engine(settings: Settings) -> Engine:
       in its session (a setting, a session advisory lock, a prepared statement) can reach
       the next. A new session costs about 12 ms here, against seconds per LLM tool call.
     * ``connect_timeout`` makes an unreachable host fail in 5 seconds instead of hanging.
+
+    ``ifc-sql view`` reads through the same engine, with ``application="viewer"``: its
+    sessions are then ``ifc-sql-mcp-viewer`` in ``pg_stat_activity``.
     """
     return create_engine(
         reader_database_url(settings.database_url, settings.reader_password),
         poolclass=NullPool,
         isolation_level="REPEATABLE READ",
         execution_options={"postgresql_readonly": True},
-        connect_args={"application_name": f"{APPLICATION_NAME}-server", "connect_timeout": 5},
+        connect_args={
+            "application_name": f"{APPLICATION_NAME}-{application}",
+            "connect_timeout": 5,
+        },
     )
 
 
