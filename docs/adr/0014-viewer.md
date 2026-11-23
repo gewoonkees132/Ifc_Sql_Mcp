@@ -1,11 +1,15 @@
 # ADR 14: A viewer for the loaded models and the MCP server's calls
 
-- Status: **draft**. It holds the Phase 0 spike's findings, decision 1 (Phase 1: scenes
-  in the pipeline) and decisions 2, 3 and 6 (Phase 2: `ifc-sql view` and the page);
-  Phase 3 of [the plan](../plans/2026-11-ifc-viewer.md) completes it with decisions 4
-  and 5.
-- Date: 2026-11-22
-- Amends: [ADR 1](0001-postgresql.md) (a second schema, `ifc_viewer`)
+- Status: accepted. It holds the Phase 0 spike's findings, decision 1 (Phase 1: scenes
+  in the pipeline), decisions 2, 3 and 6 (Phase 2: `ifc-sql view` and the page) and
+  decisions 4 and 5 (Phase 3: the feed and the scripted demo). Decision 7, the static
+  demo on GitHub Pages, is recorded with Phase 5 of
+  [the plan](../plans/2026-11-ifc-viewer.md).
+- Date: 2026-11-22; accepted 2026-11-23
+- Amends: [ADR 1](0001-postgresql.md) (a second schema, `ifc_viewer`);
+  [ADR 6](0006-mcp-server.md) decisions 2 and 10 (the feed's notification, decision 4);
+  [ADR 13](0013-embedded-postgresql.md) decision 3 (`view` and `demo` attach to the
+  embedded database)
 
 ## Context
 
@@ -164,8 +168,7 @@ tests run against PostgreSQL 16 on Linux in CI.
 
 ## Decisions
 
-Decisions 4, 5 and 7 are recorded by Phases 3 and 5, as the plan's "Design, to record in
-ADR 14" gives them, with the changes above.
+Decision 7 is recorded by Phase 5, as the plan's "Design, to record in ADR 14" gives it.
 
 ### 1. A scene per model, built at ingest, in its own schema
 
@@ -350,6 +353,134 @@ handling, so that a 500 carries the headers too:
 - **The token is never logged.** It is printed once, on stdout; a test runs `view` as a
   process and checks its stderr.
 
+### 4. The feed: every tool call, and what it found
+
+`ifc-sql serve` stays stdio-only. With `IFC_SQL_VIEWER_FEED=1` (off by default) it
+publishes each tool call as one PostgreSQL notification, and every `ifc-sql view` on the
+database receives it: one page shows the calls of every client, the scripted demo's,
+Claude Desktop's and Claude Code's, and no link passes through a conversation. The MCP
+server keeps its eleven tools.
+
+**Publishing, in `serve`.** After every call, ok or not, once its read-only transaction
+has rolled back, `_Calls` builds the event and `db.engine.notify` sends it: a new
+session as `ifc_reader`, `BEGIN READ ONLY`, `SELECT pg_notify('ifc_viewer_feed', …)`,
+`COMMIT`, closed (P7: PostgreSQL delivers a notification only when its transaction
+commits, and allows `NOTIFY` in a read-only one). It amends ADR 6:
+
+- decision 2: with the feed on, each call is followed by a second, committed READ ONLY
+  transaction in its own session, which only notifies. It costs a session, 15 ms on the
+  Phase 0 machine (P7);
+- decision 10: `run_sql`'s text, clipped, reaches whoever listens on the database, and
+  PostgreSQL's notification queue (`pg_notify/` in the data folder) holds it until every
+  listener has read it.
+
+A notification that fails is logged, without its payload, and changes nothing else: the
+client has its result already. With the feed off nothing is sent and no session opened.
+A call the SDK refuses before any code runs never reaches `_Calls`, nor the feed.
+
+**The event, version 1** (`viewer/event.py`): JSON, at most 7,999 bytes of UTF-8. The
+process (`src: {pid, started_at}`), the call's number in it and when it ended; the tool,
+its arguments, the outcome, the seconds and the rows, as the log line has them; for
+`run_sql` the SQL as `{text, chars, sha256_16}`; and for `run_sql` and `get_element`,
+whose results hold the selection itself, the ids, `{groups, truncated}`. Each text
+argument is clipped to 200 bytes and named in `clipped`; the ids are capped at 500 and
+4,800 bytes; the SQL text gets what is left, clipped by its encoded bytes. Measured by
+`tests/unit/viewer/test_event.py`: 500 object ids of seven digits take 4,076 bytes, and
+with 20,000 non-ASCII characters of SQL beside them the event is 7,999 bytes, the text
+clipped to 1,821 characters. The plan's "500 ids fit in about 4 KB" was an estimate.
+`run_sql`'s ids are read from the rows it returned before any value was clipped, so an
+`array_agg` the client got as clipped text still gives its ids: an `object_id` column,
+an `object_ids` array column (a group per row, labelled by its first column), or
+`global_id` or `global_ids` beside `model_id`. With the feed on, `run_sql`'s description
+gains one sentence that says so.
+
+**Listening, in `view`** (`viewer/listener.py`): a plain psycopg connection as
+`ifc_reader`, autocommit, `LISTEN ifc_viewer_feed`, in a thread that waits a second at a
+time and checks a stop flag. Synchronous on purpose: on Windows uvicorn runs a
+`ProactorEventLoop`, which psycopg's `AsyncConnection` refuses. It passes
+`connect_timeout=5` (psycopg's default is 130 s, P7). On a lost session it says
+"interrupted" in the page, waits 0.5, 1, 2, then 5 s between attempts, and listens
+again. Its tests ran on Windows against the embedded extra's PostgreSQL 16, as
+`ifc_reader`, including a reconnect after `pg_terminate_backend`; CI runs them on Linux.
+
+**Every event is untrusted** (`viewer/feed.py`): any login can notify. `view` drops an
+unknown version, any field of the wrong type (strict pydantic), an unknown tool, ids
+that are not positive integers, GlobalIds that do not match the pattern, more than 500
+ids, and arguments no real call could have: it checks them with the tool's own argument
+model, the one the MCP SDK checks a call with, and refuses an argument the tool does not
+have. It rate-limits (a burst of 30, then 10 a second), numbers what it keeps itself (the
+SSE `id`, so `Last-Event-ID` resumes), labels each call with its process, keeps the last
+200, the selections of the last 50, and counts what it dropped by reason. It logs a
+reason once, never a payload.
+
+**Selections are resolved in `view`** (`viewer/selection.py`), when the event arrives,
+by fixed read-only queries in `server/tools.py` and `server/compare.py` that reuse the
+tools' own SQL, with the arguments as bind parameters; no SQL comes from an event. Each
+holds at most 20,000 objects, in groups with a colour each (by severity for a data
+quality report):
+
+| Tool | What is lit |
+|---|---|
+| `find_elements` | Every match: `find_element_ids` and `find_elements` share one WHERE clause (`_element_filter`). |
+| `schedule` | The same elements, by the schedule's groups, in its order (`_schedule_elements`, `_schedule_groups`). |
+| `quantity_takeoff` | By storey, class or Revit type: each group's elements, by the takeoff's own grouping; openings unless `include_openings`. By material: nothing, and why. |
+| `get_element` | Its object; the page moves the camera to it. |
+| `space_schedule` | Rooms, their copies (`duplicate_of`) and Revit Areas, as `v_space_schedule` marks them. |
+| `data_quality_report` | The objects with a finding of the latest run that pass the report's filters: one group per rule asked for, else per worst severity. |
+| `compare_models` | The newer model's objects added, and those whose properties changed, by the comparison's own queries; removed ones counted. |
+| `run_sql` | The objects among the event's ids that are loaded. |
+| `list_models`, `list_storeys`, `describe_schema` | Nothing: the page leaves the view as it is. |
+
+Besides its groups, a selection says how many objects are openings (never drawn), not
+drawn at all (storeys), or spaces; which chunk kinds of spaces must show; and the storey,
+when every object is on one, above which the page hides the rest.
+
+**Sessions.** `ifc_reader` has `CONNECTION LIMIT 20`, shared with every MCP call on the
+cluster. `view` holds one for the listener, and at most three for its routes and its
+selections together (one `Reader`, a semaphore of three); `serve` holds one per call, and
+with the feed on one more after it, never both at once. `tests/samples` samples
+`pg_stat_activity` while the Duplex demo plays and checks these numbers.
+
+### 5. The scripted demo
+
+`ifc-sql demo [--script duplex] [--step | --pause SECONDS] [--check] [--port N]
+[--no-open]` plays a script of questions through the real MCP server, with no LLM and no
+client of the user's: it is the client. It starts `ifc-sql serve` over stdio with the
+SDK's client, as `scripts/mcp_smoke.py` does, with `IFC_SQL_VIEWER_FEED=1`, listens as
+`view` does, serves `view`'s page and opens it, and asks each step's question. The calls
+take the path a real client's take, `serve` → `NOTIFY` → listener → selection → page, so
+the demo checks that path. The page says "scripted demo, no LLM" and numbers the
+questions: the demo tells the feed which step it expects before it asks, and labels the
+events of its own `serve` once the first arrives.
+
+**The scripts are data** (`viewer/demo_script.py`): each step has a title, a tool, its
+arguments, a figure in words with a function that reads it from the result and the value
+it must have, and the selection's count group by group. Files are named by SHA-256, and
+the models are found by those hashes, never by id: ids depend on the order of loading,
+and the docs' figures come from three layouts. The ids are filled into the arguments and
+the SQL when it plays. A unit test checks that the Duplex script's hashes are those
+`scripts/download_samples.py` pins.
+
+**`--check`** serves no page and opens nothing. It plays every step, waits up to 15 s for
+each call to reach the feed, and compares its outcome, its figure and its selection with
+the script; it prints a line per step and exits 1 on a difference. CI runs it on the
+Duplex in the `samples` job (Linux) and in the `windows` job (the embedded database).
+The figures it compares do not depend on ids: step 8 compares the wall's class and name,
+not the characters of its result, which change with the digits of its ids.
+
+**The Duplex script**, nine steps, each pinned by `tests/samples/test_duplex_demo.py`:
+the four models and their elements (268, 926, 103, 498); the 21 ARC walls on Level 1; the
+external walls by type, 12, 4, 4 and 3, from the README's query with `array_agg(object_id)
+AS object_ids`; the door schedule, 14 doors in 4 types (6, 4, 2, 2) whose fire rating is
+the placeholder `'Fire Rating'`; the 21 ARC rooms, 422.0 m²; the MEP model's 42 spaces,
+21 of them copies of rooms; the 78 elements without a fire rating; one wall in full; and
+a refused write. The audit's script is Phase 4's.
+
+**`scripts/demo.py`** is the one command for a fresh clone, on any OS: it downloads the
+Duplex, migrates, loads the four files with `--viewer` (building a scene in place for a
+file already loaded), runs `ifc-sql dq`, and runs `ifc-sql demo` with its own options.
+`make demo` calls it; `make ingest-samples` already passes `--viewer`.
+
 ### 6. The page
 
 - **Plain ES modules, no build step, no npm**: `index.html`, `viewer.css`, `main.js`,
@@ -373,8 +504,16 @@ handling, so that a 500 carries the headers too:
   not drawn in Phase 2; Phase 3 draws them when a selection holds one.
 - **A click** lights the element in the accent colour, names it in a caption, and opens a
   drawer with `get_element`. "fit", "fit selection" and "only selection" frame and hide.
-- **`window.ifcViewer`** exposes `ready`, `ready_ms`, the highlighted count, `stats()` and
-  `measure(seconds)`, for Phase 6's browser test and for the figures below.
+- **`window.ifcViewer`** exposes `ready`, `ready_ms`, the highlighted count, the feed id
+  of the call lit last (`call`), `stats()` and `measure(seconds)`, for Phase 6's browser
+  test and for the figures below.
+- **The feed** (Phase 3, `feed.js`): the calls from `/api/events`, newest first, with the
+  feed's state. A call's selection is drawn in its groups' colours and everything else in
+  opaque light grey: no per-instance alpha, and the tower does not fog over. A selection
+  of spaces alone hides the rest, since the rooms are inside the walls. The storeys above
+  a one-storey selection are hidden, with "Level 2, Roof hidden · show all". The caption
+  says who asked, what, the counts and the legend; the server words them, the page counts
+  what it could draw.
 
 **Measured** ([viewer.md](../viewer.md#measured)), on the Phase 0 machine with Microsoft
 Edge 158 and r187: file B (28 chunks, 12,774 primitives) is drawn 0.93 s after the page
@@ -384,7 +523,7 @@ starts loading, in 76 draw calls, at 144.1 frames per second (the display's cap)
 
 ## Alternatives considered
 
-To be completed with decisions 4, 5 and 7. Phase 0 rejected:
+To be completed with decision 7. Phase 0 rejected:
 
 - **Triangulating in world coordinates** (`use-world-coords`): 1.4 to 4 times slower, and
   `--geometry` would need a second pass in local coordinates (P1).
@@ -431,3 +570,32 @@ Decisions 2, 3 and 6 rejected:
   second in Phase 0 (P6).
 - **A build step (npm, a bundler, minified three.js).** The page would need Node to
   change, and r186 and later publish no minified build anyway (P5).
+
+Decisions 4 and 5 rejected:
+
+- **A listener inside `serve`, and a `show_in_viewer` tool.** `serve` would hold a port
+  and a twelfth tool, a link to the page would pass through the conversation, and only
+  that server's client would be seen. One notification per call reaches every `view`.
+- **MCP Apps first.** Only Claude Desktop could show it: claude.ai cannot reach a local
+  stdio server. The plan leaves it out.
+- **A static demo only.** It would never check the live path; the scripted demo plays
+  through the real `serve`, and Phase 5 exports what it recorded.
+- **psycopg's `AsyncConnection` for the listener.** It refuses the `ProactorEventLoop`
+  uvicorn runs on Windows.
+- **One long-lived session in `serve` for its notifications.** It would hold a session
+  for a whole conversation, against ADR 6's session per call, and a session that broke
+  would have to be noticed and replaced. A new one per notification costs 15 ms.
+- **The calls in a table.** `ifc_reader` cannot write, and should not; `NOTIFY` needs no
+  write and no clean-up.
+- **The selection in the event, for every tool.** A `find_elements` on file B finds
+  thousands of elements, far past 8,000 bytes; and `view` would light whatever an event
+  said. It resolves the tools' own filters itself, and takes ids only from the two tools
+  whose results are the selection.
+- **Running the SQL of a `run_sql` event in `view`** to find its objects. `view` would run
+  SQL any login can send it. The LLM selects `object_id` or `object_ids`, and the
+  description of `run_sql` says so.
+- **Validating the arguments with a copy of the tools' limits.** The copy could drift; the
+  SDK's own argument model of each tool is the check a real call passes.
+- **Finding the demo's models by id.** Ids depend on the order of loading; SHA-256 does not.
+- **A demo through a real LLM in CI.** It would need a key, cost money and answer
+  differently from run to run; the script is the same every time.

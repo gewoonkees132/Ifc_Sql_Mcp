@@ -1,7 +1,8 @@
 # ADR 13: An embedded PostgreSQL for one user, so that Docker is optional
 
 - Status: accepted; adds to [ADR 1](0001-postgresql.md). Decision 3 amended by
-  [ADR 14](0014-viewer.md): `ifc-sql view` attaches to the embedded database too.
+  [ADR 14](0014-viewer.md): `ifc-sql view` and `ifc-sql demo` attach to the embedded
+  database too.
 - Date: 2026-11-22
 - Audit finding: [A18](../audit/2026-11-modern-revit-exports.md#a18-the-path-from-revit-to-a-question-is-long),
   item 4, deferred in the first round and done as
@@ -27,9 +28,11 @@ user", and the first round deferred it. Two things rule out another database eng
 2. **One setting, `IFC_SQL_DATA_DIR`**, a folder, in place of `IFC_SQL_DATABASE_URL`.
    Setting both is an error.
 3. **Started by the commands that need it.** `migrate`, `ingest`, `dq`, `watch`,
-   `serve` and `view` start a server on the folder, or attach to the one already running
-   there. (`view`, the viewer's page, was added by [ADR 14](0014-viewer.md): like `serve`,
-   it reads as `ifc_reader`, and it can run while the others do.)
+   `serve`, `view` and `demo` start a server on the folder, or attach to the one already
+   running there. (`view`, the viewer's page, and `demo`, its scripted questions, were
+   added by [ADR 14](0014-viewer.md): like `serve`, they read as `ifc_reader`, and they
+   can run while the others do. `demo` hands `IFC_SQL_DATA_DIR` to the `serve` it starts,
+   which attaches to the same server.)
    - `--help` and `--version` start nothing.
    - The server stops when the last process attached to it exits. Several commands can
      run at once.
