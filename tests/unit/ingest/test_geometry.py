@@ -23,14 +23,16 @@ from geometry_model import (
     STAIR,
     UNPLANNED_SPACE,
     WALL,
+    share_global_ids,
     write_measured_model,
 )
 
-from ifc_sql_mcp.ingest import geometry
+from ifc_sql_mcp.ingest import extract, geometry
 from ifc_sql_mcp.ingest.extract import read_model
 from ifc_sql_mcp.ingest.issues import IssueCode
 from ifc_sql_mcp.ingest.quantities import geometry_quantities
 from ifc_sql_mcp.ingest.raw import DEFAULT_RGBA, RawModel, RawShape
+from ifc_sql_mcp.ingest.transform import transform
 
 
 def _read(tmp_path: Path) -> RawModel:
@@ -279,6 +281,74 @@ def test_the_viewers_pass_reports_what_it_cannot_measure_or_plan(
     failed = [i for i in measured.issues if "could not be measured" in i.message]
     assert len(failed) == 9
     assert all("non-finite" in issue.message for issue in failed)
+
+
+def test_a_scene_that_cannot_be_triangulated_leaves_the_two_passes_to_measure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The model loads all the same: its plans and measures are those without --viewer."""
+    path = _scene_file(tmp_path)
+    alone = read_model(path, geometry=True)
+
+    def fail(*args: object, **kwargs: object) -> geometry.SceneTriangulation:
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(extract, "triangulate_scene", fail)
+
+    raw = read_model(path, geometry=True, viewer=True)
+
+    assert (raw.scene_error, raw.meshes, raw.scene_seconds) == (
+        "RuntimeError: out of memory",
+        (),
+        None,
+    )
+    assert alone.scene_error is None
+    assert raw.shapes == alone.shapes
+    assert raw.footprints == alone.footprints
+    assert raw.issues == alone.issues
+    assert raw.geometry_seconds is not None
+
+
+def test_only_the_object_that_keeps_a_global_id_is_triangulated(tmp_path: Path) -> None:
+    """The transform keeps the space over the wall and the slab over the column, so their
+    bodies, plans and measures are the only ones under the two GlobalIds."""
+    path = share_global_ids(_scene_file(tmp_path))
+    model = ifcopenshell.open(str(path))
+    named = {product.Name: product for product in model.by_type("IfcProduct")}
+
+    shared = read_model(path, geometry=True, viewer=True)
+    alone = read_model(path, geometry=True)
+
+    kept = {named[SPACE].GlobalId: named[SPACE].id(), named[SLAB].GlobalId: named[SLAB].id()}
+    assert {m.global_id: m.step_id for m in shared.meshes if m.global_id in kept} == kept
+    for raw in (shared, alone):
+        measures = {s.global_id: s for s in raw.shapes if s.global_id in kept}
+        assert measures[named[SPACE].GlobalId].volume_m3 == pytest.approx(15.0)
+        assert measures[named[SLAB].GlobalId].volume_m3 == pytest.approx(4.0)
+        assert len(raw.shapes) == len({s.global_id for s in raw.shapes})
+        plans = {f.global_id: f.plan.area for f in raw.footprints}
+        assert plans[named[SPACE].GlobalId] == pytest.approx(6.0)
+    records = transform(alone)
+    keys = [(q.global_id, q.name, q.source) for q in records.quantities]
+    assert len(keys) == len(set(keys))
+
+
+def test_the_kept_objects_are_the_first_of_each_global_id_spatial_ones_first(
+    tmp_path: Path,
+) -> None:
+    path = share_global_ids(_scene_file(tmp_path))
+    model = ifcopenshell.open(str(path))
+    named = {product.Name: product for product in model.by_type("IfcProduct")}
+
+    kept = geometry.kept_by_global_id(model)
+
+    assert {named[SPACE].id(), named[SLAB].id()} <= set(kept)
+    assert not {named[WALL].id(), named[COLUMN].id()} & set(kept)
+    # One per GlobalId the transform loads.
+    records = transform(read_model(path))
+    assert sorted(str(e.GlobalId) for e in kept.values()) == sorted(
+        o.global_id for o in records.objects
+    )
 
 
 @pytest.mark.parametrize(

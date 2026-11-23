@@ -290,6 +290,9 @@ def add_scene(
     connection.execute(
         insert(schema.scene).values(
             model_id=model_id,
+            # Not the column's default, now(): that is when the transaction began, before
+            # the caller waited for the model row's lock, which can take minutes.
+            built_at=func.clock_timestamp(),
             format_version=format_version,
             build_seconds=build_seconds,
             ifcopenshell_version=ifcopenshell_version,

@@ -8,6 +8,7 @@ flights each (one with a body of its own), a space and a copy of it (ADR 14).
 import dataclasses
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from geometry_model import (
     SPACE_COPY,
     STAIR,
     WALL,
+    share_global_ids,
     write_measured_model,
 )
 from glb_file import read_glb
@@ -30,9 +32,11 @@ from locks import wait_until_a_session_waits_on_a_lock
 from sqlalchemy import Engine, RowMapping, text
 from sqlalchemy.exc import IntegrityError
 
-from ifc_sql_mcp.ingest import pipeline
-from ifc_sql_mcp.ingest.extract import ExtractError
+from ifc_sql_mcp.ingest import extract, pipeline
+from ifc_sql_mcp.ingest.extract import ExtractError, read_model
+from ifc_sql_mcp.ingest.load import load
 from ifc_sql_mcp.ingest.pipeline import IngestResult, SceneOutcome, ingest_file
+from ifc_sql_mcp.ingest.transform import transform
 from ifc_sql_mcp.viewer import scene as viewer_scene
 
 DRAWN = SceneOutcome(
@@ -163,6 +167,32 @@ def test_the_scene_row_says_what_was_drawn_with_what_and_from_where(
     assert all(c["glb_sha256"] == hashlib.sha256(c["glb"]).hexdigest() for c in chunks)
 
 
+def test_a_global_id_used_twice_draws_the_body_of_the_object_the_transform_kept(
+    ingest_engine: Engine, path: Path
+) -> None:
+    """The space keeps the wall's GlobalId and the slab the column's: the wall and the
+    column are not loaded, and the space is drawn with its own body, not the wall's."""
+    share_global_ids(path)
+
+    result = ingest_file(ingest_engine, path, "ARC", geometry=True, viewer=True)
+
+    assert result.status == "succeeded"
+    assert _counted(result) == dataclasses.replace(DRAWN, element_count=7)
+    chunks = _chunks(ingest_engine, result.model_id)
+    names = _names(ingest_engine, result.model_id)
+    spaces = read_glb(chunks[1]["glb"])
+    [space] = spaces.gltf["nodes"]
+    assert names[space["name"]] == SPACE
+    bounds = [
+        spaces.gltf["accessors"][primitive["attributes"]["POSITION"]]
+        for primitive in spaces.gltf["meshes"][space["mesh"]]["primitives"]
+    ]
+    low = [min(b["min"][axis] for b in bounds) for axis in range(3)]
+    high = [max(b["max"][axis] for b in bounds) for axis in range(3)]
+    # 3 x 2 m and 2.5 m high, Y up; the wall would be 5 m long, 3 m high and 0.2 m thick.
+    assert [h - lo for lo, h in zip(low, high, strict=True)] == pytest.approx([3.0, 2.5, 2.0])
+
+
 def test_without_viewer_there_is_no_scene(ingest_engine: Engine, path: Path) -> None:
     result = ingest_file(ingest_engine, path, "ARC")
 
@@ -227,11 +257,26 @@ def test_building_in_place_applies_no_project_and_says_so(
     drawn = ingest_file(ingest_engine, path, "ARC", viewer=True, project_key="house")
 
     assert drawn.warnings == (
-        f"scene.ifc is already loaded as model {plain.model_id}, so --project and --replaces "
-        "were not applied",
+        f"scene.ifc is already loaded as model {plain.model_id}, so --project, --replaces "
+        "and --geometry were not applied",
     )
     assert drawn.scene is not None
     assert drawn.scene.status == "built"
+
+
+def test_drawing_in_place_a_model_measured_already_says_geometry_was_not_applied(
+    ingest_engine: Engine, path: Path
+) -> None:
+    measured = ingest_file(ingest_engine, path, "ARC", geometry=True)
+
+    drawn = ingest_file(ingest_engine, path, "ARC", geometry=True, viewer=True)
+
+    assert (drawn.status, drawn.model_id) == ("skipped", measured.model_id)
+    assert _counted(drawn) == DRAWN
+    assert drawn.warnings == (
+        f"scene.ifc is already loaded as model {measured.model_id}, so --project, --replaces "
+        "and --geometry were not applied",
+    )
 
 
 def test_a_scene_of_an_older_format_is_replaced(
@@ -313,6 +358,33 @@ def test_a_failed_scene_writes_nothing_and_leaves_the_model_loaded(
     assert _names(ingest_engine, result.model_id)
 
 
+def test_a_scene_that_cannot_be_triangulated_fails_alone_and_the_model_is_measured(
+    ingest_engine: Engine, path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The plans and measures then come from the two passes of a load without --viewer."""
+    alone = transform(read_model(path, geometry=True))
+
+    def fail(*args: object, **kwargs: object) -> Any:
+        raise RuntimeError("out of memory")
+
+    monkeypatch.setattr(extract, "triangulate_scene", fail)
+
+    result = ingest_file(ingest_engine, path, "ARC", geometry=True, viewer=True)
+
+    assert result.status == "succeeded"
+    assert result.scene == SceneOutcome(status="failed", error="RuntimeError: out of memory")
+    assert _scene(ingest_engine, result.model_id) is None
+    with ingest_engine.connect() as connection:
+        measured = connection.execute(
+            text(
+                "SELECT count(*) FROM ifc.quantity JOIN ifc.object USING (object_id) "
+                "WHERE model_id = :m AND source = 'geometry'"
+            ),
+            {"m": result.model_id},
+        ).scalar_one()
+    assert measured == sum(1 for q in alone.quantities if q.source == "geometry") > 0
+
+
 def test_a_file_that_cannot_be_read_again_fails_the_scene_alone(
     ingest_engine: Engine, path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -366,13 +438,18 @@ def test_a_storey_a_chunk_is_on_cannot_be_deleted_alone(ingest_engine: Engine, p
 # --------------------------------------------------------------------------- two at once
 
 
-def _race(engine: Engine, path: Path, model_id: int, *, other_commits: bool) -> IngestResult:
+def _race(
+    engine: Engine, path: Path, model_id: int, *, other_commits: bool
+) -> tuple[IngestResult, datetime]:
     """Build the scene in place while another transaction builds one and holds the model.
 
     The other transaction plays the other build: it takes the model row's lock (FOR NO KEY
     UPDATE, so the ingest can still record its run) and writes a scene of the current
     format with no chunks. The build under test triangulates, then waits for the lock;
     once it waits, the other transaction commits or rolls back.
+
+    Returns:
+        The build's result, and the server's time just before the lock was let go.
     """
     other = engine.connect()
     transaction = other.begin()
@@ -393,6 +470,7 @@ def _race(engine: Engine, path: Path, model_id: int, *, other_commits: bool) -> 
             build = pool.submit(ingest_file, engine, path, "ARC", viewer=True)
             try:
                 wait_until_a_session_waits_on_a_lock(engine)
+                released = other.execute(text("SELECT clock_timestamp()")).scalar_one()
                 if other_commits:
                     transaction.commit()
             finally:
@@ -401,7 +479,7 @@ def _race(engine: Engine, path: Path, model_id: int, *, other_commits: bool) -> 
             result = build.result(timeout=60)
     finally:
         other.close()
-    return result
+    return result, released
 
 
 def test_of_two_builds_at_once_the_second_keeps_the_first_ones_scene(
@@ -409,7 +487,7 @@ def test_of_two_builds_at_once_the_second_keeps_the_first_ones_scene(
 ) -> None:
     plain = ingest_file(ingest_engine, path, "ARC")
 
-    result = _race(ingest_engine, path, plain.model_id, other_commits=True)
+    result, _ = _race(ingest_engine, path, plain.model_id, other_commits=True)
 
     assert result.scene == SceneOutcome(status="kept")
     scene = _scene(ingest_engine, plain.model_id)
@@ -423,9 +501,45 @@ def test_a_build_that_waited_writes_its_scene_when_the_other_one_fails(
 ) -> None:
     plain = ingest_file(ingest_engine, path, "ARC")
 
-    result = _race(ingest_engine, path, plain.model_id, other_commits=False)
+    result, released = _race(ingest_engine, path, plain.model_id, other_commits=False)
 
     assert _counted(result) == DRAWN
     scene = _scene(ingest_engine, plain.model_id)
     assert scene is not None
     assert scene["ifcopenshell_version"] == ifcopenshell.version
+    # When it was written, after the wait: not when its transaction began, before it.
+    assert scene["built_at"] > released
+
+
+def test_the_loser_of_the_race_to_load_the_file_stores_its_scene_for_the_winners_model(
+    ingest_engine: Engine, path: Path
+) -> None:
+    """Another transaction loads the same file's records and holds them uncommitted. The
+    ingest under test waits on the unique index on the file's hash; once it waits, the
+    other commits. The ingest loses the load, as ``test_ingest`` stages it, and stores its
+    scene under the winner's model, whose storey the chunks are on."""
+    records = transform(read_model(path))
+    other = ingest_engine.connect()
+    transaction = other.begin()
+    try:
+        winner = load(other, records, "ARC").model_id
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            ingest = pool.submit(ingest_file, ingest_engine, path, "ARC", viewer=True)
+            try:
+                wait_until_a_session_waits_on_a_lock(ingest_engine)
+                transaction.commit()
+            finally:
+                if transaction.is_active:
+                    transaction.rollback()  # also lets the ingest finish if the test failed
+            result = ingest.result(timeout=60)
+    finally:
+        other.close()
+
+    assert (result.status, result.concurrent, result.model_id) == ("skipped", True, winner)
+    assert _counted(result) == DRAWN
+    chunks = _chunks(ingest_engine, winner)
+    assert [(c["kind"], c["storey"]) for c in chunks] == [
+        ("elements", "Level 1"),
+        ("spaces", "Level 1"),
+        ("space_copies", "Level 1"),
+    ]

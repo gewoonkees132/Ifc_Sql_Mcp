@@ -19,7 +19,8 @@ has an aggregate with a body of its own; the synthetic fixture tests the rule.
 
 * drawn (``element_count``): the elements with a body of their own, and the aggregates
   drawn through their parts;
-* without shape: the elements that are neither;
+* without shape: the elements that are neither, those whose body has no triangle or a
+  vertex that is not a finite number among them;
 * openings: the feature elements, never drawn.
 
 The Duplex ARC model has 218 drawn (215 with a body and 3 aggregates: two stairs and a
@@ -219,8 +220,10 @@ def build_scene(
     Args:
         objects: The model's elements and spaces (:func:`scene_objects`), in the order
             to write them.
-        meshes: Their bodies, in any order. A GlobalId with two meshes keeps the one with
-            the lower STEP id; a mesh of no object, or with no triangle, is left out.
+        meshes: Their bodies, in any order. A mesh of no object is left out, and so is
+            one with no triangle or with a coordinate that is NaN or infinite: its object
+            counts as without shape. ``geometry.triangulate_scene`` gives one mesh per
+            GlobalId; of two, the one with the lower STEP id is kept.
         storeys: The storeys in the order to number their chunks
             (:func:`storeys_upwards`). A storey not listed comes after them, by GlobalId,
             and the objects on no storey come last.
@@ -233,7 +236,7 @@ def build_scene(
     """
     by_global_id: dict[str, RawMesh] = {}
     for mesh in sorted(meshes, key=lambda mesh: mesh.step_id):
-        if mesh.faces:  # a body IfcOpenShell gave no triangle is not drawn
+        if _drawable(mesh):
             by_global_id.setdefault(mesh.global_id, mesh)
     elements = {o.global_id: o for o in objects if o.kind == "element"}
     parts: dict[str, list[SceneObject]] = defaultdict(list)
@@ -274,6 +277,16 @@ def build_scene(
         opening_count=sum(1 for obj in objects if obj.kind == "opening"),
         chunks=tuple(chunks),
     )
+
+
+def _drawable(mesh: RawMesh) -> bool:
+    """Whether a body can be drawn: it has a triangle, and every vertex is finite.
+
+    A NaN or infinite coordinate cannot be rounded into the origin, nor written as JSON
+    in the accessor's bounds, so one such vertex would fail the whole model's scene.
+    """
+    vertices = np.frombuffer(mesh.vertices, dtype=np.float64)
+    return bool(mesh.faces) and bool(np.isfinite(vertices).all())
 
 
 def _space(obj: SceneObject, meshes: Mapping[str, RawMesh]) -> Node | None:

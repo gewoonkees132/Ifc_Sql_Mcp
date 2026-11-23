@@ -39,6 +39,20 @@ PLACED = np.array(
 """The bare stair's flights: a quarter turn about Z, then 10, 20 and 1 m along X, Y, Z."""
 
 
+def share_global_ids(path: Path) -> Path:
+    """Give the space the wall's GlobalId, and the column the slab's; return ``path``.
+
+    The transform keeps the space, since it takes the spatial elements first, though the
+    wall comes first in the file; and it keeps the slab, which comes before the column.
+    """
+    model = ifcopenshell.open(str(path))
+    named = {product.Name: product for product in model.by_type("IfcProduct")}
+    named[SPACE].GlobalId = named[WALL].GlobalId
+    named[COLUMN].GlobalId = named[SLAB].GlobalId
+    model.write(str(path))
+    return path
+
+
 def write_measured_model(
     path: Path, *, only_unmeasurable: bool = False, scene: bool = False
 ) -> Path:

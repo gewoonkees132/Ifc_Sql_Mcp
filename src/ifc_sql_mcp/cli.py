@@ -184,14 +184,15 @@ def _summary(file_name: str, result: IngestResult) -> str:
             f"(run {result.run_id}); check it again with ifc-sql dq {result.model_id}{scene}"
         )
     skipped = f"run {result.run_id}, skipped"
-    if result.concurrent:
-        return (
-            f"{file_name} was loaded as {model} by another ingest running at the same time; "
-            f"nothing written ({skipped}){scene}"
-        )
+    loaded = (
+        f"{file_name} was loaded as {model} by another ingest running at the same time"
+        if result.concurrent
+        else f"{file_name} is already loaded as {model}"
+    )
+    # A scene written into schema ifc_viewer is not "nothing written".
     if result.scene is not None and result.scene.status in ("built", "replaced"):
-        return f"{file_name} is already loaded as {model}{scene} ({skipped})"
-    return f"{file_name} is already loaded as {model}; nothing written ({skipped}){scene}"
+        return f"{loaded}{scene} ({skipped})"
+    return f"{loaded}; nothing written ({skipped}){scene}"
 
 
 def _scene_summary(scene: SceneOutcome) -> str:

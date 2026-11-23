@@ -144,7 +144,9 @@ def read_model(path: Path, *, geometry: bool = False, viewer: bool = False) -> R
         geometry: Also triangulate and measure the shapes (``geometry.measure_shapes``).
         viewer: Also triangulate every element and space for the viewer's scene
             (``geometry.triangulate_scene``). The space plans, and with ``geometry`` the
-            measures, then come from the same pass (ADR 14, P1).
+            measures, then come from the same pass (ADR 14, P1). If that pass raises, they
+            come from their own passes, as without ``viewer``, and ``scene_error`` says
+            why: a scene that fails leaves the model to load.
 
     Raises:
         FileNotFoundError: if there is no such file.
@@ -160,17 +162,26 @@ def read_model(path: Path, *, geometry: bool = False, viewer: bool = False) -> R
         raise ExtractError(f"{path.name}: not a readable IFC file ({exc})") from exc
     raw = _Extractor(model, path.name, sha256, size_bytes).run()
     if viewer:
-        scene = triangulate_scene(model, measure=geometry)
-        logger.debug("triangulated the scene", extra={"meshes": len(scene.meshes)})
-        return dataclasses.replace(
-            raw,
-            footprints=scene.footprints,
-            shapes=scene.shapes,
-            meshes=scene.meshes,
-            issues=raw.issues + scene.issues,
-            geometry_seconds=scene.seconds if geometry else None,
-            scene_seconds=scene.seconds,
-        )
+        try:
+            scene = triangulate_scene(model, measure=geometry)
+        except Exception as exc:  # IfcOpenShell raises many kinds; the model loads all the same
+            error = f"{type(exc).__name__}: {exc}"
+            logger.warning(
+                "the scene could not be triangulated; measuring without it",
+                extra={"error": error},
+            )
+            raw = dataclasses.replace(raw, scene_error=error)
+        else:
+            logger.debug("triangulated the scene", extra={"meshes": len(scene.meshes)})
+            return dataclasses.replace(
+                raw,
+                footprints=scene.footprints,
+                shapes=scene.shapes,
+                meshes=scene.meshes,
+                issues=raw.issues + scene.issues,
+                geometry_seconds=scene.seconds if geometry else None,
+                scene_seconds=scene.seconds,
+            )
     footprints, plan_issues, plan_seconds = measure_space_plans(model)
     logger.debug("measured space plans", extra={"plans": len(footprints), "seconds": plan_seconds})
     raw = dataclasses.replace(raw, footprints=footprints, issues=raw.issues + tuple(plan_issues))

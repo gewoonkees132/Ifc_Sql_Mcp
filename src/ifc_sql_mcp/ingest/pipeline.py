@@ -19,7 +19,8 @@ The steps, and why they come in this order (ADR 4):
 Two ingests of the same file can both get past step 2. The second to insert its model
 row waits on the unique index on ``model.file_sha256`` until the first commits, then
 fails on it. That loser records a ``skipped`` run pointing at the winner's model, so the
-end state is the same as if the two had run one after the other.
+end state is the same as if the two had run one after the other. With ``viewer``, the
+loser stores its scene for the winner's model, as the second of two runs would.
 
 A process killed between steps 3 and 6 leaves its run ``running`` for good; nothing
 reaps such rows (ADR 4).
@@ -33,9 +34,10 @@ gets a warning in the result.
 With ``viewer``, the file is triangulated for the viewer during step 4, and its scene is
 written after step 5, in a transaction of its own that holds the model row's lock (ADR
 14). The scene is not part of the run: it writes nothing to schema ``ifc``, and its own
-row records when it was built and how long it took. A scene that fails writes nothing
-and leaves the model loaded. On a file already loaded, ``viewer`` builds the scene in
-place, as ``geometry`` measures in place (ADR 12); a scene of the current format is kept.
+row records when it was built and how long it took. A scene that fails, in its
+triangulation or when it is written, writes nothing and leaves the model loaded. On a
+file already loaded, ``viewer`` builds the scene in place, as ``geometry`` measures in
+place (ADR 12); a scene of the current format is kept.
 """
 
 import dataclasses
@@ -221,7 +223,7 @@ def ingest_file(
             return measured if draw else dataclasses.replace(measured, scene=current)
         result = _skipped(run_id, path, discipline, existing, concurrent=False)
         if draw:
-            return _draw_in_place(engine, path, sha256, result, project_key, replaces)
+            return _draw_in_place(engine, path, sha256, result, project_key, replaces, geometry)
         result = dataclasses.replace(result, scene=current)
         # A current scene is what --viewer asks for: the summary says it was kept, and
         # make dq-samples, which passes --viewer, warns of nothing when run again.
@@ -269,7 +271,12 @@ def ingest_file(
         if winner is not None:
             with engine.begin() as connection:
                 _finish_run(connection, run_id, "skipped", winner[0])
-            return _skipped(run_id, path, discipline, winner, concurrent=True)
+            result = _skipped(run_id, path, discipline, winner, concurrent=True)
+            if not viewer:
+                return result
+            # Only the load collides with the winner, so the file was read by then; and the
+            # winner loaded the same bytes, so these records are its records.
+            return dataclasses.replace(result, scene=_store_scene(engine, winner[0], raw, records))
         message = describe_error(exc)
         logger.error("ingest failed", extra={"run_id": run_id, "error": message})
         with engine.begin() as connection:
@@ -384,23 +391,25 @@ def _draw_in_place(
     skipped: IngestResult,
     project_key: str | None,
     replaces: int | None,
+    geometry: bool,
 ) -> IngestResult:
     """Build the scene of a file already loaded, into its model, as ADR 12 measures in place.
 
     The run stays the skipped run it was recorded as: nothing of the model is written,
     only schema ``ifc_viewer``. A file that cannot be read again fails the scene alone.
+    ``geometry`` here means the model was measured already, so it is not applied either.
     """
     try:
         raw, records = _extract_and_transform(path, sha256, skipped.run_id, False, True)
     except Exception as exc:
-        scene = _failed_scene(skipped.model_id, exc)
+        scene = _failed_scene(skipped.model_id, describe_error(exc))
     else:
         scene = _store_scene(engine, skipped.model_id, raw, records)
     warnings: tuple[str, ...] = ()
-    if project_key is not None or replaces is not None:
+    if project_key is not None or replaces is not None or geometry:
         warnings = (
-            f"{path.name} is already loaded as model {skipped.model_id}, so --project and "
-            "--replaces were not applied",
+            f"{path.name} is already loaded as model {skipped.model_id}, so --project, "
+            "--replaces and --geometry were not applied",
         )
     return dataclasses.replace(skipped, scene=scene, warnings=warnings)
 
@@ -421,8 +430,11 @@ def _store_scene(
     """Build the model's scene and write it, unless it has a current one; never raise.
 
     The model row is locked first, so of two builds at once the second finds the first's
-    scene and keeps it. A scene that fails is logged and returned, with nothing written.
+    scene and keeps it. A scene that fails, here or in its triangulation
+    (``raw.scene_error``), is logged and returned, with nothing written.
     """
+    if raw.scene_error is not None:
+        return _failed_scene(model_id, raw.scene_error)
     started = time.perf_counter()
     try:
         scene = viewer_scene.build_scene(
@@ -446,7 +458,7 @@ def _store_scene(
                 ifcopenshell_version=IFCOPENSHELL_VERSION,
             )
     except Exception as exc:
-        return _failed_scene(model_id, exc)
+        return _failed_scene(model_id, describe_error(exc))
     outcome = SceneOutcome(
         status="built" if older is None else "replaced",
         element_count=scene.element_count,
@@ -468,8 +480,7 @@ def _store_scene(
     return outcome
 
 
-def _failed_scene(model_id: int, exc: Exception) -> SceneOutcome:
-    message = describe_error(exc)
+def _failed_scene(model_id: int, message: str) -> SceneOutcome:
     logger.error("scene failed", extra={"model_id": model_id, "error": message})
     return SceneOutcome(status="failed", error=message)
 

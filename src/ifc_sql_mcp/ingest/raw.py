@@ -280,6 +280,8 @@ class RawModel:
         meshes: Every element's and space's body, for the viewer's scene, by STEP id
             (``geometry.triangulate_scene``); empty unless asked for.
         scene_seconds: How long triangulating them took; ``None`` when not asked for.
+        scene_error: Why triangulating them failed, as ``Type: message``; ``None`` when it
+            did not. The plans and measures then come from their own passes.
     """
 
     file: RawFile
@@ -293,3 +295,4 @@ class RawModel:
     footprints: tuple[RawFootprint, ...] = ()
     meshes: tuple[RawMesh, ...] = ()
     scene_seconds: float | None = None
+    scene_error: str | None = None

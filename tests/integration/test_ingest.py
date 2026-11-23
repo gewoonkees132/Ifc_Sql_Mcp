@@ -14,7 +14,7 @@ from typing import Any
 import make_revit_quirks
 import pytest
 from counts import FIXTURE_ROWS, table_counts, total_rows
-from geometry_model import BEAM, SLAB, SPACE, WALL, write_measured_model
+from geometry_model import BEAM, SLAB, SPACE, WALL, share_global_ids, write_measured_model
 from locks import wait_until_a_session_waits_on_a_lock
 from rows import add_model
 from sqlalchemy import Engine, RowMapping, text
@@ -374,6 +374,21 @@ def _geometry_rows(engine: Engine, model_id: int) -> tuple[dict[str, float], lis
             .all()
         )
     return areas, list(issues)
+
+
+def test_a_global_id_used_twice_is_measured_once_from_the_object_kept(
+    ingest_engine: Engine, tmp_path: Path
+) -> None:
+    """The space keeps the wall's GlobalId and the slab the column's (``share_global_ids``).
+    Measuring the wall and the column too would give their GlobalIds a second area and
+    volume, which ifc.quantity's key refuses, and the load would fail."""
+    path = share_global_ids(write_measured_model(tmp_path / "measured.ifc"))
+
+    result = ingest_file(ingest_engine, path, "ARC", geometry=True)
+
+    areas, _ = _geometry_rows(ingest_engine, result.model_id)
+    assert result.status == "succeeded"
+    assert areas == pytest.approx({SLAB: 16.0, SPACE: 6.0})
 
 
 def test_geometry_on_a_file_loaded_without_it_measures_the_same_model(

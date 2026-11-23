@@ -378,3 +378,27 @@ def test_a_concurrent_ingest_with_viewer_still_reports_the_scene(
         "time; nothing written (run 7, skipped); scene kept: 1 elements drawn, 0 without "
         "shape, 0 openings not drawn, 1 chunks, 2.0 MB\n"
     )
+
+
+def test_a_concurrent_ingest_that_built_the_scene_does_not_say_nothing_was_written(
+    database: Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The loser of a race to load or to measure the file still writes the scene."""
+    concurrent = IngestResult(
+        run_id=7,
+        status="skipped",
+        model_id=3,
+        discipline="ARC",
+        concurrent=True,
+        scene=SceneOutcome(status="built", element_count=1, chunk_count=1, byte_count=2_000_000),
+    )
+    monkeypatch.setattr(cli, "ingest_file", lambda *args, **options: concurrent)
+
+    result = _viewer(FIXTURE)
+
+    assert result.exit_code == 0
+    assert result.stdout == (
+        "revit_quirks.ifc was loaded as model 3 (ARC) by another ingest running at the same "
+        "time; scene built: 1 elements drawn, 0 without shape, 0 openings not drawn, "
+        "1 chunks, 2.0 MB (run 7, skipped)\n"
+    )

@@ -4,6 +4,7 @@ import dataclasses
 from pathlib import Path
 
 import numpy as np
+import pytest
 import raw_builders
 from geometry_model import FLIGHTS, SPACE, SPACE_COPY, WALL, write_measured_model
 from glb_file import read_glb
@@ -75,6 +76,20 @@ def test_a_body_without_a_triangle_is_not_drawn() -> None:
     scene = build_scene([element("beam")], [hollow])
 
     assert (scene.element_count, scene.without_shape_count, scene.chunks) == (0, 1, ())
+
+
+@pytest.mark.parametrize("bad", [np.nan, np.inf, -np.inf])
+def test_a_body_with_a_vertex_that_is_not_finite_is_not_drawn(bad: float) -> None:
+    broken = mesh(gid("beam"), [(0, 0, 0), (1, 0, 0), (0, bad, 1)], [(0, 1, 2)], step_id=2)
+    objects = [element("wall"), element("beam"), SceneObject(gid("room"), "IfcSpace", "space", L1)]
+    room = mesh(gid("room"), [(0, 0, 0), (1, 0, 0), (bad, 1, 1)], [(0, 1, 2)], step_id=3)
+
+    scene = build_scene(objects, [box("wall", x=4.0), broken, room])
+
+    # The rest of the scene is built, its origin from the wall alone.
+    assert (scene.element_count, scene.without_shape_count) == (1, 1)
+    assert scene.origin == (4.0, 0.0, 0.0)
+    assert [names(scene, i) for i in range(len(scene.chunks))] == [["wall"]]
 
 
 def test_parts_are_nested_under_their_aggregate_whose_own_body_is_left_out() -> None:

@@ -31,6 +31,10 @@ with the shape's placement matrix, in numpy. On the nine reference files that is
 times faster than IfcOpenShell's ``use-world-coords``, with the same triangles, so the one
 pass also gives the space plans and, with ``--geometry``, the measures.
 
+Each pass triangulates only the objects the transform keeps: of two that share a GlobalId,
+the first in the transform's order (:func:`kept_by_global_id`). The body of an object it
+skips is then never drawn, planned or measured under the GlobalId of the one it keeps.
+
 This module and ``extract`` are the only ones that touch IfcOpenShell.
 """
 
@@ -88,10 +92,10 @@ def measure_shapes(
     """
     started = time.perf_counter()
     targets = {
-        entity.id(): entity
-        for ifc_class in MEASURED_CLASSES
-        for entity in model.by_type(ifc_class)
+        entity_id: entity
+        for entity_id, entity in kept_by_global_id(model).items()
         if entity.Representation is not None
+        and any(entity.is_a(ifc_class) for ifc_class in MEASURED_CLASSES)
     }
     shapes: list[RawShape] = []
     issues: list[Issue] = []
@@ -124,9 +128,9 @@ def measure_space_plans(
     """
     started = time.perf_counter()
     targets = {
-        entity.id(): entity
-        for entity in model.by_type("IfcSpace")
-        if entity.Representation is not None
+        entity_id: entity
+        for entity_id, entity in kept_by_global_id(model).items()
+        if entity.is_a("IfcSpace") and entity.Representation is not None
     }
     plans: dict[int, RawFootprint] = {}
     if targets:
@@ -167,8 +171,9 @@ def triangulate_scene(
     """Triangulate every element and space once: for the scene, the plans and the measures.
 
     The targets are every ``IfcElement`` with a body, feature elements (openings) left out,
-    and every ``IfcSpace`` with a body. IfcOpenShell cuts the openings out of their hosts,
-    since ``disable-opening-subtractions`` stays off.
+    and every ``IfcSpace`` with a body, of those the transform keeps
+    (:func:`kept_by_global_id`). IfcOpenShell cuts the openings out of their hosts, since
+    ``disable-opening-subtractions`` stays off.
 
     Args:
         model: The open IfcOpenShell file.
@@ -181,9 +186,11 @@ def triangulate_scene(
     """
     started = time.perf_counter()
     targets = {
-        entity.id(): entity
-        for entity in (*model.by_type("IfcElement"), *model.by_type("IfcSpace"))
-        if entity.Representation is not None and not entity.is_a("IfcFeatureElement")
+        entity_id: entity
+        for entity_id, entity in kept_by_global_id(model).items()
+        if (entity.is_a("IfcElement") or entity.is_a("IfcSpace"))
+        and entity.Representation is not None
+        and not entity.is_a("IfcFeatureElement")
     }
     spaces = {entity_id for entity_id, entity in targets.items() if entity.is_a("IfcSpace")}
     measured = {
@@ -225,6 +232,21 @@ def triangulate_scene(
         issues=tuple(issues),
         seconds=time.perf_counter() - started,
     )
+
+
+def kept_by_global_id(model: Entity) -> dict[int, Entity]:
+    """The spatial elements and elements the transform keeps, by STEP id.
+
+    ``extract`` reads the spatial elements, then the elements, each in STEP id order, and
+    the transform keeps the first object of each GlobalId (``transform._accept_objects``).
+    This takes the first entity of each GlobalId in that same order. A malformed GlobalId
+    is kept here and skipped by the transform, so its body is left out later.
+    """
+    kept: dict[str, Entity] = {}
+    for ifc_class in ("IfcSpatialStructureElement", "IfcElement"):
+        for entity in sorted(model.by_type(ifc_class), key=lambda entity: entity.id()):
+            kept.setdefault(str(entity.GlobalId), entity)
+    return {int(entity.id()): entity for entity in kept.values()}
 
 
 def _world_vertices(shape: Any) -> np.ndarray[Any, np.dtype[np.float64]]:
