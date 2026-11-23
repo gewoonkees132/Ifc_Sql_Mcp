@@ -257,7 +257,7 @@ def test_only_positive_integers_are_ids() -> None:
 
 
 def test_global_ids_need_a_model_id_beside_them() -> None:
-    assert selected_ids(["global_id"], [(GLOBAL_ID,)]) == []
+    assert selected_ids(["global_id"], [(GLOBAL_ID,)]) is None
     assert selected_ids(["model_id", "global_id"], [(1, GLOBAL_ID), (2, GLOBAL_ID)]) == [
         Selected(global_ids=((1, GLOBAL_ID), (2, GLOBAL_ID)))
     ]
@@ -277,9 +277,17 @@ def test_a_model_id_that_is_none_selects_nothing(model_id: object) -> None:
     assert selected_ids(["model_id", "global_id"], [(model_id, GLOBAL_ID)]) == [Selected()]
 
 
-def test_columns_without_ids_select_nothing() -> None:
-    assert selected_ids(["model_id", "n"], [(1, 2)]) == []
-    assert selected_ids(["a"], [(1,)]) == []
+def test_rows_without_an_id_column_hold_no_selection_at_all() -> None:
+    """An aggregate is not about objects: the page leaves what it lit as it is."""
+    assert selected_ids(["model_id", "n"], [(1, 2)]) is None
+    assert selected_ids(["a"], [(1,)]) is None
+
+
+def test_an_id_column_without_rows_selects_nothing() -> None:
+    """A query about objects that found none: the page lights nothing."""
+    assert selected_ids(["object_id"], []) == [Selected()]
+    assert selected_ids(["revit_type", "object_ids"], []) == []
+    assert selected_ids(["model_id", "global_id"], []) == [Selected()]
 
 
 def test_a_cell_that_is_no_array_holds_no_ids() -> None:

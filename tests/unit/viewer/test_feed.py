@@ -94,6 +94,27 @@ def test_an_event_is_numbered_labelled_and_summarised(feed: Feed) -> None:
     assert feed.status().received == 1
 
 
+def test_a_query_whose_rows_hold_no_id_column_leaves_the_view_as_it_is(feed: Feed) -> None:
+    """Found live: Claude lit the 23 external walls, then counted them; they stay lit."""
+    call = Call(
+        source=SERVE,
+        n=1,
+        at=datetime(2026, 11, 23, 10, 1, tzinfo=UTC),
+        tool="run_sql",
+        arguments={"max_rows": 100},
+        outcome="ok",
+        seconds=0.01,
+        rows=2,
+        sql="SELECT is_external, count(*) FROM v_element GROUP BY 1",
+    )
+
+    entry = feed.receive(encode(call))
+
+    assert entry is not None
+    assert entry.selection is None
+    assert entry.summary == "run_sql: 54 characters of SQL"
+
+
 def test_a_call_that_failed_clears_the_view_and_says_why(feed: Feed) -> None:
     entry = feed.receive(_payload("find_elements", {"model_id": 99}, outcome="invalid"))
 

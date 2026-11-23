@@ -336,7 +336,7 @@ class _Feed:
         outcome: str,
         seconds: float,
         rows: int | None,
-        selected: Callable[[], list[event.Selected]] | None,
+        selected: Callable[[], list[event.Selected] | None] | None,
     ) -> None:
         """Send the event of one call; log a failure without its payload, and go on."""
         with self._lock:
@@ -380,14 +380,15 @@ class _Calls:
         arguments: dict[str, JsonValue],
         check: Callable[[], None] | None = None,
         sql: str | None = None,
-        ids: Callable[[R], list[event.Selected]] | None = None,
+        ids: Callable[[R], list[event.Selected] | None] | None = None,
         **log_fields: object,
     ) -> CallToolResult:
         """Run ``query`` in a new read-only transaction and return it as the tool result.
 
         ``check`` runs first, without a database: a query it refuses never opens a session.
         With the feed on, the call is then published with its ``arguments`` and ``sql``,
-        and for a call that succeeded the ids that ``ids`` reads from its result.
+        and for a call that succeeded the ids that ``ids`` reads from its result (``None``:
+        the result holds no selection, as a count does not).
         """
         started = time.perf_counter()
         try:
@@ -429,7 +430,7 @@ class _Calls:
         outcome: str,
         started: float,
         rows: int | None,
-        selected: Callable[[], list[event.Selected]] | None,
+        selected: Callable[[], list[event.Selected] | None] | None,
     ) -> None:
         if self.feed is not None:
             seconds = time.perf_counter() - started

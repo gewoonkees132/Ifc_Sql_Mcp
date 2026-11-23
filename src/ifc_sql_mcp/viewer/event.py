@@ -217,7 +217,8 @@ class Call:
         seconds: How long it took.
         rows: What the call's log line counts as its rows, for a call that succeeded.
         sql: ``run_sql``'s query.
-        selected: The ids the result holds, for ``run_sql`` and ``get_element``.
+        selected: The ids the result holds, for ``run_sql`` and ``get_element``; ``None``
+            also for a ``run_sql`` whose rows hold no id column.
     """
 
     source: Source
@@ -300,7 +301,9 @@ def decode(payload: str) -> Event:
         raise EventRejectedError(f"invalid at {where}") from exc
 
 
-def selected_ids(column_names: Sequence[str], rows: Sequence[Sequence[object]]) -> list[Selected]:
+def selected_ids(
+    column_names: Sequence[str], rows: Sequence[Sequence[object]]
+) -> list[Selected] | None:
     """The ids a ``run_sql`` result holds, from its columns' names (ADR 14, decision 4).
 
     In order of precedence:
@@ -312,7 +315,9 @@ def selected_ids(column_names: Sequence[str], rows: Sequence[Sequence[object]]) 
 
     GlobalIds are unique per model only (files A and D share them), hence ``model_id``.
     Values that are not positive integers, or not GlobalIds, are left out; so are rows
-    whose array is NULL. No such column: no ids.
+    whose array is NULL. No such column: ``None``, since the query is not about objects
+    (a count, say), and the page leaves what it lit as it is; an id column that holds
+    none lights nothing.
     """
     names = [name.lower() for name in column_names]
 
@@ -332,7 +337,7 @@ def selected_ids(column_names: Sequence[str], rows: Sequence[Sequence[object]]) 
         at = names.index("object_id")
         return [Selected(object_ids=tuple(_object_ids([row[at] for row in rows])))]
     if "model_id" not in names:
-        return []
+        return None
     model = names.index("model_id")
     if "global_ids" in names:
         at = names.index("global_ids")
@@ -345,7 +350,7 @@ def selected_ids(column_names: Sequence[str], rows: Sequence[Sequence[object]]) 
         at = names.index("global_id")
         pairs = [pair for row in rows for pair in _global_ids(row[model], [row[at]])]
         return [Selected(global_ids=tuple(pairs))]
-    return []
+    return None
 
 
 def _object_ids(values: list[object]) -> list[int]:

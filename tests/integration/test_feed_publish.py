@@ -195,6 +195,26 @@ async def test_run_sql_carries_the_ids_its_columns_name(
     assert published["ids"] == {"groups": groups, "truncated": False}
 
 
+@pytest.mark.parametrize(
+    ("sql", "ids"),
+    [
+        # An aggregate holds no id column: no ids at all, and view leaves the view as it is.
+        ("SELECT ifc_class, count(*) AS n FROM object GROUP BY 1", None),
+        # An id column that found nothing: ids, none of them, and view lights nothing.
+        ("SELECT object_id FROM object WHERE false", {"groups": [], "truncated": False}),
+    ],
+)
+async def test_run_sql_without_an_id_column_carries_no_ids(
+    mcp_engine: Engine, mcp_settings: Settings, sql: str, ids: object
+) -> None:
+    with listening(mcp_settings) as received:
+        async with connect(build_server(mcp_engine, feed=True)) as client:
+            await call(client, "run_sql", sql=sql)
+        [published] = received(count=1)
+
+    assert published["ids"] == ids
+
+
 async def test_run_sql_carries_at_most_500_ids(mcp_engine: Engine, mcp_settings: Settings) -> None:
     sql = (
         "SELECT array_agg(a.object_id ORDER BY a.object_id, b.object_id) AS object_ids "
