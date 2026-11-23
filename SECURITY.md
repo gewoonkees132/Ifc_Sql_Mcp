@@ -2,7 +2,8 @@
 
 This project is a local tool: one user loads IFC files into a PostgreSQL database on
 their own machine and lets an LLM read them through an MCP server that their MCP client
-starts over stdio. This page says what is protected, how, and what is not. The design
+starts over stdio, and looks at them in 3D with `ifc-sql view`, a page served on
+127.0.0.1. This page says what is protected, how, and what is not. The design
 behind it is in [ADR 6](docs/adr/0006-mcp-server.md) and
 [the read-only role](docs/data-model.md#the-read-only-role).
 
@@ -32,7 +33,7 @@ own against PostgreSQL (`tests/integration/test_run_sql.py`):
 
 **The viewer's scenes** (schema `ifc_viewer`, [ADR 14](docs/adr/0014-viewer.md)) are
 derived data: the triangulated bodies of the elements and spaces, as glTF chunks, which
-`ingest --viewer` writes and the coming `ifc-sql view` reads as `ifc_reader`. They hold
+`ingest --viewer` writes and `ifc-sql view` reads as `ifc_reader`. They hold
 nothing the file's model in schema `ifc` does not already say, except the shapes. The
 validator keeps `run_sql` to schema `ifc` anyway, for size: one chunk can be megabytes,
 and a query that read them would fill a result with hex. `ifc_reader` may not write them,
@@ -96,6 +97,56 @@ owner's credentials. Load files from unknown sources only in an isolated environ
 - **Rotating** the reader password: `ALTER ROLE ifc_reader PASSWORD …` as the owner (or
   `\password ifc_reader` in psql), then update `IFC_SQL_READER_PASSWORD` in each client.
 
+### The viewer's port (`ifc-sql view`)
+
+`ifc-sql view` is the only command that listens on a port, and `serve` keeps none
+([ADR 14](docs/adr/0014-viewer.md), decisions 2 and 3; [docs/viewer.md](docs/viewer.md)).
+What the port serves is the scenes, `list_models` and `get_element`: read-only, as
+`ifc_reader`, in read-only transactions with the MCP server's limits. No route writes, and
+no route runs SQL that came from a request: ids reach the database as bind parameters.
+Against the other programs on the computer, and the web pages the browser has open:
+
+- **127.0.0.1 only.** It binds the loopback address, and no setting changes that, so no
+  other machine can reach it.
+- **The Host must name it.** A request is served only when its `Host` is `127.0.0.1:<port>`
+  or `localhost:<port>`; anything else gets 421 before any route runs. A web page whose
+  name an attacker points at 127.0.0.1 (DNS rebinding) sends its own name as the Host, so
+  it reaches nothing.
+- **A token on every data request.** `secrets.token_urlsafe(32)`, new on every start,
+  compared in constant time. It travels in the URL's fragment (`#t=…`), which the browser
+  sends nowhere: not to the server, not in a Referer. The page moves it to
+  `sessionStorage` (per tab and per port) and drops it from the address bar; the
+  browser's own list of visited pages may still hold the first address, which is of no
+  use once `view` stops. The page sends it as `Authorization: Bearer`. Without it, every `/api/` route answers
+  401. `/` and `/static/` hold no data and need none. There is no cookie: cookies are
+  scoped by host, not port, so one would reach every other server on 127.0.0.1.
+- **The token stays out of logs.** It is printed once, on stdout, because the user asked
+  for the address; stderr, the log and the access log (switched off) never carry it, and
+  a test checks stderr.
+- **GET and HEAD only**, and **no CORS headers**: another origin may send a request, but
+  it cannot read the answer, and without the token it gets 401 anyway.
+- **What the page may do.** Every response carries a content security policy that allows
+  scripts only from the server itself plus the page's one inline script, its import map,
+  by its SHA-256; no other origin for anything (`default-src 'none'`, `connect-src
+  'self'`), no framing, no forms, no `<base>`. Also `X-Content-Type-Options: nosniff`
+  and `Referrer-Policy: no-referrer`; the data is `no-store`.
+- **IFC text stays text.** Names and property values come from the file, so the page sets
+  them only as text (`textContent`), never as HTML. A test fails if the page's own
+  JavaScript uses `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`,
+  `srcdoc`, `createContextualFragment`, an `on…` attribute, a `javascript:` URL, `eval`
+  or `new Function`.
+- **three.js is vendored**, release r187, and pinned by `SHA256SUMS`, which a test
+  checks; the page loads nothing from the network.
+
+What it does not protect against:
+
+- **Another program of the same user.** Anything running as you can read the URL from
+  the terminal, or the database directly. With `ifc-sql view` opening the browser, the
+  URL is on the browser's command line for a moment; on a computer shared with other
+  users, start it with `--no-open` and paste the URL.
+- **Anyone with the URL.** Until `view` stops, the URL gives what `list_models` and
+  `get_element` give, for every model in the database. Do not paste it into a chat.
+
 ### The embedded database
 
 With `IFC_SQL_DATA_DIR`, ifc-sql runs PostgreSQL itself, in that folder
@@ -116,7 +167,8 @@ Docker or as a service, with your own passwords (above).
 ### What is not protected
 
 - **No authentication.** The server trusts whoever starts it. It speaks only stdio, to
-  the process that launched it; it has no network transport. Do not put it behind a
+  the process that launched it; it has no network transport. (`ifc-sql view`, above, is
+  a separate command, with a token and no MCP.) Do not put it behind a
   stdio-to-HTTP bridge: that would hand the database to anyone who can reach the port.
 - **One role per cluster.** PostgreSQL roles are cluster-wide, so every database
   migrated on the same server shares `ifc_reader` and its password.

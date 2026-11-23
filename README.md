@@ -5,7 +5,7 @@
 A data pipeline that loads building models exported from Autodesk Revit as IFC files into
 a normalised PostgreSQL database, checks their data quality against a catalogue of
 rules, and lets an LLM query them through an [MCP](https://modelcontextprotocol.io)
-server, read-only.
+server, read-only. `ifc-sql view` shows the models in 3D in your browser.
 
 ```mermaid
 flowchart LR
@@ -16,6 +16,8 @@ flowchart LR
     db <--> dq["ifc-sql dq<br/>45 rules, recorded runs"]
     db --> mcp["ifc-sql serve<br/>MCP over stdio, read-only role"]
     mcp --> llm["MCP client<br/>Claude Desktop, Claude Code"]
+    db --> view["ifc-sql view<br/>3D on 127.0.0.1, read-only role"]
+    view --> page["the page in your browser<br/>three.js, vendored"]
 ```
 
 Revit's IFC exports are valid but awkward: one building comes in three unit systems,
@@ -38,6 +40,7 @@ make install       # .venv from uv.lock, plus the pre-commit hooks
 make up            # PostgreSQL 16 in Docker, bound to 127.0.0.1
 make dq-samples    # download the four sample files, migrate, load and check them
 make smoke         # start the MCP server as a client would and call a few tools
+make view          # look at the four models in 3D in your browser (Ctrl+C stops it)
 ```
 
 Without Docker, for one user, skip `make up`: with `IFC_SQL_DATA_DIR` set, the commands
@@ -47,14 +50,13 @@ exits ([ADR 13](docs/adr/0013-embedded-postgresql.md); it takes no passwords, so
 
 ```bash
 export IFC_SQL_DATA_DIR=~/.local/share/ifc-sql
-make install dq-samples smoke
+make install dq-samples smoke view
 ```
 
 `make dq-samples` downloads the buildingSMART Duplex Apartment models (CC BY 4.0,
 checksum-verified, not stored in this repository), then loads and checks them. It loads
 them with `ingest --viewer`, which also builds each model's 3D scene for the viewer
-([ADR 14](docs/adr/0014-viewer.md); the page itself is not built yet). On an empty
-database:
+([ADR 14](docs/adr/0014-viewer.md)). On an empty database:
 
 ```
 loaded Duplex_A_20110907.ifc as model 1 (ARC): 295 objects, 13,545 property values, 0 issues (run 1); scene built: 218 elements drawn, 0 without shape, 50 openings not drawn, 7 chunks, 0.5 MB
@@ -82,6 +84,13 @@ list_models: 4 models
   model 2 MEP Duplex_MEP_20110907.ifc: elements 926, spaces 42; dq run 2: 0 error, 30,035 warning, 1,961 info
   …
 ```
+
+`make view` (`uv run ifc-sql view`) then shows the four disciplines together in your
+browser, storey by storey, with an element's properties on a click
+([docs/viewer.md](docs/viewer.md)). It listens on 127.0.0.1 only, and the address it
+prints carries a token, new on every start, that the page needs:
+
+![The four Duplex models in ifc-sql view, Roof hidden, a ceiling clicked and its details open](docs/images/viewer-duplex.png)
 
 To give Claude Code the server (the full instructions, also for Claude Desktop, are in
 [docs/mcp.md](docs/mcp.md#registering-it-with-a-client)):
@@ -168,6 +177,12 @@ that were rejected.
   layers, each tested on its own against PostgreSQL: a sqlglot validator with a function
   allowlist, a cursor that PostgreSQL accepts only for one SELECT, a read-only
   transaction with timeouts, and the role's privileges.
+- **Viewer** ([ADR 14](docs/adr/0014-viewer.md), [docs/viewer.md](docs/viewer.md)):
+  `ingest --viewer` triangulates every element and space with IfcOpenShell and stores
+  the scene as glTF chunks per storey in schema `ifc_viewer`. `ifc-sql view` serves them
+  on 127.0.0.1 to a page of plain ES modules with three.js, which draws each chunk as two
+  BatchedMeshes: file B's 11,297 elements in 76 draw calls. The port answers only its own
+  Host, every data route needs the start's token, and the page sets IFC text only as text.
 
 ### Asking through MCP
 
@@ -195,7 +210,7 @@ DELETE statement`.
 
 ## Quality
 
-- **Tests**: 1,174 unit and integration tests at 100 % branch coverage, plus 148 on the
+- **Tests**: 1,389 unit and integration tests at 100 % branch coverage, plus 148 on the
   real files: the four Duplex models (`make test-samples`) and the audit's five Revit
   2019–2022 exports, whose acceptance tests pin every audit and re-check finding
   (`make test-modern`, [docs/audit/](docs/audit/2026-11-implementation.md)). Integration tests run against real
@@ -206,7 +221,8 @@ DELETE statement`.
   pytest with warnings as errors, run by `make check` and by
   [CI](.github/workflows/ci.yml) on GitHub Actions with a PostgreSQL 16 service. A
   Windows job runs [the Windows quick start](docs/windows.md) on the embedded database on
-  every push. ruff and mypy also run as pre-commit hooks.
+  every push, and fetches a chunk of a scene from `ifc-sql view` there. ruff and mypy
+  also run as pre-commit hooks.
 - **Reproducible**: dependencies locked in `uv.lock`, CI actions pinned to commit SHAs,
   sample files pinned to an upstream commit and verified by SHA-256.
 
@@ -214,13 +230,14 @@ DELETE statement`.
 
 ```
 src/ifc_sql_mcp/
-  cli.py                 ifc-sql: migrate, ingest, dq, watch, serve
+  cli.py                 ifc-sql: migrate, ingest, dq, watch, serve, view
   config.py              settings from IFC_SQL_* environment variables
   logging_config.py      key=value logs on stderr (stdout is the MCP protocol)
   watch.py               ifc-sql watch: load and check each export saved to a folder
   db/                    schema.py, engines, embedded PostgreSQL, migrations 0001-0020, view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
-  viewer/                the 3D scenes of ingest --viewer: chunks per storey, a GLB writer
+  viewer/                3D scenes (ingest --viewer) and ifc-sql view: its app, its port's
+                         checks, and the page in static/, three.js vendored
   dq/                    rule catalogue, sync, runs
   rules/dq_rules.yaml    the 45 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema description
@@ -231,7 +248,7 @@ tests/
   modern/                the audit's Revit 2019-2022 exports (pytest -m modern)
   fixtures/              a synthetic Revit-style IFC file and the script that writes it
   support/               helpers the suites share: sample files, an MCP client, builders
-scripts/                 sample downloads, quirks report, load benchmark, MCP smoke test
+scripts/                 sample downloads, quirks report, load benchmark, MCP and view smoke tests
 docs/                    data model, Revit quirks, data quality, MCP server, ADRs, audit
 ```
 
@@ -243,13 +260,14 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
+| [docs/viewer.md](docs/viewer.md) | `ifc-sql view`: starting it, what the page shows, its routes, the frames per second on file B, and upgrading three.js |
 | [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
-| [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder; CI runs it on Windows |
+| [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder and `ifc-sql view`; CI runs it on Windows |
 | [docs/adr/](docs/adr/README.md) | Fourteen architecture decision records; the fourteenth, the viewer, a draft |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-recheck.md](docs/audit/2026-11-recheck.md) | The audit's workflow repeated on the fixed tool, and the four findings it made (R1–R4) |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog and the re-check's findings were implemented: per finding, the issue, the commits and the figures before and after |
-| [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials |
+| [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials, the viewer's port |
 
 `make help` lists every target.
 
@@ -270,10 +288,14 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 - A changed file is a new model version. `--replaces` marks the current one, and
   `compare_models` lists what changed between two; versions are not merged, and old data
   quality runs are kept until deleted.
-- The MCP server is for one local user: stdio only, no authentication
-  ([SECURITY.md](SECURITY.md)).
+- The MCP server is for one local user: stdio only, no authentication. `ifc-sql view`
+  listens on 127.0.0.1 only, behind a token ([SECURITY.md](SECURITY.md)).
+- The viewer shows the models, not yet what the MCP server's calls found: that is the
+  next phase of [its plan](docs/plans/2026-11-ifc-viewer.md).
 
 ## Licences
 
-Code: [MIT](LICENSE). Sample data: buildingSMART International, CC BY 4.0, used
+Code: [MIT](LICENSE). [three.js](https://threejs.org) r187, vendored in
+`src/ifc_sql_mcp/viewer/static/vendor/three/` for the viewer's page: MIT, its
+[licence](src/ifc_sql_mcp/viewer/static/vendor/three/LICENSE) beside it. Sample data: buildingSMART International, CC BY 4.0, used
 unmodified and downloaded on demand; see [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md).
