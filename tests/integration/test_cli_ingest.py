@@ -165,6 +165,24 @@ def test_a_project_given_at_ingest_and_a_new_version_that_replaces_the_old(
     assert _models(database) == [(1, "tower", "tower", None, False), (2, "tower", "tower", 1, True)]
 
 
+def test_a_new_version_loaded_again_with_the_same_replaces_is_skipped_as_any_repeat(
+    database: Engine, tmp_path: Path
+) -> None:
+    """scripts/demo.py --script audit runs `ingest D --replaces A` on every run."""
+    _ingest(FIXTURE)
+    week_2 = _variant(tmp_path, "week_2.ifc", "0042", "Fixture House 2")
+    command = ["ingest", str(week_2), "--discipline", "ARC", "--replaces", "1"]
+    CliRunner().invoke(cli.app, command)
+    before = _models(database)
+
+    again = CliRunner().invoke(cli.app, command)
+
+    assert again.exit_code == 0, again.output
+    assert again.stdout.startswith("week_2.ifc is already loaded as model 2 (ARC); nothing written")
+    assert "warning:" not in again.stderr
+    assert _models(database) == before
+
+
 @pytest.mark.parametrize(
     ("arguments", "message"),
     [
