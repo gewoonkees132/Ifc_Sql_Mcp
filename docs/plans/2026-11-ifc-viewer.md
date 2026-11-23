@@ -1001,7 +1001,29 @@ otherwise. The user decided the first and the last:
 - The positions' buffer view has a `byteStride` of 12, which glTF requires when several
   accessors share a view. With the own vertices of P6, the chunks are 0.0 to 2.9 % larger
   than Phase 0's sketch (file B 1.4 %).
-- An ingest that loses the race to load a file builds no scene; running it again builds
-  the scene in place.
+- An ingest that loses the race to load a file stores its scene for the winner's model,
+  which holds the same records (after the review below; before, it built none).
 - `uv run alembic downgrade 0019` needs `IFC_SQL_DATABASE_URL`: the plain `alembic`
   command does not start the embedded database.
+
+**The review of PR 1** found eight defects; each is fixed, with a test that failed before:
+
+- A triangulation that raises no longer fails the ingest: `read_model` records it in
+  `RawModel.scene_error` and falls back to the two passes of an ingest without
+  `--viewer`; the scene is reported failed, and the model loads.
+- The loser of the race to load a file stores its scene for the winner's model. The test
+  loads the file's real records in the other transaction.
+- A mesh with a NaN or infinite vertex is left out, and its element counts as without
+  shape, instead of failing the whole scene.
+- Of two objects that share a GlobalId, only the one the transform keeps is triangulated,
+  in the transform's order (`geometry.kept_by_global_id`). The same rule serves the plans
+  and the measures with or without `--viewer`: plain `--geometry` used to measure both
+  objects, whose second area and volume broke `ifc.quantity`'s key and failed the load.
+- The summary after a race says "scene built" without "nothing written".
+- `--geometry --viewer` on a model already measured but without a scene warns again that
+  `--geometry` was not applied.
+- `scene.built_at` is written with `clock_timestamp()`, as `_finish_run` writes
+  `finished_at`.
+- `tests/modern` loads A and B with plain `--geometry` again (`measured`), and every
+  audit file's scene into a database of its own (`scenes`); A5's figures are pinned on
+  both, so the two ways of measuring agree. It costs one more pass over file B.

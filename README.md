@@ -195,7 +195,7 @@ DELETE statement`.
 
 ## Quality
 
-- **Tests**: 1,087 unit and integration tests at 100 % branch coverage, plus 130 on the
+- **Tests**: 1,174 unit and integration tests at 100 % branch coverage, plus 148 on the
   real files: the four Duplex models (`make test-samples`) and the audit's five Revit
   2019–2022 exports, whose acceptance tests pin every audit and re-check finding
   (`make test-modern`, [docs/audit/](docs/audit/2026-11-implementation.md)). Integration tests run against real

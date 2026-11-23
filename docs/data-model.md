@@ -602,7 +602,8 @@ the geometry is made while the file is open. Migration 0020 creates the schema.
 - **drawn** (`element_count`): every element with a body of its own, and every aggregate
   drawn through its parts. A stair whose flights have the bodies is a node with the
   flights as children; an aggregate's own body is left out when its parts are drawn.
-- **without shape**: the elements that are neither (no body IfcOpenShell triangulates).
+- **without shape**: the elements that are neither (no body IfcOpenShell triangulates,
+  or one with a NaN or infinite vertex).
 - **openings**: the feature elements, never drawn, because IfcOpenShell cuts them out of
   the elements they belong to.
 
@@ -627,8 +628,10 @@ not list them, so an LLM never pulls geometry through the MCP server.
 **In place.** On a file already loaded, `ingest --viewer` builds its scene into the same
 model and records the usual `skipped` run; nothing in schema `ifc` changes. With
 `--geometry` too, one triangulation serves both (ADR 14, P1). A scene that fails writes
-nothing; the model stays loaded and the command exits 1. To remove the scenes,
-`uv run alembic downgrade 0019` drops the schema.
+nothing; the model stays loaded and the command exits 1. If the triangulation itself
+fails, the plans and measures come from the two passes of an ingest without `--viewer`.
+An ingest that loses the race to load a file stores its scene for the model that won. To
+remove the scenes, `uv run alembic downgrade 0019` drops the schema.
 
 ## The read-only role
 

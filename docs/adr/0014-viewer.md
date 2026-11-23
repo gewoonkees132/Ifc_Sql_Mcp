@@ -198,7 +198,11 @@ derived from the file and can be rebuilt at any time:
 cuts the openings out of their hosts (`disable-opening-subtractions` stays off). Every
 `IfcSpace` with a body too, in chunks the page shows only when a selection holds one: the
 rooms in `spaces`, a space that repeats a room (`spatial_element.repeats_id`) in
-`space_copies`, and Revit area plans (category `Areas`) in `areas`.
+`space_copies`, and Revit area plans (category `Areas`) in `areas`. Of two objects that
+share a GlobalId, only the one the transform keeps is triangulated (the first spatial
+element, else the first element, by STEP id), so the other's body is never drawn under
+its GlobalId. The plans and the measures follow the same rule, with or without
+`--viewer`.
 
 **Aggregates.** When an element aggregates parts that are drawn (`IfcRelAggregates`), the
 parts' nodes are children of the aggregate's node, and the aggregate's own body, if any,
@@ -209,7 +213,8 @@ files has a body of its own; the synthetic fixture tests the rule.
 
 - drawn: the elements with a body of their own, and the aggregates drawn through their
   parts;
-- without shape: the elements that are neither;
+- without shape: the elements that are neither, among them those whose body has a NaN or
+  infinite vertex, which would otherwise fail the whole scene;
 - openings: the feature elements, never drawn.
 
 **Format: glTF 2.0 binary**, written by our own pure module, `viewer/glb.py`:
@@ -238,12 +243,17 @@ the lowest; within a storey the elements come by GlobalId.
   moves the vertices to world coordinates with the placement matrix, and gives the space
   plans and, with `--geometry`, the measures from the same shapes.
 - The scene is written after the load commits, in a transaction of its own that locks the
-  model row. Of two builds at once, the second finds the first's scene and keeps it.
+  model row. Of two builds at once, the second finds the first's scene and keeps it. An
+  ingest that loses the race to load the file stores its scene for the winner's model,
+  which holds the same records. `built_at` is `clock_timestamp()` when the scene is
+  written, after the wait for the lock, not the transaction's start.
 - On a file already loaded, `--viewer` builds the scene in place, as ADR 12 measures in
   place. The run is the skipped run every repeat records; nothing of the model is written.
 - A scene of the current `format_version` is kept, and the summary says so; an older one
   is replaced when `ingest --viewer` runs on its file. Nothing rebuilds a scene on its own.
-- A scene that fails writes nothing and exits 1; the model stays loaded.
+- A scene that fails writes nothing and exits 1; the model stays loaded. When the
+  triangulation itself raises, the space plans and the measures come from the two passes
+  of an ingest without `--viewer`.
 - `watch --viewer` passes the flag on.
 
 **Not an ingestion run, and no data quality rule.** A scene writes nothing to schema
