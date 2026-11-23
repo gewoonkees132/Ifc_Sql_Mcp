@@ -13,7 +13,9 @@ route, of Starlette's own error pages too:
   :func:`new_token` on every start, compared in constant time. The page gets it from the
   URL's fragment, which no request, log or Referer carries. ``/`` and ``/static/`` hold
   no data and need none. There is no cookie: cookies are scoped by host, not by port, so
-  one would reach every other server on 127.0.0.1.
+  one would reach every other server on 127.0.0.1. :data:`EVENTS_PATH` alone also takes
+  it as ``?t=``: the browser's ``EventSource`` cannot send a header. That request is no
+  navigation, so it reaches neither the history nor a Referer, and the access log is off.
 * **Headers** on every response: the content security policy of
   :func:`content_security_policy`, ``nosniff`` and ``no-referrer``. The routes set
   ``Cache-Control`` themselves. There are no CORS headers, so no other origin may read a
@@ -26,6 +28,7 @@ import hmac
 import json
 import re
 import secrets
+from urllib.parse import parse_qs
 
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -35,6 +38,9 @@ TOKEN_BYTES = 32
 
 API_PREFIX = "/api/"
 """The routes that hold data, and so need the token."""
+
+EVENTS_PATH = "/api/events"
+"""The feed's event stream: the one route that takes the token as ``?t=`` too."""
 
 METHODS = ("GET", "HEAD")
 
@@ -139,7 +145,7 @@ class Security:
             return 421, "this server answers only to 127.0.0.1 and localhost on its port", []
         if scope["method"] not in METHODS:
             return 405, "only GET and HEAD are allowed", [(b"allow", b"GET, HEAD")]
-        if scope["path"].startswith(API_PREFIX) and not self._authorised(headers):
+        if scope["path"].startswith(API_PREFIX) and not self._authorised(headers, scope):
             return (
                 401,
                 "the token is missing or wrong: open the URL that ifc-sql view printed",
@@ -147,9 +153,12 @@ class Security:
             )
         return None
 
-    def _authorised(self, headers: Headers) -> bool:
+    def _authorised(self, headers: Headers, scope: Scope) -> bool:
         scheme, _, credentials = headers.get("authorization", "").partition(" ")
-        # Header values arrive as latin-1, which encodes back to the bytes that were sent.
-        return scheme.lower() == "bearer" and hmac.compare_digest(
-            credentials.encode("latin-1"), self._token
-        )
+        if scheme.lower() == "bearer":
+            # Header values arrive as latin-1, which encodes back to the bytes that were sent.
+            return hmac.compare_digest(credentials.encode("latin-1"), self._token)
+        if scope["path"] != EVENTS_PATH:
+            return False
+        given = parse_qs(scope["query_string"].decode("latin-1")).get("t", [])
+        return len(given) == 1 and hmac.compare_digest(given[0].encode("utf-8"), self._token)

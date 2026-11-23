@@ -13,13 +13,18 @@ Route                                                   Returns
                                                         and chunks.
 ``GET /api/models/{id}/scene/{chunk_no}.glb``           One chunk, as ``model/gltf-binary``.
 ``GET /api/models/{id}/objects/{global_id}``            ``tools.get_element``, clipped as usual.
+``GET /api/feed``                                       The feed: its status and the calls kept.
+``GET /api/events``                                     The same as server-sent events, as they
+                                                        arrive; ``Last-Event-ID`` resumes.
 ======================================================  =========================================
 
 Every ``/api/`` route reads through ``engine``, which connects as ``ifc_reader``, in a
 :func:`~ifc_sql_mcp.db.engine.reader_transaction` with the MCP server's limits. The work
-runs in a thread, at most :data:`SESSIONS` at once: ``ifc_reader`` allows 20 sessions,
-shared with every MCP call on the cluster. No route runs SQL that a request brought; ids
-arrive as path parameters and reach SQL as bind parameters.
+runs in a thread, through one :class:`~ifc_sql_mcp.viewer.reading.Reader` with the
+feed's selections: at most :data:`~ifc_sql_mcp.viewer.reading.SESSIONS` sessions at once,
+since ``ifc_reader`` allows 20, shared with every MCP call on the cluster. No route runs
+SQL that a request or an event brought; ids arrive as path parameters and reach SQL as
+bind parameters. The feed's routes read only memory: the calls the listener received.
 
 The page's files are read once, when the app is made, and served from memory with their
 media types named here: Windows can map ``.js`` to ``text/plain`` in its registry, which
@@ -29,7 +34,7 @@ media types named here: Windows can map ``.js`` to ``text/plain`` in its registr
 import hashlib
 import logging
 import re
-from collections.abc import Callable, Container, Sequence
+from collections.abc import AsyncIterator, Callable, Container, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -39,17 +44,20 @@ import anyio.to_thread
 from pydantic import BaseModel, Field
 from sqlalchemy import Connection, Engine, RowMapping, text
 from sqlalchemy.exc import DBAPIError
+from sse_starlette import EventSourceResponse, ServerSentEvent
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from ifc_sql_mcp.db.engine import describe_error, reader_transaction
+from ifc_sql_mcp.db.engine import describe_error
 from ifc_sql_mcp.db.schema import GLOBAL_ID_PATTERN
 from ifc_sql_mcp.server import tools
 from ifc_sql_mcp.server.app import Limits
 from ifc_sql_mcp.server.tools import IfcText
-from ifc_sql_mcp.viewer.security import Security, content_security_policy
+from ifc_sql_mcp.viewer.feed import Entry, Feed, Status
+from ifc_sql_mcp.viewer.reading import SESSIONS, Reader
+from ifc_sql_mcp.viewer.security import EVENTS_PATH, Security, content_security_policy
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +76,21 @@ MEDIA_TYPES = {
 
 GLB_MEDIA_TYPE = "model/gltf-binary"
 
-SESSIONS = 3
-"""Database sessions the routes hold at most at once."""
+POLL_SECONDS = 0.2
+"""How often an open event stream looks for new calls in the feed."""
+
+PING_SECONDS = 15
+"""A comment line on an idle stream this often, so that nothing between closes it."""
+
+NO_FEED = Status(
+    state="off",
+    database=None,
+    since=None,
+    message="this view has no feed",
+    received=0,
+    dropped={},
+    demo=False,
+)
 
 _GLOBAL_ID = re.compile(GLOBAL_ID_PATTERN)
 _PLAIN_FILE_NAME = re.compile(r"[\w.\-]+")
@@ -121,6 +142,13 @@ class Catalogue(BaseModel):
         description="The current models by project, the newest model's with a scene first."
     )
     shown: ModelSet
+
+
+class FeedSnapshot(BaseModel):
+    """``GET /api/feed``: the listener's status and the calls kept, oldest first."""
+
+    status: Status
+    entries: list[Entry]
 
 
 class Chunk(BaseModel):
@@ -315,15 +343,15 @@ class _Viewer:
 
     def __init__(
         self,
-        engine: Engine,
-        limits: Limits,
+        reader: Reader,
         page: str,
         *,
         project: str | None,
         model_ids: Sequence[int],
+        feed: Feed | None,
     ) -> None:
-        self.engine = engine
-        self.limits = limits
+        self.reader = reader
+        self.feed = feed
         self.project = project
         self.model_ids = tuple(model_ids)
         self.limiter = anyio.CapacityLimiter(SESSIONS)
@@ -394,18 +422,46 @@ class _Viewer:
 
         return await self._read(work)
 
+    # ----------------------------------------------------------------- the feed
+
+    async def feed_snapshot(self, request: Request) -> Response:
+        if self.feed is None:
+            return _json(FeedSnapshot(status=NO_FEED, entries=[]))
+        return _json(FeedSnapshot(status=self.feed.status(), entries=self.feed.entries()))
+
+    async def events(self, request: Request) -> Response:
+        """The feed as server-sent events: ``status`` when it changes, ``call`` per call.
+
+        A stream begins with the status and every call kept, or, when the browser comes
+        back with ``Last-Event-ID``, with the calls after that one.
+        """
+        last = request.headers.get("last-event-id", "")
+        after = int(last) if last.isdecimal() and len(last) < 10 else 0
+        return EventSourceResponse(self._stream(after), ping=PING_SECONDS)
+
+    async def _stream(self, after: int) -> AsyncIterator[ServerSentEvent]:
+        sent: Status | None = None
+        while True:
+            status = NO_FEED if self.feed is None else self.feed.status()
+            if status != sent:
+                yield ServerSentEvent(status.model_dump_json(), event="status")
+                sent = status
+            for entry in [] if self.feed is None else self.feed.entries(after):
+                yield ServerSentEvent(entry.model_dump_json(), event="call", id=str(entry.id))
+                after = entry.id
+            if self.feed is None or self.feed.closed:
+                return
+            await anyio.sleep(POLL_SECONDS)
+
+    # ----------------------------------------------------------------- reading
+
     async def _read(self, work: Callable[[Connection], Response]) -> Response:
         """Run ``work`` in a thread, in a new read-only transaction, as ``ifc_reader``."""
         return await anyio.to_thread.run_sync(self._transaction, work, limiter=self.limiter)
 
     def _transaction(self, work: Callable[[Connection], Response]) -> Response:
         try:
-            with reader_transaction(
-                self.engine,
-                statement_timeout_ms=self.limits.statement_timeout_ms,
-                lock_timeout_ms=self.limits.lock_timeout_ms,
-            ) as connection:
-                return work(connection)
+            return self.reader.read(work)
         except (NotFoundError, tools.ToolInputError) as exc:
             return _error(404, str(exc))
         except DBAPIError as exc:
@@ -478,6 +534,8 @@ def create_app(
     project: str | None = None,
     model_ids: Sequence[int] = (),
     limits: Limits | None = None,
+    feed: Feed | None = None,
+    reader: Reader | None = None,
 ) -> Security:
     """Return the viewer's app, guarded by :class:`~ifc_sql_mcp.viewer.security.Security`.
 
@@ -488,6 +546,9 @@ def create_app(
         project: The project the page shows first, from ``--project``.
         model_ids: The models the page shows first, from ``--model``; before ``project``.
         limits: The limits of each request's transaction; by default the MCP server's.
+        feed: The calls the listener receives; without one the page says it has none.
+        reader: How to read, shared with ``feed``'s selections so that both together
+            hold at most three sessions; by default a new one on ``engine``.
 
     Returns:
         The ASGI app. Its ``app`` is the Starlette app, whose ``routes`` are the table
@@ -496,7 +557,13 @@ def create_app(
     # The browser hashes the import map after turning CRLF into LF, as git on Windows may
     # have written the file; so the page is served, and hashed, with LF.
     page = (STATIC / PAGE).read_text(encoding="utf-8").replace("\r\n", "\n")
-    viewer = _Viewer(engine, limits or Limits(), page, project=project, model_ids=model_ids)
+    viewer = _Viewer(
+        reader or Reader(engine, limits),
+        page,
+        project=project,
+        model_ids=model_ids,
+        feed=feed,
+    )
     routes = [
         Route("/", viewer.index, methods=["GET"]),
         Route("/static/{path:path}", viewer.static, methods=["GET"]),
@@ -504,6 +571,8 @@ def create_app(
         Route("/api/models/{model_id:int}/scene", viewer.scene, methods=["GET"]),
         Route("/api/models/{model_id:int}/scene/{chunk_no:int}.glb", viewer.chunk, methods=["GET"]),
         Route("/api/models/{model_id:int}/objects/{global_id}", viewer.element, methods=["GET"]),
+        Route("/api/feed", viewer.feed_snapshot, methods=["GET"]),
+        Route(EVENTS_PATH, viewer.events, methods=["GET"]),
     ]
     return Security(
         Starlette(routes=routes),
