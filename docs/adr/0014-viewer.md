@@ -2,10 +2,12 @@
 
 - Status: accepted. It holds the Phase 0 spike's findings, decision 1 (Phase 1: scenes
   in the pipeline), decisions 2, 3 and 6 (Phase 2: `ifc-sql view` and the page) and
-  decisions 4 and 5 (Phase 3: the feed and the scripted demo). Decision 7, the static
-  demo on GitHub Pages, is recorded with Phase 5 of
-  [the plan](../plans/2026-11-ifc-viewer.md).
-- Date: 2026-11-22; accepted 2026-11-23
+  decisions 4 and 5 (Phase 3: the feed and the scripted demo). Phase 4 added the audit's
+  script to decision 5; the colours of a fixed kind, and a `run_sql` with no id column
+  among the calls that light nothing by nature, to decision 4; and the page following the
+  calls to decision 6. Decision 7, the static demo on GitHub Pages, is recorded with
+  Phase 5 of [the plan](../plans/2026-11-ifc-viewer.md).
+- Date: 2026-11-22; accepted 2026-11-23; Phase 4's additions 2026-11-23
 - Amends: [ADR 1](0001-postgresql.md) (a second schema, `ifc_viewer`);
   [ADR 6](0006-mcp-server.md) decisions 2 and 10 (the feed's notification, decision 4);
   [ADR 13](0013-embedded-postgresql.md) decision 3 (`view` and `demo` attach to the
@@ -392,7 +394,10 @@ clipped to 1,821 characters. The plan's "500 ids fit in about 4 KB" was an estim
 `array_agg` the client got as clipped text still gives its ids: an `object_id` column,
 an `object_ids` array column (a group per row, labelled by its first column), or
 `global_id` or `global_ids` beside `model_id`. With the feed on, `run_sql`'s description
-gains one sentence that says so.
+gains one sentence that says so. Rows with no such column carry no ids at all (Phase 4):
+the query is a count or a sum, not a choice of objects, so it lights nothing by nature,
+as `list_models` does, and the page keeps what the previous call lit. An id column with
+no rows carries ids, none of them: the query found no object, and the page lights none.
 
 **Listening, in `view`** (`viewer/listener.py`): a plain psycopg connection as
 `ifc_reader`, autocommit, `LISTEN ifc_viewer_feed`, in a thread that waits a second at a
@@ -425,11 +430,16 @@ quality report):
 | `schedule` | The same elements, by the schedule's groups, in its order (`_schedule_elements`, `_schedule_groups`). |
 | `quantity_takeoff` | By storey, class or Revit type: each group's elements, by the takeoff's own grouping; openings unless `include_openings`. By material: nothing, and why. |
 | `get_element` | Its object; the page moves the camera to it. |
-| `space_schedule` | Rooms, their copies (`duplicate_of`) and Revit Areas, as `v_space_schedule` marks them. |
+| `space_schedule` | Rooms, their copies (`duplicate_of`) and Revit Areas, as `v_space_schedule` marks them, each kind in its own colour. |
 | `data_quality_report` | The objects with a finding of the latest run that pass the report's filters: one group per rule asked for, else per worst severity. |
-| `compare_models` | The newer model's objects added, and those whose properties changed, by the comparison's own queries; removed ones counted. |
-| `run_sql` | The objects among the event's ids that are loaded. |
+| `compare_models` | The newer model's objects added, and those whose properties changed, by the comparison's own queries, each kind in its own colour; removed ones counted. |
+| `run_sql` | The objects among the event's ids that are loaded. Rows with no id column (a count): nothing, and the page leaves the view as it is (Phase 4). |
 | `list_models`, `list_storeys`, `describe_schema` | Nothing: the page leaves the view as it is. |
+
+A group's colour is its place in the selection, except where the groups are fixed kinds
+(Phase 4): the rooms, copies and Areas of a space schedule, and the added and changed
+objects of a comparison, keep the place of their kind, so file E's Areas are the third
+colour, as file C's would be, though E has no copies of rooms.
 
 Besides its groups, a selection says how many objects are openings (never drawn), not
 drawn at all (storeys), or spaces; which chunk kinds of spaces must show; and the storey,
@@ -443,7 +453,7 @@ with the feed on one more after it, never both at once. `tests/samples` samples
 
 ### 5. The scripted demo
 
-`ifc-sql demo [--script duplex] [--step | --pause SECONDS] [--check] [--port N]
+`ifc-sql demo [--script duplex|audit] [--step | --pause SECONDS] [--check] [--port N]
 [--no-open]` plays a script of questions through the real MCP server, with no LLM and no
 client of the user's: it is the client. It starts `ifc-sql serve` over stdio with the
 SDK's client, as `scripts/mcp_smoke.py` does, with `IFC_SQL_VIEWER_FEED=1`, listens as
@@ -474,12 +484,30 @@ external walls by type, 12, 4, 4 and 3, from the README's query with `array_agg(
 AS object_ids`; the door schedule, 14 doors in 4 types (6, 4, 2, 2) whose fire rating is
 the placeholder `'Fire Rating'`; the 21 ARC rooms, 422.0 m²; the MEP model's 42 spaces,
 21 of them copies of rooms; the 78 elements without a fire rating; one wall in full; and
-a refused write. The audit's script is Phase 4's.
+a refused write.
+
+**The audit's script** (Phase 4), four steps, each pinned by
+`tests/modern/test_audit_demo.py` on the `modern` tests' database: file C's room schedule,
+163 spaces with 75 copies of rooms (8,090.7 m² with them, 4,721.4 m² without), lit as 88
+and 75; file E's, whose 25 Revit Areas of 22,905.9 m² light in the third colour beside 282
+rooms; file B's doors on `XX_AR_L01`, 159 in 6 types (77, 25, 21, 15, 14, 7), the storeys
+above hidden; and `compare_models` on file D, whose fire ratings were added to 42 walls
+and 9 curtain walls and whose 4 openings Revit gave new GlobalIds: it lights 4 added and
+51 changed, and the 4 added are openings, never drawn. The script names B, C, D and E:
+file A is the model D replaces (`--replaces`), and `compare_models` compares D with it
+when `old_model_id` is left out, so the demo, which finds only current models, never
+looks for it. It is local only: B and E are of uncertain provenance and none of the five
+is published, so CI does not play it; the `modern` tests do.
 
 **`scripts/demo.py`** is the one command for a fresh clone, on any OS: it downloads the
 Duplex, migrates, loads the four files with `--viewer` (building a scene in place for a
 file already loaded), runs `ifc-sql dq`, and runs `ifc-sql demo` with its own options.
-`make demo` calls it; `make ingest-samples` already passes `--viewer`.
+`make demo` calls it; `make ingest-samples` already passes `--viewer`. With `--script
+audit` (`make demo-audit`) it downloads the audit's five files instead and loads them in
+the audit's order, A to E, D with `--replaces` and the model id A's ingest printed. Run
+again, `ingest D --replaces A` is a repeat like any other: a file already loaded as the
+model that replaces A changes nothing and warns of nothing, where it used to exit 2
+because A "is already replaced".
 
 ### 6. The page
 
@@ -514,6 +542,14 @@ file already loaded), runs `ifc-sql dq`, and runs `ifc-sql demo` with its own op
   a one-storey selection are hidden, with "Level 2, Roof hidden · show all". The caption
   says who asked, what, the counts and the legend; the server words them, the page counts
   what it could draw.
+- **The page follows the calls** (Phase 4). A call whose selection lies wholly outside
+  the models shown shows the project of its first model, as the picker lists it (a
+  replaced model, alone), and then lights it; the picker follows. A model loaded since the
+  page opened is found by asking `/api/models` again. A selection partly in the models
+  shown lights in place, and the caption names the models not shown, as before. The demo
+  opens on the models its script names first (`Script.shown_first`): the Duplex's four,
+  as in Phase 3, or file C for the audit's script, whose four steps are about four
+  buildings of four projects. A live client asking about another project gets the same.
 
 **Measured** ([viewer.md](../viewer.md#measured)), on the Phase 0 machine with Microsoft
 Edge 158 and r187: file B (28 chunks, 12,774 primitives) is drawn 0.93 s after the page
@@ -599,3 +635,31 @@ Decisions 4 and 5 rejected:
 - **Finding the demo's models by id.** Ids depend on the order of loading; SHA-256 does not.
 - **A demo through a real LLM in CI.** It would need a key, cost money and answer
   differently from run to run; the script is the same every time.
+
+Phase 4 rejected, for the audit's script and the page:
+
+- **Teaching `find_models` that a file may be a replaced model**, so that the script
+  could name A and pass `old_model_id`. It is more code for the same comparison:
+  `compare_models` without `old_model_id` compares D with the model it replaces, which is
+  how the tool's description offers it to an LLM.
+- **Lighting only D's 51 changed objects**, the plan's "51 elements of D", by leaving the
+  added ones out. The selection would no longer be the comparison's: Revit's new
+  GlobalIds for the 4 openings are a finding of the audit (A15), and the caption counts
+  them as openings not drawn.
+- **Showing a script's models together**, as Phase 3 did. The audit's four buildings are
+  four projects: placed at their origins less the first's, they would be drawn far apart
+  or over each other, and "fit" would frame them all.
+- **Leaving the project to the user**, with Phase 3's caption "Model 5 is not shown here:
+  pick its project above". A call from Claude about another project would light nothing
+  visible until the user picks it, and the scripted demo would show nothing at all.
+- **Documenting the audit's commands** in place of `scripts/demo.py --script audit`. They
+  are eight, and `--replaces` needs the model id that A's ingest printed, read by hand.
+  One command is the demo; it reads the id from the ingest's line.
+- **Clearing the view on a `run_sql` whose rows hold no id column**, as Phase 3 did. In
+  the live check with Claude Code, the LLM lit the Duplex's 23 external walls with one
+  query and counted walls by `IsExternal` with the next; the count put the 23 out, and
+  the page said "0 found", while the answer said they were shown. Phase 3 could not tell
+  that count from a query that found no object: both carried ids with no groups.
+- **Keeping what is lit after every call that lights nothing**, failed calls and empty
+  finds included. The page would then show an old answer under a new question that found
+  nothing; a failed call still clears the view, and its caption says how it ended.
