@@ -20,6 +20,8 @@ from sqlalchemy import Connection, text
 
 from ifc_sql_mcp.server.tools import (
     MAX_GROUPS,
+    MAX_SELECTION,
+    Found,
     IfcText,
     ToolInputError,
     ToolResult,
@@ -208,6 +210,65 @@ def compare_models(
         truncated=max(len(added), len(removed), len(properties)) > MAX_GROUPS,
         note=note,
     )
+
+
+CHANGE_GROUPS = ("added", "properties changed")
+"""The groups of a ``compare_models`` selection: objects of the newer model, by change."""
+
+
+def changed_object_ids(
+    connection: Connection,
+    new_model_id: int,
+    old_model_id: int | None = None,
+    *,
+    limit: int = MAX_SELECTION + 1,
+) -> tuple[Found, int, int]:
+    """The objects of the newer model that ``compare_models`` finds changed (ADR 14).
+
+    Added objects first, then those whose properties changed, each in GlobalId order, by
+    the comparison's own SQL. Removed objects are only in the older model, so the viewer
+    only counts them.
+
+    Returns:
+        The objects, the older model's id, and how many objects were removed.
+
+    Raises:
+        ToolInputError: As :func:`compare_models` raises it.
+    """
+    _require_model(connection, new_model_id)
+    if old_model_id is None:
+        old_model_id = connection.execute(
+            text("SELECT replaces_model_id FROM ifc.model WHERE model_id = :m"),
+            {"m": new_model_id},
+        ).scalar_one()
+        if old_model_id is None:
+            raise ToolInputError(f"model {new_model_id} replaces no model; give old_model_id")
+    _require_model(connection, old_model_id)
+    if old_model_id == new_model_id:
+        raise ToolInputError("old_model_id and new_model_id are the same model")
+    rows = connection.execute(
+        text(
+            f"""
+            SELECT 0 AS kind, o.object_id, o.global_id
+            FROM ({_ONLY_IN}) AS only_in
+            JOIN ifc.object AS o ON o.model_id = :here AND o.global_id = only_in.global_id
+            UNION
+            SELECT 1, o.object_id, o.global_id
+            FROM (SELECT DISTINCT global_id FROM ({_PROPERTY_CHANGES}) AS d) AS changed
+            JOIN ifc.object AS o ON o.model_id = :new AND o.global_id = changed.global_id
+            ORDER BY kind, global_id
+            LIMIT :limit
+            """  # noqa: S608 - put together from the constant queries above
+        ),
+        {"here": new_model_id, "there": old_model_id, "old": old_model_id, "new": new_model_id,
+         "limit": limit},
+    )  # fmt: skip
+    found: Found = [(CHANGE_GROUPS[kind], object_id) for kind, object_id, _ in rows]
+    removed = connection.execute(
+        text(f"SELECT count(*) FROM ({_ONLY_IN}) AS only_in"),  # noqa: S608
+        {"here": old_model_id, "there": new_model_id},
+    ).scalar_one()
+    return found, old_model_id, removed
 
 
 def _class_changes(
