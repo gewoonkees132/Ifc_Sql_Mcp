@@ -440,12 +440,14 @@ class _Viewer:
         return EventSourceResponse(self._stream(after), ping=PING_SECONDS)
 
     async def _stream(self, after: int) -> AsyncIterator[ServerSentEvent]:
-        sent: Status | None = None
+        sent: dict[str, object] | None = None
         while True:
             status = NO_FEED if self.feed is None else self.feed.status()
-            if status != sent:
+            # A status when the page has something new to say, not with every call's count.
+            shown = status.model_dump(exclude={"received"})
+            if shown != sent:
                 yield ServerSentEvent(status.model_dump_json(), event="status")
-                sent = status
+                sent = shown
             for entry in [] if self.feed is None else self.feed.entries(after):
                 yield ServerSentEvent(entry.model_dump_json(), event="call", id=str(entry.id))
                 after = entry.id

@@ -308,7 +308,8 @@ def test_an_open_stream_waits_for_calls_and_ends_with_the_feed(
         events = _stream(client.get("/api/events").text)
     later.join()
 
-    assert [event for event, _, _ in events][:2] == ["status", "call"]
+    # One status: a call's arrival changes only the count, which the stream leaves out.
+    assert [event for event, _, _ in events] == ["status", "call"]
 
 
 def _closing(feed: Feed) -> None:
