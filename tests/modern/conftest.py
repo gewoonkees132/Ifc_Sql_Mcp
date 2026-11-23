@@ -16,10 +16,12 @@ duplex_mep  Duplex_MEP_20110907.ifc                an MEP Space over every room 
 
 Every model is checked by the data quality rules once, as ``ifc-sql dq`` does.
 
-A second database, ``measured``, holds files A and B loaded with ``--geometry`` (audit
-finding A5) and ``--viewer``, which share one triangulation (ADR 14, P1), and files C, D
-and E loaded with ``--viewer``: every audit file's scene. It is separate so that every
-other test sees the files as an architect's plain ``ifc-sql ingest`` loads them.
+A second database, ``measured``, holds files A and B loaded with ``--geometry`` alone
+(audit finding A5). A third, ``scenes``, holds every audit file loaded with ``--viewer``,
+A and B with ``--geometry`` too, which then share the scene's triangulation (ADR 14, P1).
+A5's figures are pinned on both, so the two ways of measuring agree. Both are separate so
+that every other test sees the files as an architect's plain ``ifc-sql ingest`` loads
+them.
 """
 
 from collections.abc import Callable, Iterator
@@ -60,8 +62,21 @@ def modern(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
 
 @pytest.fixture(scope="session")
 def measured(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
-    """Files A and B loaded with --geometry --viewer, C, D and E with --viewer."""
+    """Files A and B loaded with --geometry, in a database of their own."""
     settings = create_database("test_modern_geometry")
+    upgrade(settings)
+    engine = make_engine(settings.database_url)
+    ingested = {
+        key: ingest_file(engine, audit_path(key), "ARC", geometry=True) for key in ("a", "b")
+    }
+    yield Modern(engine=engine, settings=settings, ingested=ingested)
+    engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def scenes(create_database: Callable[[str], Settings]) -> Iterator[Modern]:
+    """Files A and B loaded with --geometry --viewer, C, D and E with --viewer."""
+    settings = create_database("test_modern_scenes")
     upgrade(settings)
     engine = make_engine(settings.database_url)
     ingested = {

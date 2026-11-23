@@ -218,9 +218,17 @@ WALL_AREA = (
 )
 
 
-def test_a5_files_without_quantities_get_them_from_the_geometry(measured: Modern) -> None:
+@pytest.mark.parametrize("database", ["measured", "scenes"])
+def test_a5_files_without_quantities_get_them_from_the_geometry(
+    request: pytest.FixtureRequest, database: str
+) -> None:
     """The audit measured the walls with IfcOpenShell (harness/ground_truth.py --geometry):
-    964.6 m2 on A, 103,057.7 m2 on B, where B carries no quantity at all."""
+    964.6 m2 on A, 103,057.7 m2 on B, where B carries no quantity at all.
+
+    The same figures with ``--geometry`` alone (``measured``) and with ``--viewer`` too
+    (``scenes``), whose one pass also gives the measures (ADR 14, P1).
+    """
+    measured: Modern = request.getfixturevalue(database)
     house, tower = measured.model("a"), measured.model("b")
 
     # A: within 2 % of the file's own NetSideArea, which still wins in v_element.
