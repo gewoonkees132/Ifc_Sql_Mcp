@@ -163,7 +163,7 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           uv run python scripts/download_samples.py
-          uv run ifc-sql ingest data\samples\Duplex_A_20110907.ifc --discipline ARC --project duplex
+          uv run ifc-sql ingest data\samples\Duplex_A_20110907.ifc --discipline ARC --project duplex --viewer
           uv run ifc-sql dq
 
       - name: Keep a folder in step
@@ -175,6 +175,11 @@ jobs:
 
       - name: Serve to an MCP client over stdio, as Claude Desktop does
         run: uv run python scripts/mcp_smoke.py
+
+      # ifc-sql view --no-open on a real port, long enough to fetch one chunk of the ARC
+      # model's scene and check its magic, then stopped; its token must not reach stderr.
+      - name: Show the models in 3D, as a browser would ask for them
+        run: uv run python scripts/view_smoke.py
 
       - name: The embedded database's own tests
         run: uv run pytest tests/integration/test_embedded.py -p no:cacheprovider

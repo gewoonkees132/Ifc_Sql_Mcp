@@ -28,7 +28,7 @@ uv run ifc-sql migrate
 ```
 
 The first command that needs the database starts it, and the last one to finish stops
-it. `ingest`, `watch` and the MCP server can run at once. A database that stopped and
+it. `ingest`, `watch`, `view` and the MCP server can run at once. A database that stopped and
 starts again listens on another port, while a running MCP server keeps the port it found
 when it started: if Claude's calls fail with "the database cannot be reached right now",
 restart the server (in Claude Desktop, quit and reopen it).
@@ -81,6 +81,37 @@ uv run ifc-sql watch C:\Exports --discipline ARC --project house
 
 Stop it with Ctrl+C. Add `--geometry` for exports made without quantities
 ([revit-export-settings.md](revit-export-settings.md)).
+
+## Look at the models in 3D
+
+Add `--viewer` when you load a file, or to `watch`, and each model gets its 3D scene. On
+a file already loaded it builds the scene in place. Then `ifc-sql view` shows the models
+of a project together in your browser:
+
+```powershell
+uv run ifc-sql ingest C:\Exports\House.ifc --discipline ARC --project house --viewer
+uv run ifc-sql view
+```
+
+It prints an address like `http://127.0.0.1:53358/#t=…` and opens it. The part after
+`#t=` is a token, new on every start: the page needs it, and nobody else has it. Keep the
+window open while you look, and stop it with Ctrl+C. It listens only on 127.0.0.1, reads
+as the read-only role, and changes nothing ([viewer.md](viewer.md),
+[SECURITY.md](../SECURITY.md#the-viewers-port-ifc-sql-view)).
+
+The four Duplex models, every discipline together:
+
+```powershell
+uv run python scripts/download_samples.py
+uv run ifc-sql ingest data\samples\Duplex_A_20110907.ifc --discipline ARC --viewer
+uv run ifc-sql ingest data\samples\Duplex_MEP_20110907.ifc --discipline MEP --viewer
+uv run ifc-sql ingest data\samples\Duplex_Electrical_20121207.ifc --discipline ELE --viewer
+uv run ifc-sql ingest data\samples\Duplex_Plumbing_20121113.ifc --discipline PLU --viewer
+uv run ifc-sql view
+```
+
+With the embedded database, a database that stopped and started again listens on another
+port: if the page says the database did not answer, stop `view` and start it again.
 
 ## Ask Claude
 

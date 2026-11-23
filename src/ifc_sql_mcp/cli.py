@@ -6,18 +6,27 @@ so individual commands stay focused on their own job.
 
 import dataclasses
 import logging
+import socket
 import time
+import webbrowser
 from pathlib import Path
 from typing import Annotated
 
 import typer
+import uvicorn
 from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.config import LOG_LEVELS, Settings, SettingsError, parse_log_level
 from ifc_sql_mcp.db.embedded import EmbeddedError, embedded_database_url
-from ifc_sql_mcp.db.engine import make_engine, make_reader_engine, reader_database_url, redact
+from ifc_sql_mcp.db.engine import (
+    make_engine,
+    make_reader_engine,
+    reader_database_url,
+    reader_transaction,
+    redact,
+)
 from ifc_sql_mcp.db.migrate import (
     READER_READS_REVISION_FROM,
     RevisionUnreadableError,
@@ -44,14 +53,21 @@ from ifc_sql_mcp.ingest.pipeline import (
     ingest_file,
 )
 from ifc_sql_mcp.logging_config import configure_logging
-from ifc_sql_mcp.server.app import build_server
+from ifc_sql_mcp.server import tools
+from ifc_sql_mcp.server.app import Limits, build_server
+from ifc_sql_mcp.viewer.http import create_app
+from ifc_sql_mcp.viewer.security import new_token
 from ifc_sql_mcp.watch import Watcher, WatchEvent
 
 logger = logging.getLogger(__name__)
 
+HOST = "127.0.0.1"
+"""The one address ``ifc-sql view`` listens on; no setting changes it (ADR 14)."""
+
 app = typer.Typer(
     name="ifc-sql",
-    help="Load Revit-exported IFC files into PostgreSQL and serve them to LLMs over MCP.",
+    help="Load Revit-exported IFC files into PostgreSQL, serve them to LLMs over MCP, and "
+    "show them in 3D.",
     no_args_is_help=True,
     add_completion=False,
     # Rich tracebacks can print local variables, which may include connection strings.
@@ -489,20 +505,20 @@ def _report(event: WatchEvent) -> bool:
     return False
 
 
-def _require_latest_revision_as_reader(engine: Engine, database: str) -> None:
-    """Like ``_require_latest_revision``, but as ``ifc_reader``: serve has no other role."""
+def _require_latest_revision_as_reader(engine: Engine, database: str, command: str) -> None:
+    """Like ``_require_latest_revision``, as ``ifc_reader``: serve and view have no other role."""
     try:
         with engine.connect() as connection:
             revision = reader_revision(connection)
     except RevisionUnreadableError as exc:
         typer.echo(
             f"the database at {database} is at a revision before {READER_READS_REVISION_FROM}, "
-            f"whose version table ifc_reader may not read, but serve needs revision "
+            f"whose version table ifc_reader may not read, but {command} needs revision "
             f"{head_revision()}: run `ifc-sql migrate` first",
             err=True,
         )
         raise typer.Exit(1) from exc
-    _check_revision(revision, database, "serve")
+    _check_revision(revision, database, command)
 
 
 @app.command()
@@ -521,7 +537,7 @@ def serve(ctx: typer.Context) -> None:
     try:
         # Fail before serving: a client shows a server that does not start as failed,
         # while one that starts but fails every call looks healthy.
-        _require_latest_revision_as_reader(engine, database)
+        _require_latest_revision_as_reader(engine, database, "serve")
         server = build_server(engine)
         logger.info("serving", extra={"database": database, "transport": "stdio"})
         server.run("stdio")
@@ -530,3 +546,130 @@ def serve(ctx: typer.Context) -> None:
         raise typer.Exit(1) from exc
     finally:
         engine.dispose()
+
+
+def _check_view_choice(engine: Engine, project: str | None, model_ids: list[int]) -> None:
+    """Exit with 2 unless ``--project`` and ``--model`` name what is loaded."""
+    if project is not None and model_ids:
+        raise typer.BadParameter("give --project or --model, not both", param_hint="'--project'")
+    limits = Limits()
+    with reader_transaction(
+        engine,
+        statement_timeout_ms=limits.statement_timeout_ms,
+        lock_timeout_ms=limits.lock_timeout_ms,
+    ) as connection:
+        models = tools.list_models(connection, include_replaced=True).models
+    known = {model.model_id for model in models}
+    unknown = [model_id for model_id in model_ids if model_id not in known]
+    if unknown:
+        raise typer.BadParameter(f"no model with id {unknown[0]}", param_hint="'--model'")
+    current = {model.project_group for model in models if model.replaced_by_model_id is None}
+    if project is not None and project not in current:
+        raise typer.BadParameter(
+            f"no current model belongs to project {project!r}; without --project, the page "
+            "lists the projects",
+            param_hint="'--project'",
+        )
+
+
+@app.command()
+def view(
+    ctx: typer.Context,
+    project: Annotated[
+        str | None,
+        typer.Option(
+            "--project",
+            help="The project to show first: its current models, every discipline together. "
+            "By default, the project of the newest model with a scene; the page can switch.",
+        ),
+    ] = None,
+    model_ids: Annotated[
+        list[int] | None,
+        typer.Option(
+            "--model",
+            min=1,
+            metavar="MODEL_ID",
+            help="Show these models instead, by model_id; repeat it for several.",
+            show_default=False,
+        ),
+    ] = None,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port", min=0, max=65535, help="The port on 127.0.0.1; 0, the default, a free one."
+        ),
+    ] = 0,
+    no_open: Annotated[
+        bool, typer.Option("--no-open", help="Print the URL, but do not open the browser.")
+    ] = False,
+) -> None:
+    """Show the loaded models in 3D, in the browser, on this computer only (ADR 14).
+
+    It listens on 127.0.0.1 alone, reads as the read-only role ifc_reader, as serve does,
+    and prints the page's URL on stdout. The URL holds a token, new on every start, that
+    the page needs. A model shows once ingest --viewer has built its scene. Stop with
+    Ctrl+C. Exit codes: 0 when stopped; 1 when the database is unreachable or not at the
+    latest migration, or the port is taken; 2 for a usage error (no such project or model).
+    """
+    settings = _database_settings(ctx)
+    database = redact(reader_database_url(settings.database_url, settings.reader_password))
+    engine = make_reader_engine(settings, application="viewer")
+    try:
+        _require_latest_revision_as_reader(engine, database, "view")
+        _check_view_choice(engine, project, model_ids or [])
+        try:
+            # Bound here, not by uvicorn, so that a taken port is an error to report: uvicorn
+            # calls sys.exit(3) when its own bind fails.
+            sock = socket.create_server((HOST, port))
+        except OSError as exc:
+            typer.echo(
+                f"cannot listen on {HOST}:{port}: {exc.strerror or exc}; pick another --port, "
+                "or leave it out for a free one",
+                err=True,
+            )
+            raise typer.Exit(1) from exc
+        with sock:
+            _view(engine, sock, database, project, model_ids or [], no_open=no_open)
+    except KeyboardInterrupt:
+        # uvicorn stops on Ctrl+C, then raises the signal again once it has.
+        typer.echo("stopped the viewer", err=True)
+    except OperationalError as exc:
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
+
+
+def _view(
+    engine: Engine,
+    sock: socket.socket,
+    database: str,
+    project: str | None,
+    model_ids: list[int],
+    *,
+    no_open: bool,
+) -> None:
+    """Serve the viewer on ``sock`` until Ctrl+C, after printing its URL."""
+    port = sock.getsockname()[1]
+    token = new_token()
+    viewer = create_app(engine, token, port=port, project=project, model_ids=model_ids)
+    address = f"http://{HOST}:{port}/"
+    logger.info("viewing", extra={"database": database, "address": address})
+    # The URL with its token goes to stdout, once: it is the user's to open. Never to stderr
+    # or the log.
+    url = f"{address}#t={token}"
+    typer.echo(url)
+    typer.echo(f"showing the models at {address}; stop with Ctrl+C", err=True)
+    if not no_open:
+        webbrowser.open(url)
+    # uvicorn says at INFO what the line above says, with ANSI colours in an extra field.
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+    config = uvicorn.Config(
+        viewer,
+        lifespan="off",
+        ws="none",
+        access_log=False,
+        log_config=None,
+        timeout_graceful_shutdown=2,
+    )
+    uvicorn.Server(config).run(sockets=[sock])

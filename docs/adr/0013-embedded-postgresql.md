@@ -1,6 +1,7 @@
 # ADR 13: An embedded PostgreSQL for one user, so that Docker is optional
 
-- Status: accepted; adds to [ADR 1](0001-postgresql.md)
+- Status: accepted; adds to [ADR 1](0001-postgresql.md). Decision 3 amended by
+  [ADR 14](0014-viewer.md): `ifc-sql view` attaches to the embedded database too.
 - Date: 2026-11-22
 - Audit finding: [A18](../audit/2026-11-modern-revit-exports.md#a18-the-path-from-revit-to-a-question-is-long),
   item 4, deferred in the first round and done as
@@ -25,8 +26,10 @@ user", and the first round deferred it. Two things rule out another database eng
    - About 150 MB, so only who asks for it installs it.
 2. **One setting, `IFC_SQL_DATA_DIR`**, a folder, in place of `IFC_SQL_DATABASE_URL`.
    Setting both is an error.
-3. **Started by the commands that need it.** `migrate`, `ingest`, `dq`, `watch` and
-   `serve` start a server on the folder, or attach to the one already running there.
+3. **Started by the commands that need it.** `migrate`, `ingest`, `dq`, `watch`,
+   `serve` and `view` start a server on the folder, or attach to the one already running
+   there. (`view`, the viewer's page, was added by [ADR 14](0014-viewer.md): like `serve`,
+   it reads as `ifc_reader`, and it can run while the others do.)
    - `--help` and `--version` start nothing.
    - The server stops when the last process attached to it exits. Several commands can
      run at once.
@@ -57,7 +60,7 @@ user", and the first round deferred it. Two things rule out another database eng
   (found in the viewer's Phase 0, [ADR 14](0014-viewer.md) P7). `serve` resolves the URL
   once, when it starts, so a `serve` still running after the database stopped under it
   keeps the old port, and its calls fail until the client restarts it. `docs/windows.md`
-  says so; the coming `ifc-sql view` will need the same restart.
+  says so. `ifc-sql view` resolves the URL once too, and needs the same restart.
 - **Trust authentication.**
   - On Linux and macOS, with the socket in the data folder, only its user connects. With
     the socket under the temporary directory, other local users may reach it.

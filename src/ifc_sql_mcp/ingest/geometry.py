@@ -88,7 +88,8 @@ def measure_shapes(
 
     Returns:
         One measurement per shape, the objects with a body that could not be measured
-        (``geometry_not_measured``), and the seconds it took.
+        (``geometry_not_measured``), and the seconds it took; each by STEP id, as
+        :func:`triangulate_scene` gives them, whatever order the threads finish in.
     """
     started = time.perf_counter()
     targets = {
@@ -97,19 +98,21 @@ def measure_shapes(
         if entity.Representation is not None
         and any(entity.is_a(ifc_class) for ifc_class in MEASURED_CLASSES)
     }
-    shapes: list[RawShape] = []
-    issues: list[Issue] = []
-    measured: set[int] = set()
+    shapes: dict[int, RawShape] = {}
+    failed: dict[int, Issue] = {}
     if targets:
         for shape, entity in _triangulated(model, targets, threads):
-            measured.add(entity.id())
             try:
-                shapes.append(_measure(entity, shape.geometry))
+                shapes[entity.id()] = _measure(entity, shape.geometry)
             except Exception as exc:  # IfcOpenShell raises many kinds; each is reported
-                issues.append(_not_measured(entity, f"could not be measured ({exc})"))
-    for entity_id in sorted(set(targets) - measured):
-        issues.append(_not_measured(targets[entity_id], "could not be triangulated"))
-    return tuple(shapes), issues, time.perf_counter() - started
+                failed[entity.id()] = _not_measured(entity, f"could not be measured ({exc})")
+    issues = [failed[entity_id] for entity_id in sorted(failed)]
+    issues.extend(
+        _not_measured(targets[entity_id], "could not be triangulated")
+        for entity_id in sorted(set(targets) - set(shapes) - set(failed))
+    )
+    ordered = tuple(shapes[entity_id] for entity_id in sorted(shapes))
+    return ordered, issues, time.perf_counter() - started
 
 
 def measure_space_plans(

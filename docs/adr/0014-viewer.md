@@ -1,8 +1,9 @@
 # ADR 14: A viewer for the loaded models and the MCP server's calls
 
-- Status: **draft**. It holds the Phase 0 spike's findings and decision 1 (Phase 1:
-  scenes in the pipeline); Phases 2 and 3 of [the plan](../plans/2026-11-ifc-viewer.md)
-  complete it.
+- Status: **draft**. It holds the Phase 0 spike's findings, decision 1 (Phase 1: scenes
+  in the pipeline) and decisions 2, 3 and 6 (Phase 2: `ifc-sql view` and the page);
+  Phase 3 of [the plan](../plans/2026-11-ifc-viewer.md) completes it with decisions 4
+  and 5.
 - Date: 2026-11-22
 - Amends: [ADR 1](0001-postgresql.md) (a second schema, `ifc_viewer`)
 
@@ -117,8 +118,8 @@ The element cap splits two storeys: file C's Level 1 (3,314 elements) and file E
 
 ### P6. BatchedMesh from the start, confirmed
 
-Rendered with three.js r185.1 (the same BatchedMesh API as r187; Phase 2 measures again
-with r187) in the browser of this machine (Chromium, ANGLE on Direct3D 11), 1280 × 800,
+Rendered with three.js r185.1 (the same BatchedMesh API as r187; Phase 2 measured the
+page itself with r187, in decision 6 and [viewer.md](../viewer.md#measured)) in the browser of this machine (Chromium, ANGLE on Direct3D 11), 1280 × 800,
 the camera orbiting for 10 s:
 
 | Scene | As | Draw calls | Frames per second | JS heap |
@@ -163,8 +164,8 @@ tests run against PostgreSQL 16 on Linux in CI.
 
 ## Decisions
 
-Decisions 2–7 are recorded by Phases 2 and 3, as the plan's "Design, to record in ADR
-14" gives them, with the changes above.
+Decisions 4, 5 and 7 are recorded by Phases 3 and 5, as the plan's "Design, to record in
+ADR 14" gives them, with the changes above.
 
 ### 1. A scene per model, built at ingest, in its own schema
 
@@ -279,9 +280,111 @@ Every count is Phase 0's. The elements' bytes are 0.0 to 2.9 % more than the ske
 B 1.4 %): each primitive now has its own vertices, and the JSON carries an accessor per
 primitive and the stride.
 
+### 2. `ifc-sql view`: the only port
+
+`ifc-sql serve` stays stdio-only, as [ADR 6](0006-mcp-server.md) decision 1 says. The
+page is served by a separate command, `ifc-sql view [--project GROUP] [--model ID …]
+[--port N] [--no-open]`, which runs no MCP and serves no tool but `list_models` and
+`get_element`.
+
+- **The database as `serve` reads it.** It connects as `ifc_reader` (sessions named
+  `ifc-sql-mcp-viewer`) and checks the migration revision first, exiting 1 on an older
+  one. Each request runs in a thread, at most three at once (`ifc_reader` allows 20
+  sessions, shared with every MCP call on the cluster), inside `reader_transaction` with
+  the MCP server's limits.
+- **What it shows first.** The current models of one `project_group`: by default the
+  project of the newest model that has a scene, so that a file loaded later without
+  `--viewer` does not leave the page empty; `--project` names another, `--model` names
+  models. The page has a picker. Models without a scene are listed, greyed out, with the
+  `ifc-sql ingest … --viewer` command that builds theirs. `view` checks both options when
+  it starts, and exits 2 on one that names nothing loaded.
+- **uvicorn on a socket of its own.** `view` binds 127.0.0.1 itself
+  (`socket.create_server`, port 0 by default), so a taken port is an `OSError` it
+  reports, exiting 1; uvicorn's own bind would `sys.exit(3)`. uvicorn then runs on that
+  socket with no lifespan, no websockets, no access log, its logging through the
+  project's stderr logger (its INFO lines silenced), and two seconds for a graceful stop.
+  Ctrl+C stops it with exit code 0.
+- **The page works without a feed.** It shows the models; Phase 3 adds the calls.
+- **The app** is `viewer/http.py`'s `create_app(engine, token, port=…, project=…,
+  model_ids=…)`, on Starlette, with six routes ([viewer.md](../viewer.md#how-it-is-built)).
+  The rules that can live in Python do: the projects and their order, the set shown
+  first, the counts' wording, the hint. The page lays them out.
+
+### 3. What the listening port must hold
+
+`viewer/security.py` stands in front of every route, outside Starlette's own error
+handling, so that a 500 carries the headers too:
+
+- **127.0.0.1 only**, with no setting to change it.
+- **The Host.** Only `127.0.0.1:<port>` and `localhost:<port>`; anything else, two Host
+  headers included, gets 421 before any route. That stops DNS rebinding. It is our own
+  dozen lines, not the MCP SDK's `transport_security`, which allows any port and lets a
+  request without an Origin through.
+- **GET and HEAD only**; anything else gets 405.
+- **The token.** `secrets.token_urlsafe(32)` on every start, compared with
+  `hmac.compare_digest`. The URL carries it in its fragment (`#t=…`), which reaches no
+  server, log or Referer; the page moves it to `sessionStorage` and drops the fragment
+  with `history.replaceState`; `fetch` sends `Authorization: Bearer`. Every `/api/` route
+  needs it (401 otherwise); `/` and `/static/` hold no data and do not. No cookie, and no
+  `?t=`, which Phase 3's SSE route alone will take.
+- **Headers on every response:** a content security policy of `default-src 'none';
+  script-src 'self' 'sha256-<import map>'; style-src 'self'; img-src 'self'; connect-src
+  'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`, whose hash
+  `create_app` computes from the `index.html` it serves; `X-Content-Type-Options:
+  nosniff`; `Referrer-Policy: no-referrer`; `Cache-Control: no-store` on the JSON, and
+  `private, no-cache` with the chunk's `glb_sha256` as `ETag` on a chunk, so a reload
+  revalidates and gets a 304. No CORS headers.
+- **The page is served with LF line endings**, and hashed so: the browser hashes the
+  import map after its HTML parser turned CRLF into LF, and git on Windows may check out
+  `index.html` with CRLF.
+- **The page's files** are read once and served from memory, by an explicit list of
+  suffixes and media types: no listing, no path outside the folder, and `.js` as
+  `text/javascript` whatever the Windows registry says (with `nosniff`, a module served
+  as `text/plain` would not run).
+- **IFC text stays data.** The page sets it with `textContent` only, through one helper
+  (`dom.js`) that refuses `on…` attributes. A unit test fails on `innerHTML`,
+  `outerHTML`, `insertAdjacentHTML`, `document.write`, `srcdoc`,
+  `createContextualFragment`, `setAttribute('on…')`, `javascript:`, `eval` or
+  `new Function` in the page's own JavaScript. Ids in URLs go through
+  `encodeURIComponent`.
+- **The token is never logged.** It is printed once, on stdout; a test runs `view` as a
+  process and checks its stderr.
+
+### 6. The page
+
+- **Plain ES modules, no build step, no npm**: `index.html`, `viewer.css`, `main.js`,
+  `scene.js`, `details.js`, `api.js` (the one seam for data) and `dom.js`. three.js r187
+  is vendored unminified in `viewer/static/vendor/three/` (P5): `three.module.js`,
+  `three.core.js`, `GLTFLoader` with the two addons it imports, `OrbitControls`, the MIT
+  licence and `SHA256SUMS`. Tests check the sums, that every module the page imports is
+  vendored, and that the wheel holds every file. `.gitattributes` keeps git from
+  converting the vendored files' line endings.
+- **Rendering.** `api.js` fetches a chunk and `GLTFLoader.parseAsync` parses it;
+  `scene.js` puts its primitives into two BatchedMeshes, one opaque and one transparent,
+  one instance per primitive with its colour (alpha included), and frees the parsed
+  meshes. A map from each GlobalId to its instances lets a click light an element, and an
+  aggregate through its parts. The view draws only when something changed.
+- **Disciplines.** Every model shown is placed at its origin less the first's (P4). A chip
+  per discipline hides or shows it. ARC keeps its materials' colours; MEP, ELE and PLU are
+  tinted, 60 % of the way to blue, amber and green.
+- **Storeys.** A chunk holds one storey, so a storey is hidden by hiding its chunks. The
+  page lists the storeys of every model by name, highest first.
+- **Spaces.** Rooms are loaded and shown, see-through, on request. Copies and Areas are
+  not drawn in Phase 2; Phase 3 draws them when a selection holds one.
+- **A click** lights the element in the accent colour, names it in a caption, and opens a
+  drawer with `get_element`. "fit", "fit selection" and "only selection" frame and hide.
+- **`window.ifcViewer`** exposes `ready`, `ready_ms`, the highlighted count, `stats()` and
+  `measure(seconds)`, for Phase 6's browser test and for the figures below.
+
+**Measured** ([viewer.md](../viewer.md#measured)), on the Phase 0 machine with Microsoft
+Edge 158 and r187: file B (28 chunks, 12,774 primitives) is drawn 0.93 s after the page
+starts loading, in 76 draw calls, at 144.1 frames per second (the display's cap), with a
+68 MB JS heap, 173 MB in the tab's process and 219 MB in the GPU process. Its batches hold
+831,231 vertices, the file's own: P6's fix holds. A laptop figure is still missing.
+
 ## Alternatives considered
 
-To be completed with decisions 2–7. Phase 0 rejected:
+To be completed with decisions 4, 5 and 7. Phase 0 rejected:
 
 - **Triangulating in world coordinates** (`use-world-coords`): 1.4 to 4 times slower, and
   `--geometry` would need a second pass in local coordinates (P1).
@@ -303,3 +406,28 @@ Decision 1 rejected:
   the first page would wait for the triangulation: 27 s for file B on 4 threads.
 - **A `scene_seconds` column on `ingestion_run`.** A scene is not a load of the model: it
   is built, kept or replaced on its own, so its own row records its time.
+
+Decisions 2, 3 and 6 rejected:
+
+- **A web server inside `serve`.** The MCP server would hold a port while it is meant to
+  speak only stdio (ADR 6, decision 1), and a link to the page would have to pass through
+  the conversation. A separate `view` keeps `serve` as it is.
+- **The MCP SDK's `transport_security`.** It allows any port of an allowed host, and lets
+  a request without an Origin through; the viewer's own check is a dozen lines.
+- **A cookie for the token.** Cookies are scoped by host, not port (RFC 6265 §8.5): one
+  would reach every other server on 127.0.0.1, and two viewers would overwrite each
+  other's.
+- **The token in the query (`?t=`).** It would reach the history and any log. Only
+  Phase 3's `EventSource`, which cannot send headers, takes it there.
+- **Letting uvicorn bind.** A taken port would end the process with `sys.exit(3)` from
+  inside uvicorn, and no message of ours.
+- **Starlette's `StaticFiles`.** It takes media types from `mimetypes`, which reads the
+  Windows registry, and reads the files on every request; the page's files are known
+  when the app is made.
+- **`GLTFLoader.load` with `setRequestHeader`.** The plan's first idea. The page fetches
+  each chunk in `api.js` instead and hands the bytes to `parseAsync`, so all data passes
+  one seam, which Phase 5's static source replaces.
+- **One Mesh per primitive.** At least 14,492 draw calls on file B, and 22.5 frames per
+  second in Phase 0 (P6).
+- **A build step (npm, a bundler, minified three.js).** The page would need Node to
+  change, and r186 and later publish no minified build anyway (P5).

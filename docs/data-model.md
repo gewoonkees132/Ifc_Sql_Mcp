@@ -622,7 +622,7 @@ material. The bytes depend only on the file and the IfcOpenShell release.
 
 **Why a schema of its own.** The scenes are derived data, megabytes of it per model.
 `ifc_reader` may read them (explicit grants, no default privileges), because `ifc-sql
-view` will; but `run_sql`'s validator reads only schema `ifc`, and `describe_schema` does
+view` does ([viewer.md](viewer.md)); but `run_sql`'s validator reads only schema `ifc`, and `describe_schema` does
 not list them, so an LLM never pulls geometry through the MCP server.
 
 **In place.** On a file already loaded, `ingest --viewer` builds its scene into the same
