@@ -8,6 +8,7 @@ PostgreSQL. uvicorn's serving coroutine is replaced, as ``test_cli_view.py`` rep
 its serving loop.
 """
 
+import dataclasses
 import hashlib
 import re
 import sys
@@ -168,6 +169,19 @@ def test_the_demo_needs_its_files_loaded() -> None:
     )
 
 
+@pytest.mark.usefixtures("database")
+def test_the_audit_demo_names_the_command_that_loads_its_files() -> None:
+    result = _demo("--script", "audit", "--check")
+
+    assert result.exit_code == 1
+    assert result.stderr.strip().splitlines()[-1] == (
+        "the demo needs R8_F1_MAB_AR_M3_XX_XXX_MO_7000.ifc, Ifc4_Revit_MEP.ifc, "
+        "Ifc4_Revit_ARC_FireRatingAdded.ifc, ARK_NUS_skolebygg.ifc loaded with --viewer, and "
+        "checked: run `uv run python scripts/demo.py --script audit`, which downloads, loads "
+        "and checks them"
+    )
+
+
 @pytest.mark.usefixtures("database", "script")
 def test_a_server_that_does_not_start_is_reported_with_what_it_said(
     monkeypatch: pytest.MonkeyPatch,
@@ -251,6 +265,24 @@ def test_the_demo_serves_the_page_while_it_plays(monkeypatch: pytest.MonkeyPatch
     assert feed.status().demo is True
     token = URL.fullmatch(result.stdout).group(2)  # type: ignore[union-attr]
     assert token not in result.stderr
+
+
+@pytest.mark.usefixtures("database")
+def test_the_page_shows_first_the_models_the_script_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        cli.SCRIPTS, "duplex", dataclasses.replace(_fixture_script(), shown_first=("mep",))
+    )
+    served = _serving(monkeypatch, lambda feed: len(feed.entries()) == 3)
+
+    result = _demo("--no-open", "--pause", "0")
+
+    assert result.exit_code == 0, result.output
+    app = served[0].config.app
+    assert isinstance(app, Security)
+    [route] = [r for r in app.app.routes if getattr(r, "path", "") == "/api/models"]
+    assert route.endpoint.__self__.model_ids == (2,)  # type: ignore[attr-defined]
 
 
 @pytest.mark.usefixtures("database")

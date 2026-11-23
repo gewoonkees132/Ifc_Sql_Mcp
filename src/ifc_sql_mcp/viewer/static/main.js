@@ -76,28 +76,33 @@ async function start() {
     fail(error);
     return;
   }
-  fillProjects();
+  fillProjects(catalogue.shown);
   await show(catalogue.shown);
   feed.listen(api);
 }
 
-function fillProjects() {
+let sets = []; // the picker's sets of models, in its order
+
+/** Fill the project picker with every project, and `current` picked. */
+function fillProjects(current) {
   const picker = $('project');
-  const sets = [...catalogue.projects];
-  if (!sets.some((set) => sameSet(set, catalogue.shown))) sets.unshift(catalogue.shown);
+  sets = [...catalogue.projects];
+  if (!sets.some((set) => sameSet(set, current))) sets.unshift(current);
   picker.replaceChildren(
     ...sets.map((set, index) => {
       const option = el('option', { text: set.label, attrs: { value: String(index) } });
-      option.selected = sameSet(set, catalogue.shown);
+      option.selected = sameSet(set, current);
       return option;
     }),
   );
   picker.disabled = sets.length < 2;
-  picker.addEventListener('change', () => show(sets[Number(picker.value)]));
 }
 
+$('project').addEventListener('change', () => show(sets[Number($('project').value)]));
+
+/** Two sets of the same models, in the same order: the picker names them as the project. */
 function sameSet(a, b) {
-  return a.label === b.label && a.model_ids.join() === b.model_ids.join();
+  return a.model_ids.join() === b.model_ids.join();
 }
 
 /** Show one set of models: the scenes of those that have one, each at its offset. */
@@ -331,6 +336,14 @@ async function lightCall(entry) {
   lastCall = entry;
   const found = entry.selection;
   if (!found || !viewer.ready) return;
+  // A call about a model that is not shown shows its project; show() then lights the call.
+  const elsewhere = await projectOf(found);
+  if (lastCall !== entry) return;
+  if (elsewhere) {
+    fillProjects(elsewhere);
+    await show(elsewhere);
+    return;
+  }
   select(null);
   try {
     for (const kind of found.layers) await ensureLoaded(kind);
@@ -365,6 +378,36 @@ async function lightCall(entry) {
     zoomed = false;
   }
   callCaption(entry, drawn, hidden);
+}
+
+/**
+ * The models to show for a selection that lies wholly outside those shown: the project of
+ * its first model, as the picker lists it, or that model alone (a replaced one). Null when
+ * a model of the selection is shown, when it holds nothing, or when the server lists none
+ * of its models. A model loaded since the page opened is found by asking for the list again.
+ */
+async function projectOf(found) {
+  const ids = [...new Set(found.groups.flatMap((group) => group.models.map((model) => model.model_id)))];
+  const shownIds = new Set(shown.models.map((model) => model.model_id));
+  if (ids.length === 0 || ids.some((id) => shownIds.has(id))) return null;
+  const [first] = ids;
+  const listed = () => catalogue.models.find((model) => model.model_id === first);
+  if (!listed()) {
+    try {
+      catalogue = await api.models();
+    } catch {
+      return null;
+    }
+  }
+  const model = listed();
+  if (!model) return null;
+  return (
+    catalogue.projects.find((set) => set.model_ids.includes(first)) ?? {
+      label: `${model.file_name} (model ${first})`,
+      project_group: null,
+      model_ids: [first],
+    }
+  );
 }
 
 /** Open the drawer with an object's details, as a click does, without changing the caption. */

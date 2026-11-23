@@ -81,13 +81,25 @@ class Step:
 
 @dataclass(frozen=True, slots=True)
 class Script:
-    """A demo: its files and its questions, in order."""
+    """A demo: its files and its questions, in order.
+
+    Attributes:
+        shown_first: The keys of the models the page shows when it opens; empty, all of
+            the script's. The page shows the project of each call's selection when it lies
+            outside the models shown, so a script on several projects names one here.
+    """
 
     name: str
     title: str
     samples: tuple[Sample, ...]
     steps: tuple[Step, ...]
     credit: str = field(default="")
+    shown_first: tuple[str, ...] = ()
+
+    def first_models(self, models: Mapping[str, int]) -> list[int]:
+        """The ids of the models the page shows when it opens."""
+        keys = self.shown_first or tuple(sample.key for sample in self.samples)
+        return [models[key] for key in keys]
 
 
 DUPLEX_SAMPLES = (
@@ -248,5 +260,118 @@ DUPLEX = Script(
     ),
 )
 
-SCRIPTS: dict[str, Script] = {DUPLEX.name: DUPLEX}
-"""The scripts ``ifc-sql demo --script`` plays. Phase 4 of the plan adds ``audit``."""
+AUDIT_SAMPLES = (
+    Sample(
+        "b",
+        "R8_F1_MAB_AR_M3_XX_XXX_MO_7000.ifc",
+        "08ab44c7a0e68efe6c1722c54235b405c0d649195254d92f964eaa47438aa62e",
+        "ARC",
+    ),
+    Sample(
+        "c",
+        "Ifc4_Revit_MEP.ifc",
+        "829c08715d56256e04d04fa7be40ec68928e0397631c3b846efd72d003f96495",
+        "MEP",
+    ),
+    Sample(
+        "d",
+        "Ifc4_Revit_ARC_FireRatingAdded.ifc",
+        "e015b8314d5bb64291a3ad9f7e3807beea5714469de28bb5d4c34aacd7bf4fbf",
+        "ARC",
+    ),
+    Sample(
+        "e",
+        "ARK_NUS_skolebygg.ifc",
+        "362f0f5e5ad35557014100a6c4de75ec166f6dbd9197933170dc1423f4af2a76",
+        "ARC",
+    ),
+)
+"""Four of the audit's five files. File A is the model D replaces (``--replaces``):
+``compare_models`` compares D with it by default, so the script never names A, and the
+demo, which finds only current models, never looks for it."""
+
+L01 = "XX_AR_L01"
+"""The storey of file B, the tower, whose doors step 3 schedules."""
+
+
+def _property_changes(result: Result, _: Mapping[str, int]) -> tuple[int, int, list[list[object]]]:
+    changes = [
+        [change["pset_name"], change["prop_name"], change["added"], change["changed"]]
+        for change in result["property_changes"]
+    ]
+    return result["objects_added"], result["objects_removed"], changes
+
+
+AUDIT = Script(
+    name="audit",
+    title="Four Revit exports of the audit",
+    samples=AUDIT_SAMPLES,
+    shown_first=("c",),
+    steps=(
+        Step(
+            title="A room schedule with copies",
+            tool="space_schedule",
+            arguments={"model_id": Model("c")},
+            figure="163 spaces, 75 of them copies of rooms: 8,090.7 m² with them, 4,721.4 m² "
+            "without",
+            measure=lambda result, _: (
+                result["space_count"],
+                result["duplicate_spaces"],
+                round(result["total_area_m2"], 1),
+                round(result["total_area_without_duplicates_m2"], 1),
+            ),
+            expected=(163, 75, 8_090.7, 4_721.4),
+            lit=(88, 75),
+        ),
+        Step(
+            title="Area plans beside rooms",
+            tool="space_schedule",
+            arguments={"model_id": Model("e")},
+            figure="25 Revit Areas of 22,905.9 m², beside 7,438.8 m² of rooms",
+            measure=lambda result, _: (
+                result["revit_area_spaces"],
+                round(result["revit_area_total_m2"], 1),
+                round(result["total_area_m2"], 1),
+            ),
+            expected=(25, 22_905.9, 7_438.8),
+            lit=(282, 25),
+        ),
+        Step(
+            title="A door schedule on one storey",
+            tool="schedule",
+            arguments={
+                "model_id": Model("b"),
+                "ifc_class": "IfcDoor",
+                "storey_name": L01,
+                "group_by": ["revit_type"],
+                "fields": ["width_m", "height_m", "Pset_DoorCommon.FireRating"],
+            },
+            figure=f"159 doors in 6 types on {L01}, none with a fire rating",
+            measure=lambda result, _: (result["elements"], result["group_count"]),
+            expected=(159, 6),
+            lit=(77, 25, 21, 15, 14, 7),
+        ),
+        Step(
+            title="What changed between two exports?",
+            tool="compare_models",
+            arguments={"new_model_id": Model("d")},
+            figure="4 openings with new GlobalIds, and fire ratings added to 42 walls and 9 "
+            "curtain walls",
+            measure=_property_changes,
+            expected=(
+                4,
+                4,
+                [
+                    ["Pset_WallCommon", "FireRating", 42, 0],
+                    ["Pset_CurtainWallCommon", "FireRating", 9, 0],
+                ],
+            ),
+            lit=(4, 51),
+        ),
+    ),
+)
+"""The audit's script: local only, since files B and E are of uncertain provenance and
+none of the five is published (``scripts/demo.py --script audit`` loads them)."""
+
+SCRIPTS: dict[str, Script] = {DUPLEX.name: DUPLEX, AUDIT.name: AUDIT}
+"""The scripts ``ifc-sql demo --script`` plays."""

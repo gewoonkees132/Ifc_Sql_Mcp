@@ -9,7 +9,7 @@ export
 
 .PHONY: help install up down reset-db migrate psql lint fmt typecheck test test-unit test-samples
 .PHONY: check samples ingest-samples dq dq-samples serve smoke bench-load fixture quirks
-.PHONY: audit-samples test-modern view view-smoke demo
+.PHONY: audit-samples test-modern view view-smoke demo demo-audit
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -90,6 +90,9 @@ view-smoke: ## Start ifc-sql view, fetch a chunk over its port and stop it (need
 
 demo: ## The scripted Duplex demo, no LLM: download, load with --viewer, check, play (scripts/demo.py)
 	$(UV) run python scripts/demo.py
+
+demo-audit: ## The scripted audit demo on four Revit exports, local only (scripts/demo.py --script audit)
+	$(UV) run python scripts/demo.py --script audit
 
 bench-load: ## Time the load stage on the MEP sample in a throwaway database (needs `make up`)
 	$(UV) run python scripts/bench_load.py

@@ -6,11 +6,12 @@ from pathlib import Path
 from typing import Any
 
 import demo as demo_command
+import download_audit_samples
 import download_samples
 import pytest
 
 from ifc_sql_mcp.viewer import demo
-from ifc_sql_mcp.viewer.demo_script import DUPLEX, SCRIPTS, Model, Step
+from ifc_sql_mcp.viewer.demo_script import AUDIT, DUPLEX, SCRIPTS, Model, Step
 from ifc_sql_mcp.viewer.event import Call, Source, SqlText, decode, encode
 from ifc_sql_mcp.viewer.feed import Entry
 from ifc_sql_mcp.viewer.selection import Group, ModelObjects, Selection, summary
@@ -25,8 +26,56 @@ def test_the_duplex_files_are_those_the_download_script_pins() -> None:
     assert [(s.key, s.file_name, s.sha256) for s in DUPLEX.samples] == [
         (key, pinned[key].file_name, pinned[key].sha256) for key in ("arc", "mep", "ele", "plu")
     ]
-    assert SCRIPTS == {"duplex": DUPLEX}
+    assert SCRIPTS == {"duplex": DUPLEX, "audit": AUDIT}
     assert len(DUPLEX.steps) == 9
+
+
+def test_the_audit_files_are_those_the_audit_download_script_pins() -> None:
+    pinned = download_audit_samples.AUDIT_SAMPLES
+
+    # File A is the model D replaces: compare_models finds it by default, never by name.
+    assert [(s.key, s.file_name, s.sha256) for s in AUDIT.samples] == [
+        (key, pinned[key].file_name, pinned[key].sha256) for key in ("b", "c", "d", "e")
+    ]
+    assert [step.tool for step in AUDIT.steps] == [
+        "space_schedule",
+        "space_schedule",
+        "schedule",
+        "compare_models",
+    ]
+    assert AUDIT.steps[3].call_arguments({"d": 8}) == {"new_model_id": 8}
+
+
+def test_the_page_shows_first_the_models_a_script_names() -> None:
+    audit = {"b": 2, "c": 3, "d": 4, "e": 5}
+
+    assert DUPLEX.first_models(MODELS) == [11, 12, 13, 14]
+    assert AUDIT.first_models(audit) == [3]
+
+
+def test_the_audit_figures_are_read_from_the_results() -> None:
+    rooms, areas, doors, changes = AUDIT.steps
+    spaces = {
+        "space_count": 163,
+        "duplicate_spaces": 75,
+        "total_area_m2": 8_090.71,
+        "total_area_without_duplicates_m2": 4_721.44,
+        "revit_area_spaces": 0,
+        "revit_area_total_m2": None,
+    }
+    comparison = {
+        "objects_added": 4,
+        "objects_removed": 4,
+        "property_changes": [
+            {"pset_name": "Pset_WallCommon", "prop_name": "FireRating", "added": 42, "changed": 0}
+        ],
+    }
+
+    assert rooms.measure(spaces, {}) == (163, 75, 8_090.7, 4_721.4)
+    with pytest.raises(TypeError):  # no Areas: --check reports it as unreadable
+        areas.measure(spaces, {})
+    assert doors.measure({"elements": 159, "group_count": 6}, {}) == (159, 6)
+    assert changes.measure(comparison, {}) == (4, 4, [["Pset_WallCommon", "FireRating", 42, 0]])
 
 
 def test_a_steps_arguments_get_the_model_ids_and_its_sql() -> None:
@@ -295,23 +344,130 @@ def test_the_demo_command_runs_each_step_in_order() -> None:
     ]
 
 
-def test_the_demo_command_stops_at_the_first_failure(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
+def _commands_run(
+    monkeypatch: pytest.MonkeyPatch, *, fails: str = "", stdout: str | None = None
+) -> list[list[str]]:
+    """Replace the downloads and the commands; the command ``fails`` names exits 3.
+
+    An ingest whose stdout is read says it loaded its file as model 11, 12, … in turn.
+    """
     ran: list[list[str]] = []
 
-    def run(command: list[str], check: bool) -> subprocess.CompletedProcess[str]:
+    def run(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
         ran.append(command[1:])
-        return subprocess.CompletedProcess(command, 3 if command[1] == "dq" else 0)
+        ingested = sum(1 for step in ran if step[0] == "ingest")
+        said = None
+        if options.get("stdout") is not None:
+            said = f"loaded x.ifc as model {10 + ingested} (ARC)\n" if stdout is None else stdout
+        return subprocess.CompletedProcess(command, 3 if command[1] == fails else 0, said)
 
     monkeypatch.setattr(
         demo_command, "ensure_sample", lambda sample, dest: (dest / sample.file_name, False)
     )
     monkeypatch.setattr(demo_command.subprocess, "run", run)
+    return ran
+
+
+def test_the_demo_command_stops_at_the_first_failure(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran = _commands_run(monkeypatch, fails="dq")
 
     assert demo_command.main([]) == 3
     assert [step[0] for step in ran] == ["migrate", "ingest", "ingest", "ingest", "ingest", "dq"]
     assert "have Duplex_A_20110907.ifc" in capsys.readouterr().out
+
+
+def test_the_audit_demo_loads_d_as_the_new_version_of_a(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ran = _commands_run(monkeypatch)
+
+    assert demo_command.main(["--script", "audit", "--check"]) == 0
+    folder = demo_command.ROOT / "data" / "audit"
+    assert ran == [
+        ["migrate"],
+        ["ingest", str(folder / "Ifc4_Revit_ARC.ifc"), "--discipline", "ARC", "--viewer"],
+        [
+            "ingest",
+            str(folder / "R8_F1_MAB_AR_M3_XX_XXX_MO_7000.ifc"),
+            "--discipline",
+            "ARC",
+            "--viewer",
+        ],
+        ["ingest", str(folder / "Ifc4_Revit_MEP.ifc"), "--discipline", "MEP", "--viewer"],
+        [
+            "ingest",
+            str(folder / "Ifc4_Revit_ARC_FireRatingAdded.ifc"),
+            "--discipline",
+            "ARC",
+            "--replaces",
+            "11",  # the model file A was loaded as
+            "--viewer",
+        ],
+        ["ingest", str(folder / "ARK_NUS_skolebygg.ifc"), "--discipline", "ARC", "--viewer"],
+        ["dq"],
+        ["demo", "--script", "audit", "--check"],
+    ]
+    out = capsys.readouterr().out
+    assert "have R8_F1_MAB_AR_M3_XX_XXX_MO_7000.ifc" in out
+    assert "loaded x.ifc as model 11 (ARC)" in out
+
+
+@pytest.mark.parametrize(
+    ("options", "fails", "stdout", "ran", "code"),
+    [
+        (["--script=audit"], "migrate", None, ["migrate"], 3),
+        (["--script=audit"], "ingest", None, ["migrate", "ingest"], 3),
+        (["--script", "audit"], "demo", None, ["migrate", *["ingest"] * 5, "dq", "demo"], 3),
+        (["--script", "audit"], "", "no line\n", ["migrate", "ingest"], 1),
+    ],
+)
+def test_the_audit_demo_stops_at_the_first_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    options: list[str],
+    fails: str,
+    stdout: str | None,
+    ran: list[str],
+    code: int,
+) -> None:
+    done = _commands_run(monkeypatch, fails=fails, stdout=stdout)
+
+    assert demo_command.main(options) == code
+    assert [step[0] for step in done] == ran
+
+
+def test_the_model_is_read_from_the_ingest_line_loaded_or_already_loaded() -> None:
+    loaded = "loaded Ifc4_Revit_ARC.ifc as model 5 (ARC): 500 objects, … (run 5)\n"
+    again = "Ifc4_Revit_ARC.ifc is already loaded as model 5 (ARC); nothing written (run 9)\n"
+
+    assert demo_command.model_of(loaded) == demo_command.model_of(again) == 5
+    with pytest.raises(demo_command.DemoError, match="ifc-sql ingest named no model: 'what'"):
+        demo_command.model_of("what\n")
+
+
+@pytest.mark.parametrize(
+    ("options", "script"),
+    [([], "duplex"), (["--check"], "duplex"), (["--script", "audit"], "audit"),
+     (["--script=audit", "--step"], "audit"), (["--script"], "duplex")],
+)  # fmt: skip
+def test_the_script_is_the_one_the_options_name(options: list[str], script: str) -> None:
+    assert demo_command.script_of(options) == script
+
+
+def test_ctrl_c_stops_the_demo_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    def interrupted(command: list[str], **options: Any) -> subprocess.CompletedProcess[str]:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(
+        demo_command, "ensure_sample", lambda sample, dest: (dest / sample.file_name, False)
+    )
+    monkeypatch.setattr(demo_command.subprocess, "run", interrupted)
+
+    assert demo_command.main([]) == 0
+    assert capsys.readouterr().err == "demo: stopped\n"
 
 
 def test_the_demo_command_reports_a_download_that_fails(
