@@ -14,6 +14,29 @@ cd Ifc_Sql_Mcp
 uv sync --locked --extra embedded             # make install, without the git hooks
 ```
 
+## Try it on the Duplex
+
+One command, no LLM and no configuration, on the embedded database below:
+
+```powershell
+$env:IFC_SQL_DATA_DIR = "$env:LOCALAPPDATA\ifc-sql\data"   # this window only; to keep it, see below
+uv run python scripts/demo.py
+```
+
+It downloads the four Duplex models (pinned by SHA-256), creates the schema, loads each
+with its 3D scene, checks them, and opens the viewer in your browser. Then it asks nine
+questions through the real MCP server, a few seconds apart, and the page lights what each
+one found: the walls on Level 1, the external walls by type, the doors, the rooms, what
+lacks a fire rating ([viewer.md](viewer.md#the-scripted-demo)). Stop it with Ctrl+C.
+`--step` waits for Enter before each question; `--check` compares each answer with the
+script and opens nothing. A second run downloads and loads nothing again.
+
+`uv run python scripts/demo.py --script audit` plays four questions on the audit's Revit
+exports instead (about 187 MB to download; [viewer.md](viewer.md#the-audits-script)).
+
+Then ask Claude yourself, and watch its calls light up:
+[Ask Claude, and watch in 3D](#ask-claude-and-watch-in-3d).
+
 ## Choose a database
 
 ### For one user: the embedded database, no Docker
@@ -146,3 +169,44 @@ With Docker, give the server the database instead:
 Quit Claude Desktop completely and start it again. The server's log is
 `%APPDATA%\Claude\logs\mcp-server-ifc-sql.log`. [docs/mcp.md](mcp.md) describes the
 tools.
+
+## Ask Claude, and watch in 3D
+
+After [Try it on the Duplex](#try-it-on-the-duplex), the four Duplex models are loaded
+with their scenes. To see what Claude asks, and what each call found, in the viewer:
+
+1. **Keep the viewer open**, in a PowerShell window of its own, on the same database:
+
+   ```powershell
+   $env:IFC_SQL_DATA_DIR = "$env:LOCALAPPDATA\ifc-sql\data"
+   uv run ifc-sql view
+   ```
+
+2. **Turn the feed on** in the server's `env` block above, beside `IFC_SQL_DATA_DIR`:
+
+   ```json
+         "env": {
+           "IFC_SQL_DATA_DIR": "C:\\Users\\you\\AppData\\Local\\ifc-sql\\data",
+           "IFC_SQL_VIEWER_FEED": "1"
+         }
+   ```
+
+   Then quit Claude Desktop completely and start it again. The first line of
+   `mcp-server-ifc-sql.log` ends in `viewer_feed=on`.
+
+   In Claude Code, from your clone instead:
+
+   ```powershell
+   claude mcp add --env IFC_SQL_DATA_DIR="$env:LOCALAPPDATA\ifc-sql\data" --env IFC_SQL_VIEWER_FEED=1 `
+     --transport stdio ifc-sql '--' (Get-Command uv).Source run --directory $PWD ifc-sql serve
+   ```
+
+3. **Ask**, for example: "Which walls of the architectural Duplex are external? Show them
+   in the viewer." Each call appears in the page's feed as it is made, and the 23
+   external walls light up in one colour per wall type.
+
+The page shows the calls of every client on the database, and Claude Desktop's
+conversations all go through one server, so their calls arrive mixed. When nothing
+arrives, see [docs/mcp.md](mcp.md#with-the-viewers-feed-on): most often the server and
+`view` use two databases, or the embedded database stopped and came back on another
+port, so restart `view` and Claude Desktop.

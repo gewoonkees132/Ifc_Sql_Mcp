@@ -94,8 +94,11 @@ prints carries a token, new on every start, that the page needs:
 
 `make demo` (`uv run python scripts/demo.py`) loads the Duplex, checks it, and asks nine
 questions through the MCP server with no LLM, lighting each answer in the page
-([docs/viewer.md](docs/viewer.md#the-scripted-demo)). With `IFC_SQL_VIEWER_FEED=1`, the
-server your own client starts does the same for every call.
+([docs/viewer.md](docs/viewer.md#the-scripted-demo)). `make demo-audit` (`scripts/demo.py
+--script audit`) does the same with four questions on the audit's Revit exports, which
+stay local. With `IFC_SQL_VIEWER_FEED=1`, the server your own client starts does the same
+for every call, and the page shows the calls of every client on the database
+([docs/mcp.md](docs/mcp.md#with-the-viewers-feed-on)).
 
 To give Claude Code the server (the full instructions, also for Claude Desktop, are in
 [docs/mcp.md](docs/mcp.md#registering-it-with-a-client)):
@@ -191,7 +194,8 @@ that were rejected.
   With `IFC_SQL_VIEWER_FEED=1`, `serve` publishes each call as a PostgreSQL notification;
   `view` checks every one as untrusted, and lights what the call found with the tools'
   own SQL. `ifc-sql demo` plays nine questions on the Duplex through the real server, and
-  CI checks each answer on Linux and Windows.
+  CI checks each answer on Linux and Windows; `--script audit` plays four on the audit's
+  exports, which the `modern` tests check.
 
 ### Asking through MCP
 
@@ -219,7 +223,7 @@ DELETE statement`.
 
 ## Quality
 
-- **Tests**: 1,627 unit and integration tests at 100 % branch coverage, plus 152 on the
+- **Tests**: 1,650 unit and integration tests at 100 % branch coverage, plus 155 on the
   real files: the four Duplex models (`make test-samples`) and the audit's five Revit
   2019–2022 exports, whose acceptance tests pin every audit and re-check finding
   (`make test-modern`, [docs/audit/](docs/audit/2026-11-implementation.md)). Integration tests run against real
@@ -302,7 +306,7 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
   listens on 127.0.0.1 only, behind a token ([SECURITY.md](SECURITY.md)).
 - The viewer's feed reaches every login to the database, which can also send to it; it is
   off unless `IFC_SQL_VIEWER_FEED=1` ([SECURITY.md](SECURITY.md#the-viewers-feed-ifc_sql_viewer_feed)).
-  The audit's scripted questions and the demo on GitHub Pages are the next phases of
+  The demo on GitHub Pages is the next phase of
   [the viewer's plan](docs/plans/2026-11-ifc-viewer.md).
 
 ## Licences

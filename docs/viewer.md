@@ -93,7 +93,13 @@ another port, so restart `view` then, as `serve` ([ADR 13](adr/0013-embedded-pos
   Roof hidden · show all"). A call that finds only spaces shows nothing else, since the
   rooms are inside the walls. `get_element` moves the camera to its object and opens its
   details. A call that lights nothing by nature (`list_models`, `list_storeys`,
-  `describe_schema`) leaves the view as it is.
+  `describe_schema`, and a `run_sql` whose rows hold no id column, such as a count)
+  leaves the view as it is: the walls a query lit stay lit while the LLM counts them.
+- **A call about another project.** When none of the objects a call found is in the
+  models shown, the page shows the project of the first one, as the picker lists it, and
+  then lights the call: ask Claude about file B while the Duplex is shown, and the page
+  turns to file B. A call whose objects lie partly in the models shown lights in place,
+  and the caption names the models it could not show.
 
 Every model is placed at its scene's origin less the first model's: the models of a
 project line up, as the Duplex's four and the audit's A and D do (ADR 14, P4).
@@ -148,7 +154,7 @@ selection of the table.
 | `--pause SECONDS` | Seconds between two questions (5 by default). |
 | `--step` | Wait for Enter before each question. |
 | `--port N`, `--no-open` | As for `view`. |
-| `--script duplex` | The questions: the Duplex's, the only script yet. |
+| `--script duplex\|audit` | The questions: the Duplex's (the default), or [the audit's](#the-audits-script), local only. |
 
 `uv run python scripts/demo.py --check` on Windows 11, with the PostgreSQL 16 of the
 `embedded` extra, on 2026-11-23:
@@ -167,6 +173,62 @@ all 9 steps as the script says
 ```
 
 The characters are those of each result's text: what an LLM would have read.
+
+### The audit's script
+
+Four questions on the audit's Revit exports
+([docs/audit](audit/2026-11-modern-revit-exports.md)), each about another building:
+
+```bash
+uv run python scripts/demo.py --script audit       # make demo-audit; --check, --step as above
+```
+
+`scripts/demo.py --script audit` downloads the audit's five files
+(`scripts/download_audit_samples.py`, about 187 MB, pinned by SHA-256), runs `ifc-sql
+migrate`, loads them in the audit's order, A to E, each with `--viewer`, file D as A's new
+version (`--replaces`, with the model id that A's ingest printed), checks them with
+`ifc-sql dq`, and runs `ifc-sql demo --script audit`. Run again, it loads nothing: each
+ingest is a repeat, `--replaces` included. The files stay on your computer. B and E were
+posted to web-ifc's issues, so their provenance is uncertain, and A, C and D state no
+licence ([DATA_ATTRIBUTION.md](../DATA_ATTRIBUTION.md)): the script is never published,
+and CI does not play it (the `modern` tests do, below).
+
+| # | Question | Tool call | What it shows | Lights |
+|---|---|---|---|---|
+| 1 | A room schedule with copies | `space_schedule` on file C, the office | 163 spaces, 75 of them copies of rooms: 8,090.7 m² with them, 4,721.4 m² without | 88 rooms and 75 copies, in two colours |
+| 2 | Area plans beside rooms | `space_schedule` on file E, the school | 25 Revit Areas of 22,905.9 m², beside 7,438.8 m² of rooms | 282 rooms, and the 25 Areas in the third colour |
+| 3 | A door schedule on one storey | `schedule` on file B, the tower: `IfcDoor` on `XX_AR_L01`, by `revit_type`, with `width_m`, `height_m` and `Pset_DoorCommon.FireRating` | 159 doors in 6 types, none with a fire rating | 159 doors in 6 colours: 77, 25, 21, 15, 14, 7; the storeys above hidden |
+| 4 | What changed between two exports? | `compare_models` on file D, against the model it replaces (A) | 4 openings with new GlobalIds, and fire ratings added to 42 walls and 9 curtain walls | 55 objects in two groups: the 4 openings added, never drawn, and the 51 walls and curtain walls whose fire rating was added |
+
+- **File A is never named.** It is the model D replaces, and `compare_models` compares D
+  with it when `old_model_id` is left out, as the tool's description offers. The demo
+  finds only current models, by SHA-256, so it looks for B, C, D and E.
+- **Step 4 lights 55 objects, 51 of them drawn.** Revit gave the 4 openings new GlobalIds:
+  the 4 of D are added, and the caption counts them as openings not drawn (they are cut
+  from their walls); the 4 of A are removed, only counted. A curtain wall is drawn through
+  its plates and members, which light with it.
+- **The page follows the calls.** It opens on file C, the first step's, and each call
+  whose selection lies outside the models shown shows that model's project first: E,
+  then B, then D (A and D are one project, `001-00`, whose current model is D). The four
+  buildings are four projects, and are never drawn together.
+
+`tests/modern/test_audit_demo.py` pins every figure and selection of the table, and the
+characters below, on the database the audit's tests load in the same order. On a fresh
+embedded database (Windows 11, the Phase 0 machine, PostgreSQL 16 of the `embedded`
+extra, 2026-11-23), with the files already downloaded, `uv run python scripts/demo.py
+--script audit --check` took 107.8 s, of which the five ingests with `--viewer` took
+about 98 s (file B 32.8 s), by the log's timestamps, and printed last:
+
+```
+1/4 A room schedule with copies [space_schedule, ok, 41,471 characters]: 163 spaces, 75 of them copies of rooms: 8,090.7 m² with them, 4,721.4 m² without; lights 163 objects in 2 groups (88, 75): ok
+2/4 Area plans beside rooms [space_schedule, ok, 45,746 characters]: 25 Revit Areas of 22,905.9 m², beside 7,438.8 m² of rooms; lights 307 objects in 2 groups (282, 25): ok
+3/4 A door schedule on one storey [schedule, ok, 4,181 characters]: 159 doors in 6 types on XX_AR_L01, none with a fire rating; lights 159 objects in 6 groups (77, 25, 21, 15, 14, 7): ok
+4/4 What changed between two exports? [compare_models, ok, 2,129 characters]: 4 openings with new GlobalIds, and fire ratings added to 42 walls and 9 curtain walls; lights 55 objects in 2 groups (4, 51): ok
+all 4 steps as the script says
+```
+
+The two room schedules are 41,471 and 45,746 characters, each under the 50,000 at which
+Claude Code saves a result to a file ([mcp.md](mcp.md#claude-code)).
 
 ## The MCP server's calls (the feed)
 
@@ -195,6 +257,32 @@ stopped and started again, listens on another port, so restart `view` and the cl
 `serve` then ([ADR 13](adr/0013-embedded-postgresql.md)). A `serve` and a `view` on two
 databases see nothing of each other: the page names the database it listens on.
 
+### Live, with Claude Code
+
+Recorded on 2026-11-23 on Windows 11, with Claude Code 2.1.293 and the model
+`claude-fable-5-1`: the Duplex loaded by `scripts/demo.py` into the embedded database,
+`ifc-sql view` open on it, and the server registered with the feed on as
+[docs/mcp.md](mcp.md#with-the-viewers-feed-on) says (`claude mcp add`, local scope). The
+question, asked with `claude -p`: "Which walls of the architectural Duplex are external?
+Show them in the viewer."
+
+| At (UTC) | Call | What the page did |
+|---|---|---|
+| 19:17:20 | `list_models` | listed it; the view stayed as it was |
+| 19:17:29 | `run_sql`, 371 characters: `SELECT e.object_id, e.global_id, e.ifc_class, e.name, e.storey_name, e.revit_type, e.length_m, e.area_m2, p.value_bool AS is_external FROM v_element e JOIN property p ON p.object_id = e.object_id AND p.pset_name = 'Pset_WallCommon' AND p.prop_name = 'IsExternal' WHERE e.model_id = 1 AND e.ifc_class ILIKE 'IfcWall%' AND p.value_bool = true ORDER BY e.storey_name, e.name` | lit the 23 external walls, one group: "23 found · 23 shown · 0 without shape" |
+| 19:17:35 | `run_sql`, 290 characters: the walls counted by `IsExternal`, `GROUP BY 1` | listed it ("–"); the 23 walls stayed lit |
+
+Claude answered that 23 of the model's 57 walls are external, by storey and type, and that
+four of them are party walls Revit flags as external. Its query selected `object_id`, as
+the sentence the feed adds to `run_sql`'s description asks.
+
+A first run, at 19:11 with the same client and model, made the same calls but for a
+`run_sql` that failed first (`column e.ifc_class_normalised does not exist`): the 23 walls
+lit, then went out when the count arrived, and the page said "0 found". Since then a
+`run_sql` whose rows hold no id column lights nothing by nature, as `list_models` does
+(ADR 14, decision 4). Claude Desktop's check, the same question with the `env` block of
+[docs/mcp.md](mcp.md#with-the-viewers-feed-on), is still to be recorded.
+
 ### What a call lights
 
 `view` resolves each call when it arrives, with fixed queries of the tools' own SQL and
@@ -212,7 +300,7 @@ is what it found when it came.
 | `space_schedule` | Every space of the model: rooms, the copies of rooms (`duplicate_of`) and Revit Areas, in three colours; their chunks are shown. |
 | `data_quality_report` | With `rule_id`: every object with a finding of that rule in the model's latest run. Without it: every object with a finding, coloured by its worst severity (red, amber, blue). The report's `severity` and `scope` apply. A model never checked says so. |
 | `compare_models` | The newer model's objects added since the older one, and those whose properties changed, in two colours. Removed objects are only in the older model: the caption counts them. |
-| `run_sql` | The ids its rows hold: an `object_id` column (one group), an `object_ids` array column (one group per row, labelled by the row's first column), or `global_id` or `global_ids` beside a `model_id` column (GlobalIds are unique per model only). With the feed on, the tool's description tells the LLM so. |
+| `run_sql` | The ids its rows hold: an `object_id` column (one group), an `object_ids` array column (one group per row, labelled by the row's first column), or `global_id` or `global_ids` beside a `model_id` column (GlobalIds are unique per model only). With the feed on, the tool's description tells the LLM so. Rows with no such column (a count, a sum) light nothing by nature: the call is listed, and the view stays as it is. An id column with no rows lights nothing: the query found no object. |
 | `list_models`, `list_storeys`, `describe_schema` | Nothing: they are listed, and the view stays as it is. |
 
 A call that failed lights nothing, and the caption says how it ended.
@@ -230,7 +318,7 @@ payload of 8,000 or more (ADR 14, P7). Version 1:
 | `tool`, `arguments` | The call, as the tool received it; for `run_sql` without its text. A text longer than 200 bytes is clipped, and named in `clipped`: such a call lights nothing. |
 | `outcome`, `seconds`, `rows` | As `serve`'s log line has them: `ok`, `invalid`, `refused`, `timeout`, `database_error`, `unavailable` or `error`. |
 | `sql` | For `run_sql`: `{text, chars, sha256_16}`, the text clipped to what fits, its length, and the fingerprint of the log line. |
-| `ids` | For `run_sql` and `get_element`, whose result holds the selection itself: `{groups: [{label, object_ids, global_ids}], truncated}`, at most 500 ids and 4,800 bytes. |
+| `ids` | For `run_sql` and `get_element`, whose result holds the selection itself: `{groups: [{label, object_ids, global_ids}], truncated}`, at most 500 ids and 4,800 bytes. None for a `run_sql` whose rows hold no id column. |
 
 The ids come first, the SQL text gets what is left. Measured by
 `tests/unit/viewer/test_event.py`: 500 object ids of seven digits take 4,076 bytes of the
