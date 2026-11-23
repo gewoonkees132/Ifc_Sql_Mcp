@@ -104,6 +104,25 @@ def reader_transaction(
             transaction.rollback()
 
 
+def notify(engine: Engine, channel: str, payload: str) -> None:
+    """Send one notification on ``channel``, from a session and a transaction of its own.
+
+    ``engine`` is the MCP server's (:func:`make_reader_engine`): the transaction begins
+    ``READ ONLY``, which PostgreSQL allows ``NOTIFY`` in, and it commits, because a
+    notification is delivered only when its transaction commits (ADR 14, P7). It costs a
+    session, opened and closed here as every call's is: 15 ms on the development machine,
+    the cost of the session itself.
+
+    Raises:
+        sqlalchemy.exc.DBAPIError: The database refused it or could not be reached; a
+            payload of 8,000 bytes or more is refused.
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text("SELECT pg_notify(:channel, :payload)"), {"channel": channel, "payload": payload}
+        )
+
+
 def redact(database_url: str) -> str:
     """Return ``database_url`` with the password masked, safe to log or show in errors."""
     return make_url(database_url).render_as_string(hide_password=True)
