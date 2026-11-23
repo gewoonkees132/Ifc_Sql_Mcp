@@ -9,7 +9,7 @@ export
 
 .PHONY: help install up down reset-db migrate psql lint fmt typecheck test test-unit test-samples
 .PHONY: check samples ingest-samples dq dq-samples serve smoke bench-load fixture quirks
-.PHONY: audit-samples test-modern view view-smoke
+.PHONY: audit-samples test-modern view view-smoke demo
 
 help: ## List the available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
@@ -87,6 +87,9 @@ view: ## Show the loaded models in 3D in the browser, on 127.0.0.1 (needs `make 
 
 view-smoke: ## Start ifc-sql view, fetch a chunk over its port and stop it (needs `make ingest-samples`)
 	$(UV) run python scripts/view_smoke.py
+
+demo: ## The scripted Duplex demo, no LLM: download, load with --viewer, check, play (scripts/demo.py)
+	$(UV) run python scripts/demo.py
 
 bench-load: ## Time the load stage on the MEP sample in a throwaway database (needs `make up`)
 	$(UV) run python scripts/bench_load.py

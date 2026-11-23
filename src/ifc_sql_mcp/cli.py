@@ -6,14 +6,22 @@ so individual commands stay focused on their own job.
 
 import dataclasses
 import logging
+import os
 import socket
+import sys
+import tempfile
 import time
 import webbrowser
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal, TextIO, cast
 
+import anyio
 import typer
 import uvicorn
+from mcp import Client, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from sqlalchemy import Engine
 from sqlalchemy.exc import OperationalError
 
@@ -54,8 +62,13 @@ from ifc_sql_mcp.ingest.pipeline import (
 )
 from ifc_sql_mcp.logging_config import configure_logging
 from ifc_sql_mcp.server import tools
-from ifc_sql_mcp.server.app import Limits, build_server
+from ifc_sql_mcp.server.app import Limits, argument_checks, build_server
+from ifc_sql_mcp.viewer import demo as demo_play
+from ifc_sql_mcp.viewer.demo_script import SCRIPTS, Script
+from ifc_sql_mcp.viewer.feed import Feed, Resolver
 from ifc_sql_mcp.viewer.http import create_app
+from ifc_sql_mcp.viewer.listener import Listener, listen_connection
+from ifc_sql_mcp.viewer.reading import Reader
 from ifc_sql_mcp.viewer.security import new_token
 from ifc_sql_mcp.watch import Watcher, WatchEvent
 
@@ -63,6 +76,20 @@ logger = logging.getLogger(__name__)
 
 HOST = "127.0.0.1"
 """The one address ``ifc-sql view`` listens on; no setting changes it (ADR 14)."""
+
+FEED_START_SECONDS = 10.0
+"""How long ``ifc-sql demo`` waits for its listener to listen before it plays."""
+
+SERVE = [str(Path(sys.executable).with_name("ifc-sql")), "serve"]
+"""How ``ifc-sql demo`` starts the MCP server: as a client starts it, a process of its own."""
+
+PASSED_ON = (
+    "IFC_SQL_DATABASE_URL",
+    "IFC_SQL_DATA_DIR",
+    "IFC_SQL_READER_PASSWORD",
+    "IFC_SQL_LOG_LEVEL",
+)
+"""The settings ``ifc-sql demo`` hands the ``ifc-sql serve`` it starts, as a client would."""
 
 app = typer.Typer(
     name="ifc-sql",
@@ -538,8 +565,9 @@ def serve(ctx: typer.Context) -> None:
         # Fail before serving: a client shows a server that does not start as failed,
         # while one that starts but fails every call looks healthy.
         _require_latest_revision_as_reader(engine, database, "serve")
-        server = build_server(engine)
-        logger.info("serving", extra={"database": database, "transport": "stdio"})
+        server = build_server(engine, feed=settings.viewer_feed)
+        feed = {"viewer_feed": "on"} if settings.viewer_feed else {}
+        logger.info("serving", extra={"database": database, "transport": "stdio", **feed})
         server.run("stdio")
     except OperationalError as exc:
         typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
@@ -607,9 +635,11 @@ def view(
 
     It listens on 127.0.0.1 alone, reads as the read-only role ifc_reader, as serve does,
     and prints the page's URL on stdout. The URL holds a token, new on every start, that
-    the page needs. A model shows once ingest --viewer has built its scene. Stop with
-    Ctrl+C. Exit codes: 0 when stopped; 1 when the database is unreachable or not at the
-    latest migration, or the port is taken; 2 for a usage error (no such project or model).
+    the page needs. A model shows once ingest --viewer has built its scene. The page also
+    lists the calls of every MCP server on the database run with IFC_SQL_VIEWER_FEED=1,
+    and lights what each found. Stop with Ctrl+C. Exit codes: 0 when stopped; 1 when the
+    database is unreachable or not at the latest migration, or the port is taken; 2 for a
+    usage error (no such project or model).
     """
     settings = _database_settings(ctx)
     database = redact(reader_database_url(settings.database_url, settings.reader_password))
@@ -617,19 +647,8 @@ def view(
     try:
         _require_latest_revision_as_reader(engine, database, "view")
         _check_view_choice(engine, project, model_ids or [])
-        try:
-            # Bound here, not by uvicorn, so that a taken port is an error to report: uvicorn
-            # calls sys.exit(3) when its own bind fails.
-            sock = socket.create_server((HOST, port))
-        except OSError as exc:
-            typer.echo(
-                f"cannot listen on {HOST}:{port}: {exc.strerror or exc}; pick another --port, "
-                "or leave it out for a free one",
-                err=True,
-            )
-            raise typer.Exit(1) from exc
-        with sock:
-            _view(engine, sock, database, project, model_ids or [], no_open=no_open)
+        with _bound(port) as sock, _listening(engine, database) as (reader, feed):
+            _view(engine, sock, database, project, model_ids or [], reader, feed, no_open=no_open)
     except KeyboardInterrupt:
         # uvicorn stops on Ctrl+C, then raises the signal again once it has.
         typer.echo("stopped the viewer", err=True)
@@ -640,19 +659,58 @@ def view(
         engine.dispose()
 
 
-def _view(
+def _bound(port: int) -> socket.socket:
+    """A socket on 127.0.0.1:``port``, bound here; exit 1 with a message if it is taken.
+
+    Bound here, not by uvicorn, so that a taken port is an error to report: uvicorn calls
+    sys.exit(3) when its own bind fails.
+    """
+    try:
+        return socket.create_server((HOST, port))
+    except OSError as exc:
+        typer.echo(
+            f"cannot listen on {HOST}:{port}: {exc.strerror or exc}; pick another --port, "
+            "or leave it out for a free one",
+            err=True,
+        )
+        raise typer.Exit(1) from exc
+
+
+@contextmanager
+def _listening(engine: Engine, database: str) -> Iterator[tuple[Reader, Feed]]:
+    """The feed's reader and feed for ``engine``, its listener listening until the block ends.
+
+    Its sessions: one for the listener, and at most three for the page's routes and the
+    feed's selections together (ADR 14, decision 4).
+    """
+    reader = Reader(engine)
+    feed = Feed(Resolver(reader, argument_checks(build_server(engine))), database=database)
+    listener = Listener(lambda: listen_connection(engine), feed)
+    listener.start()
+    try:
+        yield reader, feed
+    finally:
+        listener.stop()
+        feed.close()
+
+
+def _serving(
     engine: Engine,
     sock: socket.socket,
     database: str,
+    reader: Reader,
+    feed: Feed,
+    *,
     project: str | None,
     model_ids: list[int],
-    *,
     no_open: bool,
-) -> None:
-    """Serve the viewer on ``sock`` until Ctrl+C, after printing its URL."""
+) -> uvicorn.Server:
+    """The uvicorn server of the page on ``sock``, after printing its URL and opening it."""
     port = sock.getsockname()[1]
     token = new_token()
-    viewer = create_app(engine, token, port=port, project=project, model_ids=model_ids)
+    viewer = create_app(
+        engine, token, port=port, project=project, model_ids=model_ids, feed=feed, reader=reader
+    )
     address = f"http://{HOST}:{port}/"
     logger.info("viewing", extra={"database": database, "address": address})
     # The URL with its token goes to stdout, once: it is the user's to open. Never to stderr
@@ -672,4 +730,193 @@ def _view(
         log_config=None,
         timeout_graceful_shutdown=2,
     )
-    uvicorn.Server(config).run(sockets=[sock])
+    return uvicorn.Server(config)
+
+
+def _view(
+    engine: Engine,
+    sock: socket.socket,
+    database: str,
+    project: str | None,
+    model_ids: list[int],
+    reader: Reader,
+    feed: Feed,
+    *,
+    no_open: bool,
+) -> None:
+    """Serve the viewer on ``sock`` until Ctrl+C, after printing its URL."""
+    server = _serving(
+        engine,
+        sock,
+        database,
+        reader,
+        feed,
+        project=project,
+        model_ids=model_ids,
+        no_open=no_open,
+    )
+    server.run(sockets=[sock])
+
+
+def _serve_client(errlog: TextIO) -> Client:
+    """A client of ``ifc-sql serve``, started over stdio as a client starts it, feed on."""
+    environment = {key: os.environ[key] for key in PASSED_ON if key in os.environ}
+    environment["IFC_SQL_VIEWER_FEED"] = "1"
+    command, *arguments = SERVE
+    server = StdioServerParameters(command=command, args=arguments, env=environment)
+    return Client(stdio_client(server, errlog=errlog))
+
+
+@app.command()
+def demo(
+    ctx: typer.Context,
+    script: Annotated[
+        Literal["duplex"],  # the names of SCRIPTS; Phase 4 of the plan adds audit
+        typer.Option("--script", help="The questions to play. duplex: the four Duplex models."),
+    ] = "duplex",
+    step: Annotated[
+        bool, typer.Option("--step", help="Wait for Enter before each question.")
+    ] = False,
+    pause: Annotated[
+        float,
+        typer.Option("--pause", min=0, metavar="SECONDS", help="Seconds between two questions."),
+    ] = 5.0,
+    check: Annotated[
+        bool,
+        typer.Option(
+            "--check",
+            help="Serve no page: play every question, compare each with the script, and "
+            "exit 1 on a difference.",
+        ),
+    ] = False,
+    port: Annotated[
+        int,
+        typer.Option(
+            "--port", min=0, max=65535, help="The port on 127.0.0.1; 0, the default, a free one."
+        ),
+    ] = 0,
+    no_open: Annotated[
+        bool, typer.Option("--no-open", help="Print the URL, but do not open the browser.")
+    ] = False,
+) -> None:
+    """Play a scripted demo through the MCP server, and light each answer in the viewer.
+
+    No LLM and no MCP client of yours: the demo starts ifc-sql serve over stdio, as a
+    client would, with IFC_SQL_VIEWER_FEED=1, and calls its tools; the page of ifc-sql
+    view lights what each call found. Its files must be loaded with --viewer and checked:
+    scripts/demo.py does that, then runs this. With --check it serves no page and exits
+    1 when a step differs from the script. Exit codes: 0 when stopped (or checked); 1
+    when the database is unreachable, not at the latest migration or lacks the files, the
+    feed or the MCP server does not start, a step differs, or the port is taken.
+    """
+    settings = _database_settings(ctx)
+    database = redact(reader_database_url(settings.database_url, settings.reader_password))
+    engine = make_reader_engine(settings, application="viewer")
+    played = SCRIPTS[script]
+    try:
+        _require_latest_revision_as_reader(engine, database, "demo")
+        with _listening(engine, database) as (reader, feed):
+            try:
+                models = demo_play.find_models(reader, played)
+            except demo_play.DemoError as exc:
+                typer.echo(str(exc), err=True)
+                raise typer.Exit(1) from exc
+            if not _live(feed):
+                typer.echo(
+                    f"the feed did not start listening on {database} within "
+                    f"{FEED_START_SECONDS:g} seconds",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            if check:
+                agreed = _play(lambda client: _check(played, client, feed, models))
+                if not agreed:
+                    raise typer.Exit(1)
+                return
+            with _bound(port) as sock:
+                server = _serving(
+                    engine,
+                    sock,
+                    database,
+                    reader,
+                    feed,
+                    project=None,
+                    model_ids=list(models.values()),
+                    no_open=no_open,
+                )
+                _play(lambda client: _show(played, client, feed, models, server, sock, pause, step))
+    except KeyboardInterrupt:
+        typer.echo("stopped the demo", err=True)
+    except OperationalError as exc:
+        typer.echo(f"cannot reach the database at {database}: {exc.orig}", err=True)
+        raise typer.Exit(1) from exc
+    finally:
+        engine.dispose()
+
+
+def _live(feed: Feed) -> bool:
+    deadline = time.monotonic() + FEED_START_SECONDS
+    while feed.status().state != "live":
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _play[T](run: Callable[[Client], Awaitable[T]]) -> T:
+    """Start ``ifc-sql serve`` and run ``run`` with its client; exit 1 if it does not start."""
+    with tempfile.TemporaryFile("w+", encoding="utf-8") as errlog:
+
+        async def session() -> T:
+            # A text file on every OS; typeshed types Windows' as a wrapper, not a TextIO.
+            async with _serve_client(cast(TextIO, errlog)) as client:
+                return await run(client)
+
+        try:
+            return anyio.run(session)
+        except Exception as exc:  # the server stopped or never started: its stderr says why
+            errlog.seek(0)
+            said = errlog.read().strip().splitlines()
+            why = said[-1] if said else str(demo_play.innermost(exc))
+            typer.echo(f"the MCP server stopped: {why}", err=True)
+            raise typer.Exit(1) from exc
+
+
+async def _check(script: Script, client: Client, feed: Feed, models: dict[str, int]) -> bool:
+    played = await demo_play.play(script, client, feed, models)
+    lines, agreed = demo_play.report(script, played)
+    for line in lines:
+        typer.echo(line)
+    return agreed
+
+
+async def _show(
+    script: Script,
+    client: Client,
+    feed: Feed,
+    models: dict[str, int],
+    server: uvicorn.Server,
+    sock: socket.socket,
+    pause: float,
+    step: bool,
+) -> None:
+    """Serve the page while the questions play, a pause apart; then serve until Ctrl+C."""
+
+    async def wait() -> None:
+        if step:
+            typer.echo("Enter for the next question", err=True)
+            await anyio.to_thread.run_sync(sys.stdin.readline)
+        else:
+            await anyio.sleep(pause)
+
+    async def between(_: demo_play.Played) -> None:
+        await wait()
+
+    async def steps() -> None:
+        await wait()  # the page loads the models meanwhile
+        played = await demo_play.play(script, client, feed, models, between=between)
+        _, agreed = demo_play.report(script, played)
+        verdict = "as the script says" if agreed else "with differences: run it with --check"
+        typer.echo(f"played {len(played)} questions, {verdict}; stop with Ctrl+C", err=True)
+
+    await demo_play.alongside(lambda: server.serve(sockets=[sock]), steps)
