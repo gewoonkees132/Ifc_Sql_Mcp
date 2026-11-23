@@ -38,6 +38,7 @@ uv run ifc-sql serve
 | `IFC_SQL_READER_PASSWORD` | The password of `ifc_reader`, set by `ifc-sql migrate` (dev default `ifc-reader-dev-only`). |
 | `IFC_SQL_DATA_DIR` | Instead of `IFC_SQL_DATABASE_URL`: the folder of the embedded PostgreSQL ([ADR 13](adr/0013-embedded-postgresql.md)). The server starts it, or attaches to the one running there, and still connects as `ifc_reader`. |
 | `IFC_SQL_LOG_LEVEL` | `INFO` by default; `DEBUG` also logs the text of every `run_sql` query ([Logging](#logging)). |
+| `IFC_SQL_VIEWER_FEED` | `1` (or `true`, `yes`, `on`) publishes every tool call to `ifc-sql view`'s page: one PostgreSQL notification per call, from a session of its own, which every `view` on the same database receives and lights up ([docs/viewer.md](viewer.md#the-mcp-servers-calls-the-feed)). Off by default; any login to the database can read the feed ([SECURITY.md](../SECURITY.md#the-viewers-feed-ifc_sql_viewer_feed)). With it, `run_sql`'s description tells the LLM how to make rows show in the viewer. |
 
 Before it reads the first message, the server checks the database, and refuses to start
 if it cannot use it (ADR 6, decision 3). These are the outcomes, from runs in this
@@ -125,7 +126,7 @@ environment, since Claude Code expands `${VAR}` there:
 Claude Code warns when a tool's output passes 10,000 tokens, and saves a text result of
 more than 50,000 characters to a file instead of showing it. The results here are built
 to stay below that: on the Duplex files, a full page of 100 MEP elements is 29,753
-characters and `get_element` on a wall 14,902, and `run_sql` stops at 30,000 characters
+characters and `get_element` on a wall 16,353, and `run_sql` stops at 30,000 characters
 of rows.
 
 ### Claude Desktop
@@ -275,7 +276,7 @@ quantities with their source, every property set (at most 500 values), classific
 materials in layer order, and the object's findings in the latest check (at most 100).
 
 ```jsonc
-// get_element {"object_id": 23}  — 14,902 characters in all
+// get_element {"object_id": 23}  — 16,353 characters in all
 {
   "object_id": 23, "model_id": 1, "discipline": "ARC",
   "global_id": "0iEHWY1$XA8eQeeULq4jDb", "object_kind": "element",
@@ -822,6 +823,13 @@ it can be long and carries whatever the conversation put into it (ADR 6, decisio
 An unexpected error adds a line with the traceback. The startup check adds two lines
 from Alembic (`Context impl PostgresqlImpl.`), as ingest and dq do.
 
+With `IFC_SQL_VIEWER_FEED=1` the startup line ends in `viewer_feed=on`, and a call whose
+notification fails adds `msg="viewer feed: call not published"` with the tool, the call's
+number and the database's error, never the payload; the call's result is unchanged. The
+notification itself carries `run_sql`'s text, clipped to fit: whoever listens on the
+database reads it, and PostgreSQL keeps it in its notification queue (`pg_notify/` in the
+data folder) until every listener has read it (ADR 14 amends ADR 6, decision 10).
+
 ## Tests
 
 | Test | Covers |
@@ -837,6 +845,7 @@ from Alembic (`Context impl PostgresqlImpl.`), as ingest and dq do.
 | `tests/integration/test_run_sql.py` | Every `run_sql` layer on its own: validator, executor, transaction (timeouts, `set_config`, a session per call), privileges; results, cuts and logging; the pinned list of functions sqlglot types. |
 | `tests/integration/test_mcp_failures.py` | A bug in a tool or resource: a generic message, the traceback in the log. |
 | `tests/integration/test_cli_serve.py`, `tests/unit/test_cli.py` | `ifc-sql serve` on an unreachable, unmigrated and too old database, and with a wrong password. |
-| `tests/integration/test_serve_stdio.py` | `ifc-sql serve` as a subprocess, through the SDK's stdio client: nothing but protocol on stdout. |
+| `tests/integration/test_serve_stdio.py` | `ifc-sql serve` as a subprocess, through the SDK's stdio client: nothing but protocol on stdout, with the viewer's feed off and on. |
+| `tests/integration/test_feed_publish.py` | The viewer's feed: no notification and no session with it off; one per call with it on, failed calls with their outcome, `run_sql`'s ids, a notification that fails changing nothing; the worst-case event delivered as `ifc_reader`. |
 | `tests/integration/test_mcp_smoke_script.py` | `make smoke`. |
 | `tests/samples/test_duplex_mcp.py` | The tools on the four Duplex files, with the figures on this page (`make test-samples`). |

@@ -92,6 +92,11 @@ prints carries a token, new on every start, that the page needs:
 
 ![The four Duplex models in ifc-sql view, Roof hidden, a ceiling clicked and its details open](docs/images/viewer-duplex.png)
 
+`make demo` (`uv run python scripts/demo.py`) loads the Duplex, checks it, and asks nine
+questions through the MCP server with no LLM, lighting each answer in the page
+([docs/viewer.md](docs/viewer.md#the-scripted-demo)). With `IFC_SQL_VIEWER_FEED=1`, the
+server your own client starts does the same for every call.
+
 To give Claude Code the server (the full instructions, also for Claude Desktop, are in
 [docs/mcp.md](docs/mcp.md#registering-it-with-a-client)):
 
@@ -183,6 +188,10 @@ that were rejected.
   on 127.0.0.1 to a page of plain ES modules with three.js, which draws each chunk as two
   BatchedMeshes: file B's 11,297 elements in 76 draw calls. The port answers only its own
   Host, every data route needs the start's token, and the page sets IFC text only as text.
+  With `IFC_SQL_VIEWER_FEED=1`, `serve` publishes each call as a PostgreSQL notification;
+  `view` checks every one as untrusted, and lights what the call found with the tools'
+  own SQL. `ifc-sql demo` plays nine questions on the Duplex through the real server, and
+  CI checks each answer on Linux and Windows.
 
 ### Asking through MCP
 
@@ -210,7 +219,7 @@ DELETE statement`.
 
 ## Quality
 
-- **Tests**: 1,389 unit and integration tests at 100 % branch coverage, plus 148 on the
+- **Tests**: 1,627 unit and integration tests at 100 % branch coverage, plus 152 on the
   real files: the four Duplex models (`make test-samples`) and the audit's five Revit
   2019–2022 exports, whose acceptance tests pin every audit and re-check finding
   (`make test-modern`, [docs/audit/](docs/audit/2026-11-implementation.md)). Integration tests run against real
@@ -237,7 +246,8 @@ src/ifc_sql_mcp/
   db/                    schema.py, engines, embedded PostgreSQL, migrations 0001-0020, view SQL
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   viewer/                3D scenes (ingest --viewer) and ifc-sql view: its app, its port's
-                         checks, and the page in static/, three.js vendored
+                         checks, the feed of MCP calls and what they light, the scripted
+                         demo, and the page in static/, three.js vendored
   dq/                    rule catalogue, sync, runs
   rules/dq_rules.yaml    the 45 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema description
@@ -248,7 +258,7 @@ tests/
   modern/                the audit's Revit 2019-2022 exports (pytest -m modern)
   fixtures/              a synthetic Revit-style IFC file and the script that writes it
   support/               helpers the suites share: sample files, an MCP client, builders
-scripts/                 sample downloads, quirks report, load benchmark, MCP and view smoke tests
+scripts/                 sample downloads, the demo, quirks report, load benchmark, MCP and view smoke tests
 docs/                    data model, Revit quirks, data quality, MCP server, ADRs, audit
 ```
 
@@ -260,14 +270,14 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
 | [docs/revit-ifc-quirks.md](docs/revit-ifc-quirks.md) | Each Revit export habit, how often it occurs in the samples, and what the pipeline does |
 | [docs/data-quality.md](docs/data-quality.md) | The rule catalogue, severities, runs and the findings on the samples |
 | [docs/mcp.md](docs/mcp.md) | Running the server, registering it with a client, every tool, resource and the prompt |
-| [docs/viewer.md](docs/viewer.md) | `ifc-sql view`: starting it, what the page shows, its routes, the frames per second on file B, and upgrading three.js |
+| [docs/viewer.md](docs/viewer.md) | `ifc-sql view` and `ifc-sql demo`: starting them, what the page shows, the scripted demo, the feed of MCP calls and what each lights, the event, the routes, the frames per second on file B, and upgrading three.js |
 | [docs/revit-export-settings.md](docs/revit-export-settings.md) | The Revit export options the tool reads, the habits that keep answers right, and `--geometry` for files without quantities |
 | [docs/windows.md](docs/windows.md) | The quick start in PowerShell, without `make` and without Docker (the embedded database), including `ifc-sql watch` on an export folder and `ifc-sql view`; CI runs it on Windows |
-| [docs/adr/](docs/adr/README.md) | Fourteen architecture decision records; the fourteenth, the viewer, a draft |
+| [docs/adr/](docs/adr/README.md) | Fourteen architecture decision records |
 | [docs/audit/](docs/audit/2026-11-modern-revit-exports.md) | Audit on Revit 2021 and 2022 exports (IFC4, IFC2X3): an architect's workflow, what works and what does not, and a prioritised backlog |
 | [docs/audit/2026-11-recheck.md](docs/audit/2026-11-recheck.md) | The audit's workflow repeated on the fixed tool, and the four findings it made (R1–R4) |
 | [docs/audit/2026-11-implementation.md](docs/audit/2026-11-implementation.md) | How the audit's backlog and the re-check's findings were implemented: per finding, the issue, the commits and the figures before and after |
-| [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials, the viewer's port |
+| [SECURITY.md](SECURITY.md) | The threat model: LLM-written SQL, prompt injection through IFC content, credentials, the viewer's port and its feed |
 
 `make help` lists every target.
 
@@ -290,8 +300,10 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
   quality runs are kept until deleted.
 - The MCP server is for one local user: stdio only, no authentication. `ifc-sql view`
   listens on 127.0.0.1 only, behind a token ([SECURITY.md](SECURITY.md)).
-- The viewer shows the models, not yet what the MCP server's calls found: that is the
-  next phase of [its plan](docs/plans/2026-11-ifc-viewer.md).
+- The viewer's feed reaches every login to the database, which can also send to it; it is
+  off unless `IFC_SQL_VIEWER_FEED=1` ([SECURITY.md](SECURITY.md#the-viewers-feed-ifc_sql_viewer_feed)).
+  The audit's scripted questions and the demo on GitHub Pages are the next phases of
+  [the viewer's plan](docs/plans/2026-11-ifc-viewer.md).
 
 ## Licences
 
