@@ -213,7 +213,10 @@ and CI does not play it (the `modern` tests do, below).
   buildings are four projects, and are never drawn together.
 
 `tests/modern/test_audit_demo.py` pins every figure and selection of the table, and the
-characters below, on the database the audit's tests load in the same order. On a fresh
+characters of steps 1 to 3 below, on the database the audit's tests load in the same
+order. Step 4's depend on the database's collation, which orders the comparison's
+examples by GlobalId: 2,129 characters on the embedded database on Windows
+(`English_United States.1252`), 2,084 on CI's PostgreSQL (`en_US.utf8`). On a fresh
 embedded database (Windows 11, the Phase 0 machine, PostgreSQL 16 of the `embedded`
 extra, 2026-11-23), with the files already downloaded, `uv run python scripts/demo.py
 --script audit --check` took 107.8 s, of which the five ingests with `--viewer` took
