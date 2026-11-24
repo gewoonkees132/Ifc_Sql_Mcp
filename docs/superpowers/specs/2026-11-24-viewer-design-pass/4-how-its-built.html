@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ---------- the thread around the mockups (T3 theme) ---------- */
+  .intro { margin: 0 0 16px; color: var(--muted-foreground, var(--foreground)); font-size: 13px; line-height: 1.5; }
+  .cap { margin: 0 0 6px; font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, var(--foreground)); }
+  .row { display: flex; gap: 22px; margin-top: 22px; align-items: flex-start; }
+  .notes { flex: 1; font-size: 13px; line-height: 1.55; color: var(--foreground); }
+  .notes ul { margin: 22px 0 0; padding-left: 18px; }
+  .notes li { margin: 0 0 6px; }
+
+  /* ---------- the app, in the CV's tokens ---------- */
+  .frame { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); }
+  .frame.phone { width: 234px; height: 468px; flex: none; border-radius: 22px; border-width: 2px; }
+  .screen {
+    --bg: #ffffff; --surface: #f7f8f9; --surface-alt: #fafbfc; --hover: #f0f2f4;
+    --ink: #1a1f24; --ink-2: #586069; --ink-3: #6b7480;
+    --teal: #0E8192; --teal-dark: #0a6473; --teal-ink: #0a6b7a;
+    --teal-08: rgba(14,129,146,.08); --teal-15: rgba(14,129,146,.15); --teal-20: rgba(14,129,146,.2);
+    --line: #d1d5da; --line-2: #e1e4e8; --line-3: #f0f3f6;
+    --canvas: #eef0f3;
+    --shadow-sm: 0 1px 3px 0 rgba(0,0,0,.06), 0 1px 2px 0 rgba(0,0,0,.04);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.08), 0 4px 6px -2px rgba(0,0,0,.04);
+    --shadow-2xl: 0 25px 50px -12px rgba(0,0,0,.25);
+    position: relative; overflow: hidden;
+    font-family: 'Nunito', -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--canvas);
+    -webkit-font-smoothing: antialiased;
+  }
+  .screen *, .screen *::before, .screen *::after { box-sizing: border-box; }
+  .crop { position: absolute; width: 425px; height: 275px; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+    -webkit-mask-composite: source-in;
+            mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+            mask-composite: intersect; }
+  .crop img { position: absolute; left: -200px; top: -100px; width: 720px; height: 450px; max-width: none; }
+
+  /* the explainer */
+  .scrim { position: absolute; inset: 0; background: rgba(26,31,36,.38); }
+  .modal { position: absolute; left: 50%; top: 20px; transform: translateX(-50%); width: 800px; background: var(--bg); border-radius: 16px; box-shadow: var(--shadow-2xl); overflow: hidden; }
+  .hero { position: relative; height: 96px; background: var(--canvas); overflow: hidden; }
+  .hero .crop { left: 400px; top: -80px; }
+  .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to right, rgba(0,0,0,.78) 0%, rgba(0,0,0,.45) 55%, rgba(0,0,0,.15) 100%); }
+  .hero-text { position: absolute; z-index: 1; left: 28px; bottom: 16px; color: #fff; }
+  .hero-text h2 { margin: 0; font-size: 24px; font-weight: 700; line-height: 1.2; }
+  .hero-text p { margin: 2px 0 0; font-size: 14px; opacity: .9; }
+  .close { position: absolute; z-index: 2; right: 16px; top: 16px; width: 36px; height: 36px; border-radius: 99px; background: rgba(255,255,255,.92); display: grid; place-items: center; font-size: 20px; color: var(--ink-2); }
+  .tabs { display: flex; gap: 6px; padding: 10px 24px; border-bottom: 1px solid var(--line-2); background: var(--surface-alt); }
+  .tab { padding: 5px 14px; border-radius: 6px; font-size: 14px; font-weight: 500; color: var(--ink-2); }
+  .tab.on { background: var(--teal-08); color: var(--teal-ink); font-weight: 700; }
+  .inner { padding: 18px 28px 20px; }
+  .inner h3 { margin: 0 0 12px; font-size: 13px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+
+  /* the diagram */
+  .dia { position: relative; width: 744px; height: 356px; }
+  .dia svg.wires { position: absolute; inset: 0; overflow: visible; }
+  .node { position: absolute; width: 218px; height: 108px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 10px; padding: 10px 12px; box-shadow: var(--shadow-sm); }
+  .node .h { display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 700; line-height: 1.2; }
+  .node .h small { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--ink-3); }
+  .n { width: 22px; height: 22px; flex: none; border-radius: 99px; background: var(--teal); color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+  .node p { margin: 5px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.38; }
+  .store { position: absolute; left: 0; right: 0; top: 136px; height: 58px; border-radius: 12px; background: var(--teal-08); border: 1px solid var(--teal-15); display: flex; align-items: center; gap: 12px; padding: 0 16px; }
+  .store svg { width: 26px; height: 30px; flex: none; }
+  .store b { font-size: 15px; white-space: nowrap; }
+  .store b small { font-size: 12px; font-weight: 600; color: var(--teal-ink); margin-left: 4px; }
+  .store p { margin: 0; font-size: 13px; color: var(--ink-2); line-height: 1.35; }
+  .wl { position: absolute; font-size: 11px; font-weight: 700; color: var(--teal-ink); white-space: nowrap; }
+  .key { position: absolute; left: 0; bottom: -1px; font-size: 12px; color: var(--ink-3); display: flex; align-items: center; gap: 8px; }
+
+  /* follow one wall */
+  .follow { margin-top: 18px; background: var(--surface); border: 1px solid var(--line-3); border-radius: 12px; padding: 12px 16px; }
+  .follow h4 { margin: 0 0 8px; font-size: 14px; font-weight: 700; }
+  .fl { display: grid; grid-template-columns: 1fr 22px 1fr 22px 1fr; align-items: start; gap: 6px; font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+  .fl .arr { color: var(--ink-3); text-align: center; padding-top: 14px; }
+  .fl em { display: block; font-style: normal; font-size: 11px; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+  .fl code { font-family: 'Cascadia Mono', Consolas, monospace; font-size: 12px; color: var(--ink); background: var(--bg); border: 1px solid var(--line-2); border-radius: 6px; padding: 2px 6px; display: inline-block; }
+  .fl b { color: var(--ink); font-weight: 600; }
+  .built { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; color: var(--ink-3); }
+  .tech { padding: 3px 10px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line-3); color: var(--ink-2); font-weight: 600; }
+  .built a { margin-left: auto; color: var(--teal-ink); font-weight: 700; text-decoration: none; }
+
+  /* phone */
+  .sheet { position: absolute; left: 0; right: 0; top: 70px; bottom: 0; background: #fff; border-radius: 18px 18px 0 0; box-shadow: 0 -8px 24px -6px rgba(0,0,0,.14); overflow: hidden; }
+  .grab { width: 40px; height: 5px; border-radius: 99px; background: var(--line); margin: 8px auto 4px; }
+  .s-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 16px 8px; }
+  .s-head b { font-size: 17px; }
+  .s-head span { font-size: 20px; color: var(--ink-3); }
+  .tl { position: relative; padding: 14px 16px 0 16px; }
+  .tl::before { content: ""; position: absolute; left: 26px; top: 24px; bottom: 0; width: 2px; background: var(--line-2); }
+  .ti { position: relative; display: flex; gap: 12px; padding-bottom: 14px; }
+  .ti .n { position: relative; z-index: 1; box-shadow: 0 0 0 4px #fff; }
+  .ti b { display: block; font-size: 15px; line-height: 1.3; }
+  .ti p { margin: 2px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.38; }
+  .ti.db > div { background: var(--teal-08); border: 1px solid var(--teal-15); border-radius: 10px; padding: 8px 10px; margin: -6px 0 0; flex: 1; }
+  .ti.out .n { background: #fff; color: var(--teal-ink); border: 2px solid var(--teal); }
+</style>
+</head>
+<body>
+
+<p class="intro">The "?" explainer gets a second tab, <b>How it's built</b>: one diagram from a Revit export to this page, with each step in a sentence, then one real wall followed through it. It shows the real pipeline from the README.</p>
+
+<!-- ============================================================ desktop -->
+<p class="cap">Desktop: the ? button, second tab</p>
+<div class="frame" style="width:696px;height:600px"><div class="screen" style="width:928px;height:800px;zoom:.75">
+  <div class="crop" style="left:470px;top:300px;transform:scale(2);transform-origin:0 0"><img src="../../../images/demo-duplex.png" alt=""></div>
+  <div class="scrim"></div>
+
+  <div class="modal">
+    <div class="hero">
+      <div class="crop"><img src="../../../images/demo-duplex.png" alt=""></div>
+      <div class="hero-text"><h2>Ask your building models</h2><p>From a Revit export to an answer you can see</p></div>
+      <div class="close">×</div>
+    </div>
+    <div class="tabs"><span class="tab">What it does</span><span class="tab on">How it's built</span></div>
+
+    <div class="inner">
+      <h3>From Revit to this page</h3>
+      <div class="dia">
+        <svg class="wires" width="744" height="356" aria-hidden="true">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#8a939d"/></marker>
+            <marker id="at" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#0E8192"/></marker>
+          </defs>
+          <!-- row 1 -->
+          <line x1="219" y1="52" x2="260" y2="52" stroke="#8a939d" stroke-width="2" marker-end="url(#ah)"/>
+          <line x1="482" y1="52" x2="523" y2="52" stroke="#8a939d" stroke-width="2" marker-end="url(#ah)"/>
+          <!-- into the store -->
+          <line x1="635" y1="109" x2="635" y2="134" stroke="#8a939d" stroke-width="2" marker-end="url(#ah)"/>
+          <!-- out of the store -->
+          <line x1="110" y1="196" x2="110" y2="224" stroke="#8a939d" stroke-width="2" marker-start="url(#ah)" marker-end="url(#ah)"/>
+          <line x1="372" y1="196" x2="372" y2="224" stroke="#8a939d" stroke-width="2" marker-end="url(#ah)"/>
+          <line x1="635" y1="196" x2="635" y2="224" stroke="#8a939d" stroke-width="2" marker-end="url(#ah)"/>
+          <!-- the feed -->
+          <line x1="483" y1="278" x2="522" y2="278" stroke="#0E8192" stroke-width="2" stroke-dasharray="4 4" marker-end="url(#at)"/>
+          <line x1="2" y1="348" x2="38" y2="348" stroke="#0E8192" stroke-width="2" stroke-dasharray="4 4"/>
+        </svg>
+
+        <div class="node" style="left:0;top:0"><div class="h"><span class="n">1</span>IFC export<small>Revit</small></div><p>Your model as Revit exports it: valid, but with mixed units and packed names.</p></div>
+        <div class="node" style="left:263px;top:0"><div class="h"><span class="n">2</span>Read<small>IfcOpenShell</small></div><p>Every element is read with its properties and materials; its shape becomes 3D.</p></div>
+        <div class="node" style="left:526px;top:0"><div class="h"><span class="n">3</span>Clean up</div><p>Units become metres; names split into family, type and Revit id. What doesn't fit is logged.</p></div>
+
+        <div class="store">
+          <svg viewBox="0 0 26 30" aria-hidden="true"><ellipse cx="13" cy="5" rx="11" ry="4" fill="none" stroke="#0E8192" stroke-width="2"/><path d="M2 5v20c0 2.2 4.9 4 11 4s11-1.8 11-4V5M2 15c0 2.2 4.9 4 11 4s11-1.8 11-4" fill="none" stroke="#0E8192" stroke-width="2"/></svg>
+          <b><span class="n" style="display:inline-grid;margin-right:6px;vertical-align:-5px">4</span>Store<small>PostgreSQL 16</small></b>
+          <p>One model in one go: elements, properties, quantities and materials in their own tables, and the 3D per storey, ready to draw.</p>
+        </div>
+
+        <div class="node" style="left:0;top:226px"><div class="h"><span class="n">5</span>Check<small>45 rules</small></div><p>Flags gaps like missing fire ratings or rooms counted twice. Every run is kept.</p></div>
+        <div class="node" style="left:263px;top:226px"><div class="h"><span class="n">6</span>Claude asks<small>MCP</small></div><p>Through 11 read-only tools. A query that would change data is refused.</p></div>
+        <div class="node" style="left:526px;top:226px;border-color:var(--teal-15)"><div class="h"><span class="n">7</span>You see<small>three.js</small></div><p>This page draws the stored 3D and lights up what each answer found.</p></div>
+
+        <span class="wl" style="left:380px;top:200px">read-only</span>
+        <span class="wl" style="left:643px;top:200px">read-only</span>
+        <span class="key"><span style="width:46px"></span>Each call Claude makes lights up on this page.</span>
+      </div>
+
+      <div class="follow">
+        <h4>Follow one wall</h4>
+        <div class="fl">
+          <div><em>In the IFC file</em><code>Basic Wall:Interior - Furring (152 mm Stud):190774</code></div>
+          <div class="arr">→</div>
+          <div><em>After clean-up</em>Family <b>Basic Wall</b> · type <b>Interior - Furring (152 mm Stud)</b> · Revit id <b>190774</b></div>
+          <div class="arr">→</div>
+          <div><em>In the demo</em>Question 8 shows everything stored about it: properties, materials and findings.</div>
+        </div>
+      </div>
+
+      <div class="built"><span>Built with</span><span class="tech">Python</span><span class="tech">IfcOpenShell</span><span class="tech">PostgreSQL 16</span><span class="tech">MCP</span><span class="tech">three.js</span><a>The full design on GitHub →</a></div>
+    </div>
+  </div>
+</div></div>
+
+<div class="row">
+  <!-- ============================================================ phone -->
+  <div>
+    <p class="cap">Phone: the same, top to bottom</p>
+    <div class="frame phone"><div class="screen" style="width:390px;height:780px;zoom:.6">
+      <div class="crop" style="left:-17px;top:20px"><img src="../../../images/demo-duplex.png" alt=""></div>
+      <div class="scrim"></div>
+      <div class="sheet">
+        <div class="grab"></div>
+        <div class="s-head"><b>Ask your building models</b><span>×</span></div>
+        <div class="tabs" style="padding:8px 16px"><span class="tab">What it does</span><span class="tab on">How it's built</span></div>
+        <div class="tl">
+          <div class="ti"><span class="n">1</span><div><b>IFC export</b><p>Your model as Revit exports it, with mixed units and packed names.</p></div></div>
+          <div class="ti"><span class="n">2</span><div><b>Read</b><p>IfcOpenShell reads every element and turns its shape into 3D.</p></div></div>
+          <div class="ti"><span class="n">3</span><div><b>Clean up</b><p>Metres, and names split into family, type and Revit id.</p></div></div>
+          <div class="ti db"><span class="n">4</span><div><b>Store</b><p>One PostgreSQL database: the data and the 3D.</p></div></div>
+          <div class="ti out"><span class="n">5</span><div><b>Check</b><p>45 rules flag gaps, every run kept.</p></div></div>
+          <div class="ti out"><span class="n">6</span><div><b>Claude asks</b><p>Through 11 read-only tools.</p></div></div>
+          <div class="ti out"><span class="n">7</span><div><b>You see</b><p>This page lights up each answer.</p></div></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+  <div class="notes">
+    <ul>
+      <li>Steps 1 to 4 happen once per export, when you load it. Steps 5 to 7 all read the same database.</li>
+      <li>Every name and number in it is real: the 45 rules, the 11 tools, and the wall from question 8.</li>
+      <li>Each step can open its own short explanation later, if you want one; for now a sentence each.</li>
+      <li>On a phone the diagram becomes a timeline: 1 to 4 in line, then the three that read the database.</li>
+    </ul>
+  </div>
+</div>
+
+</body>
+</html>

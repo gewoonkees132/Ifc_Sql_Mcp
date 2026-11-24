@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ---------- the thread around the mockups (T3 theme) ---------- */
+  .intro { margin: 0 0 16px; color: var(--muted-foreground, var(--foreground)); font-size: 13px; line-height: 1.5; }
+  .cap { margin: 0 0 6px; font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, var(--foreground)); }
+  .gap { height: 22px; }
+
+  /* ---------- the app, in the CV's tokens ---------- */
+  .frame { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); width: 696px; }
+  .screen {
+    --bg: #ffffff; --surface: #f7f8f9; --surface-alt: #fafbfc; --hover: #f0f2f4;
+    --ink: #1a1f24; --ink-2: #586069; --ink-3: #6b7480;
+    --teal: #0E8192; --teal-dark: #0a6473; --teal-ink: #0a6b7a;
+    --teal-08: rgba(14,129,146,.08); --teal-15: rgba(14,129,146,.15); --teal-20: rgba(14,129,146,.2);
+    --line: #d1d5da; --line-2: #e1e4e8; --line-3: #f0f3f6;
+    --canvas: #eef0f3;
+    --shadow-sm: 0 1px 3px 0 rgba(0,0,0,.06), 0 1px 2px 0 rgba(0,0,0,.04);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.08), 0 4px 6px -2px rgba(0,0,0,.04);
+    --shadow-xl: 0 20px 25px -5px rgba(0,0,0,.10), 0 10px 10px -5px rgba(0,0,0,.04);
+    --shadow-2xl: 0 25px 50px -12px rgba(0,0,0,.25);
+    position: relative; overflow: hidden; zoom: .75;
+    font-family: 'Nunito', -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.55; color: var(--ink); background: var(--canvas);
+    -webkit-font-smoothing: antialiased;
+  }
+  .crop { position: absolute; width: 850px; height: 550px; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+    -webkit-mask-composite: source-in;
+            mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+            mask-composite: intersect; }
+  .crop img { position: absolute; left: -400px; top: -200px; width: 1440px; height: 900px; max-width: none; }
+
+  /* ---------- the explainer, as the CV's project modal ---------- */
+  .scrim { position: absolute; inset: 0; background: rgba(26,31,36,.38); }
+  .modal { position: absolute; left: 50%; top: 24px; transform: translateX(-50%); width: 660px; background: var(--bg); border-radius: 16px; box-shadow: var(--shadow-2xl); overflow: hidden; }
+  .hero { position: relative; height: 128px; background: var(--canvas); overflow: hidden; }
+  .hero .crop { left: 300px; top: -62px; width: 425px; height: 275px; }
+  .hero .crop img { left: -200px; top: -100px; width: 720px; height: 450px; }
+  .hero::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, rgba(0,0,0,.72) 0%, rgba(0,0,0,.25) 65%, transparent 100%); }
+  .hero-text { position: absolute; z-index: 1; left: 28px; right: 80px; bottom: 16px; color: #fff; }
+  .hero-text h2 { margin: 0; font-size: 26px; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; }
+  .hero-text p { margin: 4px 0 0; font-size: 15px; opacity: .92; }
+  .close { position: absolute; z-index: 2; right: 16px; top: 16px; width: 38px; height: 38px; border-radius: 99px; background: rgba(255,255,255,.92); display: grid; place-items: center; font-size: 20px; color: var(--ink-2); box-shadow: var(--shadow-lg); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line-2); background: var(--surface-alt); }
+  .stat { padding: 12px 20px; }
+  .stat + .stat { border-left: 1px solid var(--line-2); }
+  .stat b { display: block; font-size: 24px; font-weight: 700; line-height: 1.1; background: linear-gradient(135deg, #0E8192, #0a6473); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .stat span { font-size: 13px; color: var(--ink-2); }
+  .inner { padding: 18px 28px 22px; }
+  .inner h3 { margin: 0 0 10px; font-size: 13px; font-weight: 700; color: var(--ink-2); text-transform: uppercase; letter-spacing: .05em; }
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 18px; }
+  .steps .n { width: 26px; height: 26px; border-radius: 99px; background: var(--teal); color: #fff; display: grid; place-items: center; font-size: 13px; font-weight: 700; margin-bottom: 6px; }
+  .steps b { display: block; font-size: 16px; margin-bottom: 2px; }
+  .steps p { margin: 0; font-size: 14px; color: var(--ink-2); line-height: 1.45; }
+  .why { list-style: none; margin: 0 0 16px; padding: 0; }
+  .why li { position: relative; padding-left: 20px; margin-bottom: 6px; font-size: 14px; color: var(--ink-2); line-height: 1.45; }
+  .why li::before { content: ""; position: absolute; left: 2px; top: 7px; width: 8px; height: 8px; border-radius: 99px; background: var(--teal); }
+  .why b { color: var(--ink); }
+  .demo { background: var(--surface); border: 1px solid var(--line-3); border-radius: 12px; padding: 14px 16px; }
+  .demo p { margin: 0 0 12px; font-size: 14px; color: var(--ink-2); line-height: 1.45; }
+  .demo p b { color: var(--ink); }
+  .demo a { color: var(--teal-ink); font-weight: 600; text-decoration: none; }
+  .btns { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-radius: 8px; font-size: 14px; font-weight: 700; }
+  .btn.primary { background: linear-gradient(135deg, #0E8192, #0a6473); color: #fff; box-shadow: 0 6px 14px -6px rgba(14,129,146,.5); }
+  .btn.second { background: var(--bg); border: 1px solid var(--line); color: var(--ink); }
+  .made { display: flex; align-items: center; justify-content: space-between; margin-top: 14px; font-size: 12px; color: var(--ink-3); }
+
+  /* ---------- the model panel ---------- */
+  .mpanel { position: absolute; right: 16px; top: 16px; bottom: 16px; width: 350px; background: var(--bg); border-radius: 14px; box-shadow: var(--shadow-xl), 0 0 0 1px var(--line-2); display: flex; flex-direction: column; overflow: hidden; }
+  .m-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--line-3); }
+  .m-head b { font-size: 16px; }
+  .m-head .x { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--ink-3); font-size: 20px; }
+  .m-body { padding: 12px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .sect h4 { margin: 0 0 6px; font-size: 13px; font-weight: 700; color: var(--ink-2); display: flex; justify-content: space-between; align-items: baseline; }
+  .sect h4 a { font-weight: 600; color: var(--teal-ink); font-size: 12px; text-decoration: none; }
+  .select { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; font-weight: 600; }
+  .select span { color: var(--ink-3); font-size: 13px; }
+  .disc { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+  .disc + .disc { border-top: 1px solid var(--line-3); }
+  .disc .sw { width: 14px; height: 14px; border-radius: 4px; flex: none; }
+  .disc .d { flex: 1; min-width: 0; }
+  .disc .d b { display: block; font-size: 14px; line-height: 1.25; }
+  .disc .d span { display: block; font-size: 12px; color: var(--ink-3); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tog { width: 34px; height: 20px; border-radius: 99px; background: var(--teal); position: relative; flex: none; }
+  .tog::after { content: ""; position: absolute; right: 2px; top: 2px; width: 16px; height: 16px; border-radius: 99px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .tog.off { background: var(--line); }
+  .tog.off::after { right: auto; left: 2px; }
+  .storey { display: flex; align-items: center; gap: 10px; padding: 4px 0; font-size: 14px; }
+  .box { width: 16px; height: 16px; border-radius: 4px; background: var(--teal); color: #fff; display: grid; place-items: center; font-size: 11px; font-weight: 700; flex: none; }
+  .box.off { background: #fff; border: 1.5px solid var(--line); }
+  .storey .nm { flex: 1; }
+  .storey .el { color: var(--ink-2); font-variant-numeric: tabular-nums; width: 64px; text-align: right; }
+  .storey .ct { color: var(--ink-3); font-size: 12px; width: 70px; text-align: right; }
+  .row-tog { display: flex; align-items: center; justify-content: space-between; font-size: 14px; }
+  .row-tog span { display: block; font-size: 12px; color: var(--ink-3); }
+  .fabon { position: absolute; height: 40px; padding: 0 14px; border-radius: 99px; background: var(--teal-08); border: 1px solid var(--teal-15); display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 700; color: var(--teal-ink); }
+  .pill { position: absolute; display: flex; gap: 2px; padding: 4px; border-radius: 99px; background: rgba(255,255,255,.92); border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); }
+  .pill span { padding: 6px 14px; border-radius: 99px; font-size: 13px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+  .askb { position: absolute; height: 48px; padding: 0 18px 0 16px; border-radius: 99px; background: linear-gradient(135deg, #0E8192, #0a6473); color: #fff; display: inline-flex; align-items: center; gap: 9px; font-size: 15px; font-weight: 700; box-shadow: 0 10px 20px -6px rgba(14,129,146,.45); }
+  .askb svg { width: 18px; height: 18px; }
+</style>
+</head>
+<body>
+
+<p class="intro">The two remaining parts. The "?" button opens an explainer in the style of your CV's project pop-up: a picture, three numbers, then how it works and why it helps. The Model button opens a panel on the right with everything that is shown. Both use "Ask Claude".</p>
+
+<!-- ============================================================ the explainer -->
+<p class="cap">The ? button, as the demo shows it</p>
+<div class="frame" style="height:560px"><div class="screen" style="width:928px;height:747px">
+  <div class="crop" style="left:120px;top:60px"><img src="../../../images/demo-duplex.png" alt=""></div>
+  <div class="scrim"></div>
+
+  <div class="modal">
+    <div class="hero">
+      <div class="crop"><img src="../../../images/demo-duplex.png" alt=""></div>
+      <div class="hero-text"><h2>Ask your building models</h2><p>Questions in plain language about Revit's IFC exports, answered from a database and shown in 3D.</p></div>
+      <div class="close">×</div>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>11</b><span>tools Claude can use</span></div>
+      <div class="stat"><b>45</b><span>data-quality checks</span></div>
+      <div class="stat"><b>0</b><span>changes to your models</span></div>
+    </div>
+    <div class="inner">
+      <h3>How it works</h3>
+      <div class="steps">
+        <div><div class="n">1</div><b>Load</b><p>Your Revit IFC exports go into a database as they are. Mixed units and packed names are untangled on the way in.</p></div>
+        <div><div class="n">2</div><b>Ask</b><p>Ask Claude in your own words. It answers with read-only queries, so it can't change a model.</p></div>
+        <div><div class="n">3</div><b>See</b><p>Each answer lights up here: the walls, doors or rooms it found, and how it found them.</p></div>
+      </div>
+      <h3>Why it helps</h3>
+      <ul class="why">
+        <li><b>Answers you can check.</b> Every answer shows how it was found: the tool Claude used, its settings, and the SQL whenever Claude wrote its own.</li>
+        <li><b>Problems surface early.</b> 45 checks flag missing fire ratings, rooms counted twice and placeholder values Revit leaves behind.</li>
+        <li><b>Your models stay on your computer.</b> Claude sees only the results of the queries it runs.</li>
+      </ul>
+      <div class="demo">
+        <p><b>About this demo.</b> The Duplex Apartment: four models (architecture, mechanical, electrical, plumbing) by buildingSMART, <a>CC BY 4.0</a>. Nine questions, answered by the real tools and recorded. Claude doesn't run on this page.</p>
+        <div class="btns"><span class="btn primary">Try it on your own models →</span><span class="btn second">View on GitHub</span></div>
+      </div>
+    </div>
+  </div>
+</div></div>
+
+<div class="gap"></div>
+
+<p class="cap">In the local app, the last box reads instead</p>
+<div class="frame" style="height:118px"><div class="screen" style="width:928px;height:157px;background:#fff">
+  <div class="demo" style="margin:16px 28px">
+    <p><b>Connect Claude.</b> Add ifc-sql to Claude Desktop or Claude Code once. Keep this page open and ask Claude there: whatever it looks up lights up here. Asking from this page comes in the next version.</p>
+    <div class="btns"><span class="btn primary">Set up Claude Desktop</span><span class="btn second">Set up Claude Code</span></div>
+  </div>
+</div></div>
+
+<div class="gap"></div>
+
+<!-- ============================================================ the model panel -->
+<p class="cap">The Model button: what is shown</p>
+<div class="frame" style="height:465px"><div class="screen" style="width:928px;height:620px">
+  <div class="crop" style="left:-60px;top:40px"><img src="../../../images/demo-duplex.png" alt=""></div>
+  <div class="askb" style="left:20px;bottom:20px"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M12 2.5l2.1 6.4 6.4 2.1-6.4 2.1L12 19.5l-2.1-6.4L3.5 11l6.4-2.1z"/><path d="M19 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" opacity=".75"/></svg>Ask Claude</div>
+  <div class="pill" style="left:220px;bottom:24px"><span>⤢ Fit all</span><span>◎ Fit answer</span><span>◐ Only the answer</span></div>
+
+  <aside class="mpanel">
+    <div class="m-head"><b>Model</b><span class="x">×</span></div>
+    <div class="m-body">
+      <div class="sect">
+        <h4>Project</h4>
+        <div class="select">Duplex Apartment <span>▾</span></div>
+      </div>
+      <div class="sect">
+        <h4>Disciplines</h4>
+        <div class="disc"><span class="sw" style="background:#c9ccd1"></span><div class="d"><b>Architecture</b><span>268 elements · in their material colours</span></div><span class="tog"></span></div>
+        <div class="disc"><span class="sw" style="background:#2f7ed8"></span><div class="d"><b>Mechanical</b><span>926 elements · tinted blue</span></div><span class="tog"></span></div>
+        <div class="disc"><span class="sw" style="background:#e0a100"></span><div class="d"><b>Electrical</b><span>103 elements · tinted amber · hidden</span></div><span class="tog off"></span></div>
+        <div class="disc"><span class="sw" style="background:#16a085"></span><div class="d"><b>Plumbing</b><span>498 elements · tinted green</span></div><span class="tog"></span></div>
+      </div>
+      <div class="sect">
+        <h4>Storeys <a>Show all</a></h4>
+        <div class="storey"><span class="box">✓</span><span class="nm">Roof</span><span class="el">6.00 m</span><span class="ct">22</span></div>
+        <div class="storey"><span class="box">✓</span><span class="nm">Level 2</span><span class="el">3.10 m</span><span class="ct">761</span></div>
+        <div class="storey"><span class="box">✓</span><span class="nm">Level 1</span><span class="el">0.00 m</span><span class="ct">948</span></div>
+        <div class="storey"><span class="box off"></span><span class="nm">T/FDN</span><span class="el">−1.25 m</span><span class="ct">14</span></div>
+      </div>
+      <div class="sect">
+        <div class="row-tog"><div>Rooms<span>See-through volumes of each room</span></div><span class="tog off"></span></div>
+      </div>
+    </div>
+  </aside>
+  <div class="fabon" style="right:380px;top:16px">☰ Model</div>
+</div></div>
+
+</body>
+</html>

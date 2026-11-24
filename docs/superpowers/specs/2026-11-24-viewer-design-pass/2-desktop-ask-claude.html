@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ---------- the thread around the mockup (T3 theme) ---------- */
+  .intro { margin: 0 0 12px; color: var(--muted-foreground, var(--foreground)); font-size: 13px; line-height: 1.5; }
+  .controls { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; flex-wrap: wrap; }
+  .controls button { font: 600 13px var(--font-sans); padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--card); color: var(--foreground); cursor: pointer; }
+  .controls button[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+  .controls span { font-size: 12px; color: var(--muted-foreground, var(--foreground)); }
+
+  /* ---------- the app, in the CV's tokens ---------- */
+  .frame { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); width: 696px; height: 400px; }
+  .screen {
+    --bg: #ffffff; --surface: #f7f8f9; --surface-alt: #fafbfc; --hover: #f0f2f4;
+    --ink: #1a1f24; --ink-2: #586069; --ink-3: #6b7480;
+    --teal: #0E8192; --teal-dark: #0a6473; --teal-ink: #0a6b7a;
+    --teal-08: rgba(14,129,146,.08); --teal-15: rgba(14,129,146,.15); --teal-20: rgba(14,129,146,.2);
+    --line: #d1d5da; --line-2: #e1e4e8; --line-3: #f0f3f6;
+    --canvas: #eef0f3;
+    --shadow-sm: 0 1px 3px 0 rgba(0,0,0,.06), 0 1px 2px 0 rgba(0,0,0,.04);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.08), 0 4px 6px -2px rgba(0,0,0,.04);
+    --shadow-xl: 0 20px 25px -5px rgba(0,0,0,.10), 0 10px 10px -5px rgba(0,0,0,.04);
+    --ease: cubic-bezier(0.16, 1, 0.3, 1);          /* the CV's --ease-out-expo */
+    --move: 520ms;
+    position: relative; overflow: hidden; width: 1200px; height: 690px; zoom: .58;
+    font-family: 'Nunito', -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.5; color: var(--ink); background: var(--canvas);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* the real Duplex, cropped from docs/images/demo-duplex.png */
+  .crop { position: absolute; left: 375px; top: 45px; width: 850px; height: 550px; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+    -webkit-mask-composite: source-in;
+            mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+            mask-composite: intersect;
+    transition: transform var(--move) var(--ease); }
+  .crop img { position: absolute; left: -400px; top: -200px; width: 1440px; height: 900px; max-width: none; }
+  .open .crop { transform: translateX(30px); }
+
+  /* ---------- the one panel: an answer card when closed, the AI panel when open ---------- */
+  .panel { position: absolute; left: 20px; top: 20px; width: 410px; height: 362px; background: var(--bg); border-radius: 14px;
+    box-shadow: var(--shadow-xl), 0 0 0 1px var(--line-2); display: flex; flex-direction: column; overflow: hidden;
+    transition: height var(--move) var(--ease); }
+  .open .panel { height: 650px; }
+
+  .p-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line-3); flex: none; }
+  .mark { width: 30px; height: 30px; flex: none; }
+  .who { min-width: 0; flex: 1; }
+  .who b { display: block; font-size: 15px; font-weight: 700; line-height: 1.25; }
+  .who span { display: block; font-size: 13px; color: var(--ink-2); line-height: 1.25; }
+  .who .ai { color: var(--teal-ink); font-weight: 600; }
+  .swap { position: relative; display: block; height: 16px; }
+  .swap > * { position: absolute; left: 0; top: 0; white-space: nowrap; transition: opacity 260ms ease; }
+  .swap .on-open { opacity: 0; }
+  .open .swap .on-open { opacity: 1; } .open .swap .on-closed { opacity: 0; }
+  .info { width: 34px; height: 34px; flex: none; border-radius: 99px; border: 1px solid var(--line-2); background: var(--bg);
+    display: grid; place-items: center; color: var(--teal); font-weight: 700; font-size: 15px; box-shadow: var(--shadow-sm); }
+  .x { width: 0; height: 34px; flex: none; overflow: hidden; border-radius: 8px; display: grid; place-items: center; color: var(--ink-3); font-size: 20px; opacity: 0; cursor: pointer;
+    transition: width var(--move) var(--ease), opacity 200ms ease; margin-left: -12px; }
+  .open .x { width: 34px; opacity: 1; margin-left: 0; }
+
+  /* the history grows in above the answer */
+  .history { flex: 0 0 auto; max-height: 0; opacity: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; padding: 0 16px;
+    transition: max-height var(--move) var(--ease), opacity 300ms ease, padding var(--move) var(--ease); }
+  .open .history { flex: 1 1 auto; max-height: 300px; opacity: 1; padding: 12px 16px 2px; transition-delay: 0s, 140ms, 0s; }
+  .earlier { font-size: 12px; color: var(--ink-3); }
+  .past { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-3); cursor: pointer; }
+  .num { width: 22px; height: 22px; flex: none; border-radius: 99px; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+  .past .num { border: 1.5px solid var(--line); color: var(--ink-3); }
+  .past .q { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .past .a { font-size: 13px; color: var(--ink-3); line-height: 1.3; }
+
+  /* the current answer: the same block, closed or open */
+  .current { position: relative; flex: none; padding: 14px 18px 14px 18px; transition: padding var(--move) var(--ease); }
+  .current::before { content: ""; position: absolute; left: 10px; top: 16px; bottom: 16px; width: 4px; border-radius: 99px; background: linear-gradient(180deg, #0E8192, #0a6473); opacity: 0; transition: opacity 300ms ease; }
+  .open .current { padding-left: 26px; }
+  .open .current::before { opacity: 1; }
+  .qline { display: flex; gap: 10px; align-items: center; font-weight: 700; font-size: 15px; }
+  .qline .num { background: var(--teal); color: #fff; }
+  .qline .q { flex: 1; min-width: 0; }
+  .step { display: inline-flex; align-items: center; gap: 2px; flex: none; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+  .step i { font-style: normal; width: 22px; height: 26px; border-radius: 6px; display: grid; place-items: center; color: var(--teal-ink); font-size: 15px; }
+  .big { font-size: 26px; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; margin-top: 10px; }
+  .big small { display: block; font-size: 15px; font-weight: 500; color: var(--ink-2); letter-spacing: 0; margin-top: 2px; }
+  .legend { list-style: none; margin: 10px 0 0; padding: 0; }
+  .legend li { display: flex; align-items: center; gap: 10px; padding: 5px 8px; margin: 0 -8px; border-radius: 6px; font-size: 14px; }
+  .legend li:first-child { background: var(--hover); }
+  .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .legend .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legend .c { font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .how { display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line-3); font-size: 13px; color: var(--teal-ink); font-weight: 600; }
+  .how span { color: var(--ink-3); font-weight: 500; }
+
+  /* the composer: room for the box, which is the button itself */
+  .composer { flex: none; height: 0; opacity: 0; overflow: hidden; padding: 0 14px; border-top: 1px solid transparent; background: var(--surface-alt);
+    transition: height var(--move) var(--ease), opacity 260ms ease, border-color 200ms ease; }
+  .open .composer { height: 132px; opacity: 1; border-top-color: var(--line-2); transition-delay: 0s, 160ms, 0s; }
+  .try { display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; align-items: center; height: 30px; margin: 10px 0 8px; }
+  .try em { font-style: normal; font-size: 12px; color: var(--ink-3); flex: none; }
+  .sugg { flex: none; padding: 3px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; color: var(--teal-ink); background: var(--teal-08); white-space: nowrap; }
+  .slot { height: 48px; }
+  .badge { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 18px; color: var(--ink-3); margin-top: 6px; }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--teal); opacity: .6; }
+
+  /* ---------- the button that becomes the box ---------- */
+  .ask { position: absolute; z-index: 3; left: 20px; bottom: 20px; width: 138px; height: 48px; border-radius: 24px; overflow: hidden; cursor: pointer;
+    background: linear-gradient(135deg, #0E8192, #0a6473); border: 1px solid transparent; box-shadow: 0 10px 20px -6px rgba(14,129,146,.45), var(--shadow-lg);
+    transition: left var(--move) var(--ease), bottom var(--move) var(--ease), width var(--move) var(--ease), border-radius var(--move) var(--ease),
+                background-color 300ms ease, box-shadow 300ms ease, border-color 300ms ease; }
+  .ask::after { content: ""; position: absolute; inset: 0; background: #fff; opacity: 0; transition: opacity 280ms ease; }
+  .open .ask { left: 34px; bottom: 56px; width: 382px; border-radius: 12px; border-color: var(--teal); box-shadow: 0 0 0 4px var(--teal-20); cursor: text; }
+  .open .ask::after { opacity: 1; }
+  .ask .lbl, .ask .field { position: absolute; inset: 0; z-index: 1; display: flex; align-items: center; transition: opacity 240ms ease; }
+  .ask .lbl { gap: 9px; padding: 0 18px 0 16px; color: #fff; font-size: 15px; font-weight: 700; white-space: nowrap; }
+  .ask .lbl svg { width: 18px; height: 18px; flex: none; }
+  .ask .field { gap: 8px; padding: 0 6px 0 14px; opacity: 0; }
+  .open .ask .lbl { opacity: 0; }
+  .open .ask .field { opacity: 1; transition-delay: 180ms; }
+  .field .ph { flex: 1; color: var(--ink-3); font-size: 15px; white-space: nowrap; overflow: hidden; }
+  .field .caret { display: inline-block; width: 1.5px; height: 18px; background: var(--ink); vertical-align: -3px; margin-right: 2px; animation: blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .field .list { font-size: 13px; font-weight: 600; color: var(--ink-2); padding: 5px 10px; border-radius: 8px; background: var(--surface); white-space: nowrap; }
+  .field .send { width: 34px; height: 34px; flex: none; border-radius: 10px; background: var(--line-2); color: var(--ink-3); display: grid; place-items: center; font-weight: 700; font-size: 16px; }
+
+  /* controls over the model */
+  .pill { position: absolute; left: 470px; bottom: 24px; display: flex; gap: 2px; padding: 4px; border-radius: 99px; background: rgba(255,255,255,.92); border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); }
+  .pill span { padding: 6px 14px; border-radius: 99px; font-size: 13px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+  .pill span.on { background: var(--teal-08); color: var(--teal-ink); }
+  .fab { position: absolute; right: 20px; top: 20px; height: 40px; padding: 0 14px; border-radius: 99px; background: #fff; border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+
+  @media (prefers-reduced-motion: reduce) { .screen *, .screen *::before, .screen *::after { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<p class="intro">One panel that changes shape. Closed, it is the answer card at the top left and the <b>Ask Claude</b> button at the bottom left. Open, the card grows down to meet the button, the button turns into the question box, and the history slides in above the answer. Closing splits them again.</p>
+
+<div class="controls">
+  <button type="button" data-set="closed" aria-pressed="true">Closed</button>
+  <button type="button" data-set="open" aria-pressed="false">Open</button>
+  <button type="button" data-set="play" aria-pressed="false">▶ Play</button>
+  <span>or click Ask Claude and × in the mockup</span>
+</div>
+
+<div class="frame"><div class="screen" id="app">
+  <div class="crop"><img src="../../../images/demo-duplex.png" alt=""></div>
+
+  <section class="panel">
+    <header class="p-head">
+      <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 10v12l-12 7L4 22V10z" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/><path d="M4 10l12 7 12-7M16 17v12" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/></svg>
+      <div class="who"><b>ifc-sql</b><span class="swap"><span class="on-closed">Ask questions of your building models</span><span class="on-open ai">Ask Claude · 3 of 9 asked</span></span></div>
+      <div class="info" title="How it works">?</div>
+      <div class="x" id="close" title="Close">×</div>
+    </header>
+
+    <div class="history">
+      <div class="past"><span class="num">1</span><div><div class="q">What is loaded?</div><div class="a">4 models, 1,795 elements</div></div></div>
+      <div class="past"><span class="num">2</span><div><div class="q">Which walls are on Level 1?</div><div class="a">21 walls, in the architectural model</div></div></div>
+    </div>
+
+    <div class="current">
+      <div class="qline"><span class="num">3</span><span class="q">Which walls are external, by type?</span><span class="step"><i>‹</i>3/9<i>›</i></span></div>
+      <div class="big">23 walls<small>are external, of four types</small></div>
+      <ul class="legend">
+        <li><span class="sw" style="background:#e64a19"></span><span class="t">Exterior · Brick on Block</span><span class="c">12</span></li>
+        <li><span class="sw" style="background:#1e88e5"></span><span class="t">Foundation · Concrete 417 mm</span><span class="c">4</span></li>
+        <li><span class="sw" style="background:#43a047"></span><span class="t">Party wall · CMU dividing wall</span><span class="c">4</span></li>
+        <li><span class="sw" style="background:#8e24aa"></span><span class="t">Foundation · Concrete 435 mm</span><span class="c">3</span></li>
+      </ul>
+      <div class="how">▸ How it was answered <span>1 read-only query</span></div>
+    </div>
+
+    <div class="composer">
+      <div class="try"><em>Next:</em><span class="sugg">What does the door schedule say?</span><span class="sugg">Which rooms are there?</span></div>
+      <div class="slot"></div>
+      <div class="badge">Recorded answers · no live AI on this page</div>
+    </div>
+  </section>
+
+  <div class="ask" id="ask" role="button" tabindex="0">
+    <span class="lbl"><svg viewBox="0 0 24 24" fill="#fff" aria-hidden="true"><path d="M12 2.5l2.1 6.4 6.4 2.1-6.4 2.1L12 19.5l-2.1-6.4L3.5 11l6.4-2.1z"/><path d="M19 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" opacity=".75"/></svg>Ask Claude</span>
+    <span class="field"><span class="ph"><span class="caret"></span>Ask about this model…</span><span class="list">☰ 9 questions</span><span class="send">↑</span></span>
+  </div>
+
+  <div class="fab">☰ Model</div>
+  <div class="pill"><span>⤢ Fit all</span><span class="on">◎ Fit answer</span><span>◐ Only the answer</span></div>
+</div></div>
+
+<script>
+  const app = document.getElementById('app');
+  const buttons = document.querySelectorAll('.controls button');
+  let timer;
+  function set(open) {
+    app.classList.toggle('open', open);
+    buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.set === (open ? 'open' : 'closed'))));
+  }
+  function play() {
+    clearTimeout(timer);
+    set(false);
+    buttons.forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.set === 'play')));
+    timer = setTimeout(() => { set(true); timer = setTimeout(() => set(false), 2600); }, 500);
+  }
+  buttons.forEach((b) => b.addEventListener('click', () => {
+    clearTimeout(timer);
+    if (b.dataset.set === 'play') play(); else set(b.dataset.set === 'open');
+  }));
+  document.getElementById('ask').addEventListener('click', () => { clearTimeout(timer); set(true); });
+  document.getElementById('close').addEventListener('click', () => { clearTimeout(timer); set(false); });
+  if (location.hash === '#open') set(true);
+</script>
+</body>
+</html>
