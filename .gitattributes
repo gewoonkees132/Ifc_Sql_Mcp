@@ -1,3 +1,5 @@
 # three.js, vendored byte for byte: SHA256SUMS beside it pins every file, so git must never
 # convert its line endings (core.autocrlf on Windows would, on checkout).
 src/ifc_sql_mcp/viewer/static/vendor/** -text
+# The page's pictures, pinned the same way by the SHA256SUMS in their folder.
+src/ifc_sql_mcp/viewer/static/images/** -text

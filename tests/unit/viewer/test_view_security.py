@@ -104,7 +104,8 @@ def test_the_policy_allows_the_import_map_by_its_hash_and_nothing_inline_else() 
     digest = base64.b64encode(hashlib.sha256(b'{"imports": {}}\n').digest()).decode()
     assert policy == (
         f"default-src 'none'; script-src 'self' 'sha256-{digest}'; style-src 'self'; "
-        "img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+        "img-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; "
+        "base-uri 'none'; "
         "form-action 'none'"
     )
 
@@ -315,7 +316,7 @@ def test_the_page_and_its_files_need_no_token(client: TestClient) -> None:
     three = client.get("/static/vendor/three/three.module.js")
     licence = client.get("/static/vendor/three/LICENSE")
     style = client.get("/static/viewer.css")
-    icon = client.get("/static/favicon.svg")
+    icon = client.get("/static/images/favicon.svg")
 
     assert page.status_code == 200
     assert page.headers["content-type"] == "text/html; charset=utf-8"
@@ -330,6 +331,32 @@ def test_the_page_and_its_files_need_no_token(client: TestClient) -> None:
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-cache"
         assert response.headers["etag"] == f'"{hashlib.sha256(response.content).hexdigest()}"'
+
+
+def test_the_font_is_served_as_a_font_and_the_policy_allows_it_from_the_server_alone(
+    client: TestClient,
+) -> None:
+    font = client.get("/static/vendor/nunito/nunito-latin-wght-normal.woff2")
+    licence = client.get("/static/vendor/nunito/LICENSE")
+
+    assert font.status_code == 200
+    assert font.headers["content-type"] == "font/woff2"
+    assert font.content[:4] == b"wOF2"
+    assert licence.headers["content-type"] == "text/plain; charset=utf-8"
+    assert "font-src 'self'" in font.headers["content-security-policy"].split("; ")
+
+
+def test_the_explainers_picture_is_served_as_an_image_of_the_page_itself(
+    client: TestClient,
+) -> None:
+    picture = client.get("/static/images/duplex.webp")
+
+    assert picture.status_code == 200
+    assert picture.headers["content-type"] == "image/webp"
+    assert picture.content[:4] == b"RIFF"
+    assert picture.content[8:12] == b"WEBP"
+    assert "img-src 'self'" in picture.headers["content-security-policy"].split("; ")
+    assert 'src="static/images/duplex.webp"' in client.get("/").text
 
 
 @pytest.mark.parametrize("path", ["/", "/static/main.js", "/static/vendor/three/LICENSE"])

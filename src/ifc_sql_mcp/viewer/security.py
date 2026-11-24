@@ -56,7 +56,8 @@ def content_security_policy(page: str, *, meta: bool = False) -> str:
     """Return the policy for ``page``, the ``index.html`` the app serves.
 
     Scripts come only from the server itself, plus the page's one inline script, its
-    import map, allowed by its SHA-256. The hash is of the text the browser sees: the
+    import map, allowed by its SHA-256; styles, pictures and the font (Nunito, vendored)
+    only from the server too. The hash is of the text the browser sees: the
     HTML parser turns every CRLF into LF before it hashes, so ``page`` must already have
     LF line endings.
 
@@ -77,6 +78,7 @@ def content_security_policy(page: str, *, meta: bool = False) -> str:
         f"script-src 'self' 'sha256-{digest.decode('ascii')}'",
         "style-src 'self'",
         "img-src 'self'",
+        "font-src 'self'",
         "connect-src 'self'",
         "frame-ancestors 'none'",
         "base-uri 'none'",

@@ -127,16 +127,24 @@ Against the other programs on the computer, and the web pages the browser has op
   it cannot read the answer, and without the token it gets 401 anyway.
 - **What the page may do.** Every response carries a content security policy that allows
   scripts only from the server itself plus the page's one inline script, its import map,
-  by its SHA-256; no other origin for anything (`default-src 'none'`, `connect-src
-  'self'`), no framing, no forms, no `<base>`. Also `X-Content-Type-Options: nosniff`
-  and `Referrer-Policy: no-referrer`; the data is `no-store`.
+  by its SHA-256; styles, pictures and the font only from the server too; no other origin
+  for anything, no framing, no forms, no `<base>`: `default-src 'none'; script-src 'self'
+  'sha256-<import map>'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src
+  'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`. Also
+  `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`; the data is
+  `no-store`. The page has no inline style and no inline handler, which a test checks.
 - **IFC text stays text.** Names and property values come from the file, so the page sets
   them only as text (`textContent`), never as HTML. A test fails if the page's own
   JavaScript uses `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write`,
   `srcdoc`, `createContextualFragment`, an `on…` attribute, a `javascript:` URL, `eval`
   or `new Function`.
-- **three.js is vendored**, release r187, and pinned by `SHA256SUMS`, which a test
-  checks; the page loads nothing from the network.
+- **three.js and the font are vendored**: three.js r187 in `vendor/three/`, Nunito
+  (`@fontsource-variable/nunito` 5.3.0, two `.woff2` files) in `vendor/nunito/`. The
+  page's pictures, its icon and the explainer's still of the Duplex, are its own files in
+  `images/`. Each folder pins its files by `SHA256SUMS`, with their licences beside them,
+  and tests check the sums; the page loads nothing from the network. Its links to other
+  sites (the sources, the licences, GitHub) are `https`, open in a new tab, and send no
+  Referer (`rel="noopener noreferrer"`).
 
 What it does not protect against:
 
@@ -188,7 +196,8 @@ token and no database: it is files.
 - **What it publishes**: the four Duplex models' scenes, their objects' class, name and
   storey, `get_element` of the one wall the script looks up, the script's nine calls as
   the feed resolved them (with the clipped SQL of its two `run_sql` calls), and the page
-  with three.js. Of the models, only the script's: another model in the same database is
+  with three.js, Nunito and its pictures, the explainer's still of the Duplex among them
+  (CC BY 4.0, credited beside it). Of the models, only the script's: another model in the same database is
   left out, whatever it is. The Duplex is CC BY 4.0, and the page credits it
   ([DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md)). A script whose files' licence does not
   allow a copy has no credit, and `--export` refuses it: the audit's files are never
@@ -200,8 +209,9 @@ token and no database: it is files.
   text, as above.
 - **What the page may do**: the same content security policy, as a `<meta>` tag, since
   GitHub Pages sends no header of ours; without `frame-ancestors`, which browsers ignore
-  in a `<meta>` tag, so the copy can be framed. `no-referrer` is a `<meta>` tag too. The
-  credit's links go to `https` addresses only.
+  in a `<meta>` tag, so the copy can be framed. `no-referrer` is a `<meta>` tag too. Its
+  links, the credits' and the explainer's, go to `https` addresses only (a test checks
+  the page's).
 - **An export never overwrites**: it writes only into a new or empty folder.
 
 ### The embedded database

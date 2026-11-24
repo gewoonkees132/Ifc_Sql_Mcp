@@ -7,15 +7,16 @@ a normalised PostgreSQL database, checks their data quality against a catalogue 
 rules, and lets an LLM query them through an [MCP](https://modelcontextprotocol.io)
 server, read-only. `ifc-sql view` shows the models in 3D in your browser.
 
-**[See the demo](https://gewoonkees132.github.io/Ifc_Sql_Mcp/)**, nothing to install: nine
-questions asked through the MCP server, with no LLM, each answer lit in the four Duplex
-models.
+**[See the demo](https://gewoonkees132.github.io/Ifc_Sql_Mcp/)**, nothing to install, on a
+phone too: nine questions answered through the MCP server, with no LLM, and recorded. Pick
+one, and its answer lights up in the four Duplex models.
 
-[![Step 3 of the demo on GitHub Pages: the 23 external walls of the Duplex, in four colours by type](docs/images/demo-duplex.png)](https://gewoonkees132.github.io/Ifc_Sql_Mcp/)
+[![Question 3 of the demo on GitHub Pages: the Ask Claude panel with two earlier questions, and the 23 external walls of the Duplex in four colours by type](docs/images/demo-duplex.png)](https://gewoonkees132.github.io/Ifc_Sql_Mcp/)
 
-*Step 3 of the demo, "Which walls are external, by type?": a `run_sql` query, and its 23
-walls lit by type. The static copy made by `uv run python scripts/demo.py --export _site`
-at commit `c75601b`, in Microsoft Edge 158 on Windows 11, 2026-11-23.*
+*Question 3 of the demo, "Which walls are external, by type?", picked after questions 1
+and 2: a `run_sql` query, and its 23 walls lit by type. The static copy written by
+`ifc-sql demo --export` on the database `scripts/demo.py` loads, at commit `caa7005`, in
+Microsoft Edge 158 on Windows 11, 2026-11-24.*
 
 ```mermaid
 flowchart LR
@@ -97,11 +98,16 @@ list_models: 4 models
 ```
 
 `make view` (`uv run ifc-sql view`) then shows the four disciplines together in your
-browser, storey by storey, with an element's properties on a click
-([docs/viewer.md](docs/viewer.md)). It listens on 127.0.0.1 only, and the address it
-prints carries a token, new on every start, that the page needs:
+browser, storey by storey, with an element's properties on a click, and lights up what
+each call of Claude found ([docs/viewer.md](docs/viewer.md)). It listens on 127.0.0.1
+only, and the address it prints carries a token, new on every start, that the page needs:
 
-![The four Duplex models in ifc-sql view, Roof hidden, a ceiling clicked and its details open](docs/images/viewer-duplex.png)
+![ifc-sql view on the four Duplex models: the Ask Claude panel open with four calls of an MCP client, the newest, a query of the doors by type, lit in four colours with its SQL shown](docs/images/viewer-duplex.png)
+
+*`uv run ifc-sql view` with four calls made through `ifc-sql serve` with the feed on, by a
+script in Claude's place; the newest, a `run_sql` query of the doors by type, lit, and
+how it was answered. At commit `caa7005`, in Microsoft Edge 158 on Windows 11,
+2026-11-24.*
 
 `make demo` (`uv run python scripts/demo.py`) loads the Duplex, checks it, and asks nine
 questions through the MCP server with no LLM, lighting each answer in the page
@@ -263,7 +269,8 @@ src/ifc_sql_mcp/
   ingest/                extract (IfcOpenShell), transform (pure), load, pipeline
   viewer/                3D scenes (ingest --viewer) and ifc-sql view: its app, its port's
                          checks, the feed of MCP calls and what they light, the scripted
-                         demo and its static copy, and the page in static/, three.js vendored
+                         demo and its static copy, and the page in static/, three.js and
+                         Nunito vendored
   dq/                    rule catalogue, sync, runs
   rules/dq_rules.yaml    the 45 data quality rules
   server/                MCP server: tools, run_sql, SQL validator, schema description
@@ -318,14 +325,20 @@ docs/                    data model, Revit quirks, data quality, MCP server, ADR
   listens on 127.0.0.1 only, behind a token ([SECURITY.md](SECURITY.md)).
 - The viewer's feed reaches every login to the database, which can also send to it; it is
   off unless `IFC_SQL_VIEWER_FEED=1` ([SECURITY.md](SECURITY.md#the-viewers-feed-ifc_sql_viewer_feed)).
-- The demo on GitHub Pages is a recording: it plays the scripted questions back and asks
-  nothing, and it holds every element's class, name and storey but everything only of the
-  one wall its questions look up. Only the Duplex is published
+- The demo on GitHub Pages is a recording: the visitor picks its scripted questions, and
+  it asks nothing; Claude does not run there, and the page says so. It holds every
+  element's class, name and storey but everything only of the one wall its questions look
+  up. Only the Duplex is published
   ([DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md#the-demo-on-github-pages)).
 
 ## Licences
 
 Code: [MIT](LICENSE). [three.js](https://threejs.org) r187, vendored in
 `src/ifc_sql_mcp/viewer/static/vendor/three/` for the viewer's page: MIT, its
-[licence](src/ifc_sql_mcp/viewer/static/vendor/three/LICENSE) beside it. Sample data: buildingSMART International, CC BY 4.0, used
-unmodified and downloaded on demand; see [DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md).
+[licence](src/ifc_sql_mcp/viewer/static/vendor/three/LICENSE) beside it. The page's font,
+[Nunito](https://github.com/googlefonts/nunito), vendored in `vendor/nunito/`: SIL Open
+Font License 1.1, its [licence](src/ifc_sql_mcp/viewer/static/vendor/nunito/LICENSE) beside
+it. Sample data: buildingSMART International, CC BY 4.0, used unmodified and downloaded on
+demand; the page's one picture made from it, a still of the Duplex, is CC BY 4.0 too
+([its licence](src/ifc_sql_mcp/viewer/static/images/LICENSE)); see
+[DATA_ATTRIBUTION.md](DATA_ATTRIBUTION.md).

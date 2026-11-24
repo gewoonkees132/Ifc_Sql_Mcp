@@ -31,6 +31,9 @@ from ifc_sql_mcp.viewer.http import STATIC, page_files, page_text
 
 CREDIT = Credit(
     text="The scene fixture, MIT; converted to glTF by IfcOpenShell triangulation.",
+    work="The scene fixture",
+    author="the tests",
+    licence="MIT",
     source_url="https://example.org/scene-fixture",
     licence_url="https://example.org/mit",
 )
@@ -70,6 +73,8 @@ def _script(engine: Engine, *, walls: int = 1, with_ele: bool = False) -> Script
                 tool="find_elements",
                 arguments={"model_id": Model("arc"), "ifc_class": "IfcWall"},
                 figure=f"{walls} wall",
+                answer=f"{walls} wall, in the fixture",
+                headline=f"{walls} wall",
                 measure=lambda result, _: result["total"],
                 expected=walls,
                 lit=(1,),
@@ -79,6 +84,8 @@ def _script(engine: Engine, *, walls: int = 1, with_ele: bool = False) -> Script
                 tool="get_element",
                 arguments={"model_id": Model("arc"), "global_id": _global_id(engine, 1, WALL)},
                 figure="the wall",
+                answer="Everything about the wall",
+                headline="Everything",
                 measure=lambda result, _: result["name"],
                 expected=WALL,
                 lit=(1,),
@@ -88,6 +95,8 @@ def _script(engine: Engine, *, walls: int = 1, with_ele: bool = False) -> Script
                 tool="list_models",
                 arguments={},
                 figure="3 models",
+                answer="3 models",
+                headline="3 models",
                 measure=lambda result, _: len(result["models"]),
                 expected=3,
                 lit=None,
@@ -256,12 +265,20 @@ def test_events_json_is_what_the_check_resolved(exported: Exported) -> None:
         "What is loaded?",
     ]
     assert recording["title"] == "The scene fixture"
-    assert recording["pause_seconds"] == 3
+    assert "pause_seconds" not in recording
     assert recording["credit"] == {
         "text": CREDIT.text,
+        "work": CREDIT.work,
+        "author": CREDIT.author,
+        "licence": CREDIT.licence,
         "source_url": CREDIT.source_url,
         "licence_url": CREDIT.licence_url,
     }
+    assert [q["title"] for q in recording["status"]["questions"]] == [
+        "The walls",
+        "One wall in full",
+        "What is loaded?",
+    ]
     assert recording["status"]["state"] == "recorded"
     assert recording["status"]["database"] is None
 
@@ -295,11 +312,27 @@ def test_every_file_the_page_links_is_written(exported: Exported) -> None:
     imports = json.loads(re.search(r'type="importmap">(.*?)</script>', page, re.DOTALL)[1])  # type: ignore[index]
 
     linked = re.findall(r'(?:href|src)="([^"]+)"', page)
-    assert linked == ["static/favicon.svg", "static/viewer.css", "static/main.js"]
-    for path in linked:
+    # The page's own files, by relative paths; every other link leaves the page, by https.
+    own = [path for path in linked if not path.startswith("https://")]
+    assert own == [
+        "static/images/favicon.svg",
+        "static/viewer.css",
+        "static/main.js",
+        "static/images/duplex.webp",
+    ]
+    for path in own:
         assert (exported.site / path).is_file(), path
     for target in imports["imports"].values():
         assert (exported.site / target).exists(), target
+    # The fonts the stylesheet loads, by paths relative to it.
+    style = (exported.site / "static/viewer.css").read_text(encoding="utf-8")
+    fonts = re.findall(r'url\("([^"]+)"\)', style)
+    assert fonts == [
+        "vendor/nunito/nunito-latin-ext-wght-normal.woff2",
+        "vendor/nunito/nunito-latin-wght-normal.woff2",
+    ]
+    for font in fonts:
+        assert (exported.site / "static" / font).is_file(), font
 
 
 # --------------------------------------------------------------------------- refusals

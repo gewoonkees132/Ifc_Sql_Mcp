@@ -4,21 +4,22 @@
 every discipline of a project together, storey by storey, with an element's details on a
 click. It reads the scenes that `ifc-sql ingest --viewer` built
 ([ADR 14](adr/0014-viewer.md), decision 1) and nothing else of the files, which the
-database does not keep. Beside the models it lists the calls of every MCP server on the
-same database that runs with `IFC_SQL_VIEWER_FEED=1`, and lights up what each one found:
+database does not keep. It shows the calls of every MCP server on the same database that
+runs with `IFC_SQL_VIEWER_FEED=1`, and lights up what each one found:
 [the feed](#the-mcp-servers-calls-the-feed). `ifc-sql demo` plays a script of questions
 through the real server, with no LLM, so the page lights up without one:
 [the scripted demo](#the-scripted-demo). `ifc-sql demo --export` writes a static copy of
 the Duplex demo, which GitHub Pages publishes: [the demo on GitHub
-Pages](#the-demo-on-github-pages). The design is in ADR 14, decisions 2 to 7; what the
+Pages](#the-demo-on-github-pages). The design is in ADR 14, decisions 2 to 8; what the
 port allows, who can read and send the feed, and what the copy publishes, is in
 [SECURITY.md](../SECURITY.md#the-viewers-port-ifc-sql-view).
 
-![The four Duplex models in ifc-sql view, Roof hidden, a ceiling of the architectural model clicked and its details open](images/viewer-duplex.png)
+![ifc-sql view on the four Duplex models: the Ask Claude panel open with four calls of an MCP client, the newest, a query of the doors by type, lit in four colours with its SQL shown](images/viewer-duplex.png)
 
-*The four Duplex models, after `make ingest-samples`, in `uv run ifc-sql view`: the
-storey Roof hidden, a ceiling of the ARC model clicked. Microsoft Edge 158 on Windows 11,
-2026-11-23.*
+*`uv run ifc-sql view` on the four Duplex models, with four calls made through `ifc-sql
+serve` with the feed on, by a script in Claude's place: the newest, a `run_sql` query of
+the doors by type, lit in four colours, "How it was answered" open on its SQL. Microsoft
+Edge 158 on Windows 11, at commit `caa7005`, 2026-11-24.*
 
 ## Start it
 
@@ -58,50 +59,100 @@ another port, so restart `view` then, as `serve` ([ADR 13](adr/0013-embedded-pos
 
 ## What the page shows
 
-- **Project.** The current models of one `project_group`, as `list_models` groups them; a
-  model of no project is shown on its own. The picker lists every project, the one with
-  the newest scene first.
-- **Models.** Each with its scene's counts, which add up to the model's elements: "268
-  elements: 218 drawn, 0 without shape, 50 openings not drawn" on the Duplex ARC model. A
-  model without a scene is greyed out, with the command that builds it, such as `ifc-sql
-  ingest revit_quirks.ifc --discipline ELE --viewer`.
-- **Disciplines.** A chip per discipline hides or shows its models. ARC keeps its
-  materials' colours; MEP is tinted blue, ELE amber and PLU green.
-- **Storeys.** One row per storey name across the models ("Level 1" of all four Duplex
-  models is one row), highest first, with its elevation and its elements; a row hides or
-  shows its chunks. "show all" brings back the hidden ones.
-- **Rooms.** The spaces, see-through, loaded when the box is ticked. The spaces that
-  repeat a room and Revit's area plans are kept apart in their own chunks, drawn only
-  when a call selects one, so that they do not cover the rooms.
-- **A click** lights the element in orange, names it over the view, and opens a drawer
-  with what `get_element` returns: identity, storey and room, quantities with their
-  source, property sets, materials, classifications and data quality findings. A click
-  on a stair's flight selects the flight; Escape, or a click on nothing, clears it.
-- **fit**, **fit selection** and **only selection** frame what is shown, frame the
-  selection, or hide everything else.
+The model fills the window, and everything else floats over it (ADR 14, decision 8). One
+page serves `view`, `demo` and the static copy; it says which it is, and its box behaves
+accordingly (the table below).
 
-- **The feed.** Every call of an MCP server with the feed on, newest first: when it came,
-  what it asked (or the demo's question), and how many objects it found. A dot says
-  whether calls arrive: live, connecting, interrupted (the page says why) or off. The
-  newest call is lit as it arrives; a click on an older one lights it again. A `run_sql`
-  call shows its query, as text.
-- **A call's caption.** Over the view: who asked (the server's process, or "scripted
-  demo, no LLM"), the question, the call in one line (`find_elements: IfcWall on
-  'Level 1', model 1`), the counts (`21 found · 21 shown · 0 without shape`, and the
-  openings, which are never drawn), what the server says besides (why nothing is lit, or
-  that only the first 20,000 are), and a legend of the groups' colours.
+- **The answer card**, top left: "ifc-sql · Ask questions of your building models", a
+  "?" for the explainer, and the current answer. The question; the answer in words, a big
+  line and a sentence ("23 walls", "are external, of four types"); the legend of its
+  groups, each with its colour, label and count (a click on one shows that group alone);
+  and **How it was answered**, one click away: the tool and its arguments in words, the
+  SQL of a `run_sql` call (the only call whose query the feed carries), the rows, and
+  what the view could not draw ("14 found · 14 drawn · 0 without shape", the openings,
+  which are never drawn). The line beside it reads "1 SQL query, read-only" for
+  `run_sql`, and the tool's title for the others ("Find elements, read-only").
+- **The answer card in `view`.** The page has Claude's calls, not the words you typed
+  into Claude, so the question is the call in a sentence ("Found walls on Level 1",
+  "Ran a query of its own") and the big line its count, with a noun when everything lit
+  is of one class ("21 walls"; otherwise "21 found"). Before the first call it says "No
+  question yet. Ask Claude in Claude Desktop or Claude Code, and what it finds lights up
+  here."
+- **Ask Claude**, bottom left: a button that grows into one panel with the card. The
+  history of questions slides in above the answer, newest at the bottom, and the button
+  becomes the question box. A row of the history lights its answer again. Esc, × or the
+  button split the two again.
+- **The view pill**, bottom centre: Fit all, Fit answer and Only the answer; after a
+  click on an element, Fit element and Only this element. The last two are disabled when
+  nothing is lit.
+- **The Model panel**, "☰ Model" at the top right. The project: the current models of one
+  `project_group`, as `list_models` groups them (a model of no project is shown on its
+  own); a picker when there are several, the one with the newest scene first. The
+  disciplines, each with a switch, its elements and its colour in words: Architecture in
+  its materials' colours, Mechanical tinted blue, Electrical amber, Plumbing green. Under
+  each, its models, with their elements; a model without a scene says "No 3D yet" and the
+  command that builds it, such as `ifc-sql ingest revit_quirks.ifc --discipline ELE
+  --viewer`. The storeys: one row per storey name across the models ("Level 1" of all four
+  Duplex models is one row), highest first, with its elevation and elements, and "Show
+  all". Rooms: the spaces, see-through, loaded when switched on. The spaces that repeat a
+  room and Revit's area plans are kept apart in their own chunks, drawn only when a call
+  selects one, so that they do not cover the rooms.
+- **A click** lights the element in teal and opens Element details on the right, in the
+  Model panel's place: what `get_element` returns, identity, storey and room, quantities
+  with their source, property sets, materials, classifications and data quality
+  findings. A click on a stair's flight selects the flight. A click replaces an answer's
+  highlight, and the card says so, with "Light it again". Esc clears the click, and so
+  does a click on nothing, which leaves an answer lit.
+- **The "?" explainer**, a dialog with two tabs. What it does: 11 tools, 45 data-quality
+  checks and 0 changes to your models; how it works; why it helps; and how to try it (the
+  demo) or connect Claude (`view`). How it's built: a diagram from a Revit export to this
+  page, and one wall followed from its IFC name to question 8. Its counts are the code's:
+  `tests/unit/viewer/test_explainer.py` compares each with the server's tools, the rule
+  catalogue and the demo's script.
+- **Loading** is said in the model area ("Drawing Duplex Apartment… 12 of 24 parts");
+  **an error** is a toast at the top.
+
+| Where | The list of questions | Typing | History | The panel's header |
+|---|---|---|---|---|
+| The static demo | The nine questions; those asked marked "✓ asked" | Filters the nine; a question outside them gets "Want to ask your own? Install ifc-sql and ask Claude about your own models. How it works ›" | The questions you picked | "Ask Claude · 3 of 9 asked" |
+| `ifc-sql demo` | The script's questions; those not asked yet "coming up", and not to be picked | As the demo | Fills as the script plays, at its own `--pause` | "Scripted demo · no LLM" |
+| `ifc-sql view` | None | The box is disabled and reads "Ask Claude in Claude Desktop or Claude Code", with "How to connect ›" | Claude's calls, from the feed | The feed's state: "Listening for Claude", "Connecting…", "Connection lost, retrying", or "Off" (the reason, and "How to connect ›", below the box) |
+
+Claude does not run on the page in any of them, and the page says so wherever Ask Claude
+appears: "Recorded answers · Claude doesn't run on this page." in the demo. Asking Claude
+from the page is the next project.
+
 - **A call's selection.** Each group in its colour, everything else opaque light grey.
-  When every object found lies on one storey, the storeys above it are hidden ("Level 2,
-  Roof hidden · show all"). A call that finds only spaces shows nothing else, since the
-  rooms are inside the walls. `get_element` moves the camera to its object and opens its
-  details. A call that lights nothing by nature (`list_models`, `list_storeys`,
-  `describe_schema`, and a `run_sql` whose rows hold no id column, such as a count)
-  leaves the view as it is: the walls a query lit stay lit while the LLM counts them.
+  When every object found lies on one storey, the storeys above it are hidden ("Level 2
+  and Roof hidden · Show all"). A call that finds only spaces shows nothing else, since
+  the rooms are inside the walls. `get_element` moves the camera to its object and opens
+  its details. In `view`, a call that lights nothing by nature (`list_models`,
+  `list_storeys`, `describe_schema`, and a `run_sql` whose rows hold no id column, such as
+  a count) leaves the view and the card as they are: the walls a query lit stay lit while
+  the LLM counts them. In the demos each question stands alone: "What is loaded?" lights
+  nothing and shows all four disciplines.
 - **A call about another project.** When none of the objects a call found is in the
   models shown, the page shows the project of the first one, as the picker lists it, and
   then lights the call: ask Claude about file B while the Duplex is shown, and the page
   turns to file B. A call whose objects lie partly in the models shown lights in place,
-  and the caption names the models it could not show.
+  and "How it was answered" names the models it could not show.
+- **The keyboard.** Everything can be reached with Tab. In the box, the arrows move
+  through the questions and Enter picks one; Esc closes the list, then the panel. The
+  explainer is a modal dialog: Esc closes it, and the focus goes back to "?". The Model
+  panel and Element details are labelled regions that Esc closes. A new answer is read
+  out politely by a screen reader (`aria-live`). With reduced motion the panel switches
+  at once; otherwise it moves for half a second. Nothing plays by itself.
+- **On a phone**, below 760 px wide: a pill at the top with the brand, "☰ Model" and
+  "?"; the model above a sheet that holds the answer, its groups as chips, and the box
+  at the very bottom, in thumb reach. The sheet's handle shows the earlier questions. The
+  Model panel, Element details and the explainer open as sheets too, the diagram as a
+  timeline. Locally, `view` still listens on 127.0.0.1 alone: the phone layout serves the
+  demo on Pages, and a narrow window.
+
+<img src="images/demo-duplex-phone.png" width="300" alt="The static demo on a phone: the Duplex above, question 4 in the sheet below with its four groups as chips, the box at the bottom">
+
+*The static demo at 390 × 844, a phone emulated in Microsoft Edge 158 on Windows 11,
+question 4 picked; at commit `caa7005`, 2026-11-24.*
 
 Every model is placed at its scene's origin less the first model's: the models of a
 project line up, as the Duplex's four and the audit's A and D do (ADR 14, P4).
@@ -129,20 +180,27 @@ stops at the first command that fails, with that command's exit code.
 does, with `IFC_SQL_VIEWER_FEED=1`, serves the page, prints its URL and opens it, and asks
 nine questions a few seconds apart. Each call takes the path a real client's takes:
 `serve` publishes it, the listener receives it, the feed resolves what it found, and the
-page lights it. The page says "scripted demo, no LLM", and numbers the questions. After
-the last one the page stays up until Ctrl+C.
+page lights it. The page lists the questions from the start, "coming up" until each is
+asked, and shows each in the card as the script asks it, with its answer; its header
+reads "Scripted demo · no LLM", and the line below the box "Asked by ifc-sql demo through
+the real tools · Claude doesn't run on this page." After the last one the page stays up
+until Ctrl+C.
 
-| # | Question | Tool call | What it shows | Lights |
+| # | Question | Tool call | The answer on the page | Lights |
 |---|---|---|---|---|
-| 1 | What is loaded? | `list_models` | 4 models: 268, 926, 103 and 498 elements | nothing; the four disciplines are shown |
-| 2 | The architectural walls on Level 1 | `find_elements` ARC, `IfcWall`, `Level 1` | 21 walls | 21 walls; Level 2 and Roof hidden |
-| 3 | Which walls are external, by type? | `run_sql`: the README's query, with `array_agg(e.object_id) AS object_ids` per type | 12, 4, 4 and 3 walls of four types | 23 walls in 4 colours |
-| 4 | The door schedule | `schedule` ARC, `IfcDoor`, by `revit_type`, `width_m` and `Pset_DoorCommon.FireRating` | 14 doors in 4 types; every fire rating the placeholder `'Fire Rating'` | 14 doors in 4 colours: 6, 4, 2, 2 |
-| 5 | The rooms | `space_schedule` ARC | 21 spaces, 422.0 m² | 21 rooms |
-| 6 | Rooms counted twice | `space_schedule` MEP | 42 spaces, 21 of them an MEP Space over a room | 21 rooms and their 21 copies, in two colours |
-| 7 | What lacks a fire rating? | `data_quality_report` ARC, `rule_id=missing_fire_rating` | 78 walls, doors and slabs | 78 elements |
-| 8 | One wall in full | `get_element` ARC, GlobalId `0iEHWY1$XA8eQeeULq4jDb` | everything stored about it: 16,353 characters of compact JSON | the wall; the camera goes to it, its details open |
-| 9 | A write is refused | `run_sql` `DELETE FROM ifc.property` | `query refused: only a query that reads data is allowed …` | nothing; the feed shows `refused` |
+| 1 | What is loaded? | `list_models` | 4 models, 1,795 elements (268, 926, 103 and 498) | nothing; the four disciplines are shown |
+| 2 | Which walls are on Level 1? | `find_elements` ARC, `IfcWall`, `Level 1` | 21 walls, in the architectural model | 21 walls; Level 2 and Roof hidden |
+| 3 | Which walls are external, by type? | `run_sql`: the README's query, with `array_agg(e.object_id) AS object_ids` per type | 23 walls are external, of four types | 23 walls in 4 colours: 12, 4, 4, 3 |
+| 4 | What does the door schedule say? | `schedule` ARC, `IfcDoor`, by `revit_type`, `width_m` and `Pset_DoorCommon.FireRating` | 14 doors of 4 types; every fire rating is the placeholder "Fire Rating" | 14 doors in 4 colours: 6, 4, 2, 2 |
+| 5 | Which rooms are there, and how big? | `space_schedule` ARC | 21 rooms, 422.0 m² in all | 21 rooms |
+| 6 | Are any rooms counted twice? | `space_schedule` MEP | Yes: 21 of the 42 spaces are MEP spaces over a room | 21 rooms and their 21 copies, in two colours |
+| 7 | What lacks a fire rating? | `data_quality_report` ARC, `rule_id=missing_fire_rating` | 78 walls and slabs (57 walls, 21 slabs; the doors hold the placeholder, which the rule does not count) | 78 elements |
+| 8 | What is stored about one wall? | `get_element` ARC, GlobalId `0iEHWY1$XA8eQeeULq4jDb` | Everything about one wall: its properties, materials and findings (16,353 characters of compact JSON) | the wall; the camera goes to it, its details open |
+| 9 | Can it change the model? | `run_sql` `DELETE FROM ifc.property` | No: a delete is refused before it reaches the database | nothing; "How it was answered" says `Refused` |
+
+The questions and their answers are data, with the figures `--check` compares
+(`viewer/demo_script.py`: each step's `title`, `answer`, and `headline`, the answer's big
+line); `tests/unit/viewer/test_demo.py` checks that each answer agrees with its figure.
 
 The models are found by their files' SHA-256, never by id: ids depend on the order the
 files were loaded in. Step 8's 16,353 characters are those of a database where the ARC
@@ -160,18 +218,19 @@ selection of the table.
 | `--export DIR` | Serve no page: check as `--check` does, then write the static copy of the Duplex demo into DIR, a new or empty folder: [the demo on GitHub Pages](#the-demo-on-github-pages). |
 
 `uv run python scripts/demo.py --check` on Windows 11, with the PostgreSQL 16 of the
-`embedded` extra, on 2026-11-23:
+`embedded` extra, on 2026-11-24 (the files already loaded and checked, so each ingest is
+a repeat):
 
 ```
 1/9 What is loaded? [list_models, ok, 2,496 characters]: 4 models: 268, 926, 103 and 498 elements; lights nothing (feed only): ok
-2/9 The architectural walls on Level 1 [find_elements, ok, 8,189 characters]: 21 walls; lights 21 objects: ok
+2/9 Which walls are on Level 1? [find_elements, ok, 8,189 characters]: 21 walls; lights 21 objects: ok
 3/9 Which walls are external, by type? [run_sql, ok, 518 characters]: 12, 4, 4 and 3 walls of four types; lights 23 objects in 4 groups (12, 4, 4, 3): ok
-4/9 The door schedule [schedule, ok, 1,815 characters]: 14 doors in 4 types, every fire rating the placeholder 'Fire Rating'; lights 14 objects in 4 groups (6, 4, 2, 2): ok
-5/9 The rooms [space_schedule, ok, 7,145 characters]: 21 spaces, 422.0 m²; lights 21 objects: ok
-6/9 Rooms counted twice [space_schedule, ok, 14,354 characters]: 42 spaces, 21 of them an MEP Space over a room; lights 42 objects in 2 groups (21, 21): ok
-7/9 What lacks a fire rating? [data_quality_report, ok, 2,222 characters]: 78 walls, doors and slabs without a fire rating; lights 78 objects: ok
-8/9 One wall in full [get_element, ok, 16,353 characters]: everything stored about one wall: its properties, materials and findings; lights 1 object: ok
-9/9 A write is refused [run_sql, refused, 149 characters]: refused before it reaches the database; lights nothing: ok
+4/9 What does the door schedule say? [schedule, ok, 1,815 characters]: 14 doors in 4 types, every fire rating the placeholder 'Fire Rating'; lights 14 objects in 4 groups (6, 4, 2, 2): ok
+5/9 Which rooms are there, and how big? [space_schedule, ok, 7,145 characters]: 21 spaces, 422.0 m²; lights 21 objects: ok
+6/9 Are any rooms counted twice? [space_schedule, ok, 14,354 characters]: 42 spaces, 21 of them an MEP Space over a room; lights 42 objects in 2 groups (21, 21): ok
+7/9 What lacks a fire rating? [data_quality_report, ok, 2,222 characters]: 78 walls and slabs without a fire rating; lights 78 objects: ok
+8/9 What is stored about one wall? [get_element, ok, 16,353 characters]: everything stored about one wall: its properties, materials and findings; lights 1 object: ok
+9/9 Can it change the model? [run_sql, refused, 149 characters]: refused before it reaches the database; lights nothing: ok
 all 9 steps as the script says
 ```
 
@@ -207,7 +266,7 @@ and CI does not play it (the `modern` tests do, below).
   with it when `old_model_id` is left out, as the tool's description offers. The demo
   finds only current models, by SHA-256, so it looks for B, C, D and E.
 - **Step 4 lights 55 objects, 51 of them drawn.** Revit gave the 4 openings new GlobalIds:
-  the 4 of D are added, and the caption counts them as openings not drawn (they are cut
+  the 4 of D are added, and "How it was answered" counts them as openings not drawn (they are cut
   from their walls); the 4 of A are removed, only counted. A curtain wall is drawn through
   its plates and members, which light with it.
 - **The page follows the calls.** It opens on file C, the first step's, and each call
@@ -255,30 +314,33 @@ written. On the database of `scripts/demo.py`, it ends:
 
 ```
 all 9 steps as the script says
-exported the demo to _site: 49 files, 13.0 MB; to look at it, serve the folder: uv run python -m http.server -d _site
+exported the demo to _site: 60 files, 13.2 MB; to look at it, serve the folder: uv run python -m http.server -d _site
 ```
 
 | File | Holds |
 |---|---|
 | `index.html` | `view`'s page, marked `data-source="static"`, its content security policy and `no-referrer` in `<meta>` tags, the script's title. |
-| `static/…` | The page's own files and three.js, byte for byte as `view` serves them. |
+| `static/…` | The page's own files, its pictures, three.js and Nunito, byte for byte as `view` serves them. |
 | `data/models.json` | What `GET /api/models` gives, as if the script's four models alone were loaded. |
 | `data/scenes/{model_id}.json`, `data/scenes/{model_id}/{chunk_no}.glb` | Each model's manifest, and its chunks as the database holds them: 24 chunks, 7, 9, 4 and 4. |
-| `data/events.json` | The nine calls as the feed resolved them, labelled as the demo's and numbered as its steps; the status the page shows ("recorded"), the pause between two calls, and the credit. |
+| `data/events.json` | The nine calls as the feed resolved them, labelled as the demo's and numbered as its steps; the status ("recorded"), with the nine questions and their answers; and the credit. |
 | `data/elements.json` | The class, name and storey of every element a scene can draw, and every space: 239, 968, 104 and 499 objects. |
 | `data/details.json` | `get_element` of the objects the calls looked up: the wall of step 8. |
 
 The page is `view`'s page, and so is its code: `main.js` sees the mark and takes the
 static source of `api.js` in place of the live one, which reads the same objects from
 these files, by paths relative to the page (Pages serves it below `/Ifc_Sql_Mcp/`). There
-is no token and no server. The recorded calls are played back as the demo asked them, one
-every `--pause` seconds (5 by default), from 1.5 s after the models are drawn; a click on
-one lights it again. The feed says "recorded", and when and by what. The sidebar names
-the script and credits the Duplex, with links to its source and its licence, as CC BY 4.0
-asks ([DATA_ATTRIBUTION.md](../DATA_ATTRIBUTION.md)). A click on any element names it, its
-class and storey; the drawer holds everything only for the wall of step 8, and says so
-for the others. Storeys, disciplines, rooms and "fit" work as in `view`. The copy does not
-open from `file://`: browsers load no ES module from it.
+is no token and no server. The source hands over every recorded call at once, and nothing
+plays by itself: the page opens on question 1, answered, and the visitor picks the others
+from Ask Claude's list, the "Next:" suggestions, or the card's ‹ › arrows; a row of the
+history lights its answer again. Wherever Ask Claude appears, the page says "Recorded
+answers · Claude doesn't run on this page." The credit line at the bottom right and the
+explainer's "About this demo" credit the Duplex, with links to its source and its
+licence, as CC BY 4.0 asks ([DATA_ATTRIBUTION.md](../DATA_ATTRIBUTION.md)); the
+explainer's picture, a still of the Duplex, is credited beside it. A click on any element
+shows its class, name and storey; Element details hold everything only for the wall of
+question 8, and say so for the others. The Model panel and the view pill work as in
+`view`. The copy does not open from `file://`: browsers load no ES module from it.
 
 - **Only the Duplex is exported.** A script names how its files must be credited; the
   audit's has no credit, since its files' licences allow no copy, and `--export` refuses
@@ -303,10 +365,10 @@ page asks for, each chunk as the database holds it, a record for every object a 
 draws, `events.json` as `--check` resolved it, and nothing of an IFC file outside JSON
 values; `tests/unit/viewer/test_export.py`, that the static source asks for the files the
 export writes. `tests/samples/test_duplex_demo.py` pins the Duplex's copy. Served below a
-folder as Pages serves it, in Microsoft Edge 158 on Windows 11 (2026-11-23), the nine calls
-played back and lit 21, 23, 14, 21, 42, 78, 1 and 0 objects after the first, as `--check`
-resolved them, step 8 opened the wall's details, and the browser reported no error and no
-violation of the policy.
+folder as Pages serves it, in Microsoft Edge 158 on Windows 11 (2026-11-24, at commit
+`caa7005`), at 1,440 × 900 and at 390 × 844, the nine questions picked one by one lit 0,
+21, 23, 14, 21, 42, 78, 1 and 0 objects, as `--check` resolved them; question 8 opened the
+wall's details, and the browser reported no error and no violation of the policy.
 
 ## The MCP server's calls (the feed)
 
@@ -329,7 +391,7 @@ type, say) never reaches the server's code, and so never reaches the feed.
 
 `ifc-sql view` always listens: one session as `ifc_reader`, `ifc-sql-mcp-viewer-feed` in
 `pg_stat_activity`, in a thread of its own. When it loses that session (the database
-restarted, someone ended it) the page says "interrupted", and it connects again, waiting
+restarted, someone ended it) the page says "Connection lost, retrying", and it connects again, waiting
 a little longer each time; a call made meanwhile is not shown. The embedded database,
 stopped and started again, listens on another port, so restart `view` and the client's
 `serve` then ([ADR 13](adr/0013-embedded-postgresql.md)). A `serve` and a `view` on two
@@ -365,7 +427,7 @@ lit, then went out when the count arrived, and the page said "0 found". Since th
 
 `view` resolves each call when it arrives, with fixed queries of the tools' own SQL and
 the call's arguments as bind parameters: the whole filter, not the page the call
-returned. At most 20,000 objects; the caption says when there were more. A data quality
+returned. At most 20,000 objects; "How it was answered" says when there were more. A data quality
 run or a load after the call can change what it would light later; what the page shows
 is what it found when it came.
 
@@ -373,15 +435,15 @@ is what it found when it came.
 |---|---|
 | `find_elements` | Every match of the filter, on all pages: `tools.find_element_ids` shares the WHERE clause with `find_elements`, so the two never disagree. |
 | `schedule` | The same elements, one colour per group of `group_by`, in the schedule's order. |
-| `quantity_takeoff` | By `storey`, `ifc_class` or `revit_type`: each group's elements, one colour per group, openings left out unless `include_openings`. By `material`: nothing, and the caption says why: an element of three materials counts three times. |
+| `quantity_takeoff` | By `storey`, `ifc_class` or `revit_type`: each group's elements, one colour per group, openings left out unless `include_openings`. By `material`: nothing, and the card says why: an element of three materials counts three times. |
 | `get_element` | The one object; the camera goes to it and its details open. |
 | `space_schedule` | Every space of the model: rooms, the copies of rooms (`duplicate_of`) and Revit Areas, in three colours; their chunks are shown. |
 | `data_quality_report` | With `rule_id`: every object with a finding of that rule in the model's latest run. Without it: every object with a finding, coloured by its worst severity (red, amber, blue). The report's `severity` and `scope` apply. A model never checked says so. |
-| `compare_models` | The newer model's objects added since the older one, and those whose properties changed, in two colours. Removed objects are only in the older model: the caption counts them. |
+| `compare_models` | The newer model's objects added since the older one, and those whose properties changed, in two colours. Removed objects are only in the older model: "How it was answered" counts them. |
 | `run_sql` | The ids its rows hold: an `object_id` column (one group), an `object_ids` array column (one group per row, labelled by the row's first column), or `global_id` or `global_ids` beside a `model_id` column (GlobalIds are unique per model only). With the feed on, the tool's description tells the LLM so. Rows with no such column (a count, a sum) light nothing by nature: the call is listed, and the view stays as it is. An id column with no rows lights nothing: the query found no object. |
 | `list_models`, `list_storeys`, `describe_schema` | Nothing: they are listed, and the view stays as it is. |
 
-A call that failed lights nothing, and the caption says how it ended.
+A call that failed lights nothing, and the card says how it ended.
 
 ### The event
 
@@ -402,8 +464,8 @@ The ids come first, the SQL text gets what is left. Measured by
 `tests/unit/viewer/test_event.py`: 500 object ids of seven digits take 4,076 bytes of the
 event, and with 20,000 non-ASCII characters of SQL beside them the event is 7,999 bytes,
 the text clipped to its first 1,821 characters. The event never carries text from an
-IFC file: the summary the page shows ("find_elements: IfcWall on 'Level 1', model 1") is
-made from the arguments.
+IFC file: the sentence the page shows for a call ("Found walls on Level 1") is made from
+its tool and arguments (`words.js`).
 
 Any login to the database can send a notification on the channel, so `view` trusts none:
 it drops an unknown version, a field of the wrong type, a tool that does not exist, an id
@@ -473,14 +535,20 @@ The page is plain ES modules, with no build step and no npm, in
 
 | File | Does |
 |---|---|
-| `index.html`, `viewer.css` | The layout. The import map is the only inline script. |
-| `main.js` | The sidebar, the loading of the chunks (four at a time), the toggles, the selection, a call's caption. |
-| `feed.js` | The list of calls from the event stream, the feed's state, a call's selection handed to the view. |
-| `scene.js` | Each chunk into two BatchedMeshes, one opaque and one transparent, one instance per primitive; the map from GlobalId to instances; picking, lighting groups in their colours with the rest grey, fitting, `measure`. |
-| `details.js` | The drawer. |
-| `api.js` | The one seam for data, with two sources. Live: the token, `fetch` with `Authorization: Bearer`, and the `EventSource` of the feed. Static: the files of `ifc-sql demo --export`, the recorded calls played back. |
+| `index.html`, `viewer.css` | The layout, on the tokens of Kees's CV site, and the explainer's text with its `data-count` marks. The import map is the only inline script; below 760 px the phone layout. |
+| `main.js` | The page's mode (demo, scripted or local, from the feed's status), the loading of the chunks (four at a time), what is shown, lighting a call, a click, the pill and the right side. |
+| `card.js` | The answer card: the question, the answer in words, the legend, "How it was answered". |
+| `ask.js` | Ask Claude: the panel that opens and closes, the history, the box and its list of questions, the phone's sheet. |
+| `model.js` | The Model panel's disciplines, with their models, and storeys. |
+| `explainer.js` | The "?" dialog: its tabs, and the demo's or the local app's last box. |
+| `words.js` | The page's words: each tool's title (pinned to the server's by `tests/unit/viewer/test_words.py`), the disciplines, nouns of IFC classes, and a call in a sentence. |
+| `scene.js` | Each chunk into two BatchedMeshes, one opaque and one transparent, one instance per primitive; the map from GlobalId to instances and their classes; picking, lighting groups in their colours with the rest grey, a click in teal, fitting, `measure`. |
+| `details.js` | Element details. |
+| `api.js` | The one seam for data, with two sources. Live: the token, `fetch` with `Authorization: Bearer`, and the `EventSource` of the feed. Static: the files of `ifc-sql demo --export`, every recorded call at once. |
 | `dom.js` | The one way the page makes elements: text as `textContent`, never HTML. |
+| `images/` | The favicon and the explainer's still of the Duplex (CC BY 4.0), with their licences and `SHA256SUMS`. |
 | `vendor/three/` | three.js r187, unminified, with its MIT licence and `SHA256SUMS`. |
+| `vendor/nunito/` | Nunito, `@fontsource-variable/nunito` 5.3.0: one variable font in two subsets, `.woff2`, with its SIL Open Font License and `SHA256SUMS`. |
 
 ## Upgrading three.js
 

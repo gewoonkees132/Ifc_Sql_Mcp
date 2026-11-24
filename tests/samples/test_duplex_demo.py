@@ -213,13 +213,15 @@ async def test_the_duplex_demo_exports_as_the_static_copy_pages_publishes(
     models = demo.find_models(reader, DUPLEX)
     site = tmp_path / "site"
 
-    exported = export.export(reader, DUPLEX, played, models, site, pause_seconds=5)
+    exported = export.export(reader, DUPLEX, played, models, site)
 
     def read(path: str) -> Any:
         return json.loads((site / path).read_text(encoding="utf-8"))
 
-    # The page and its 16 files, 4 data files, and 4 scenes of 7, 9, 4 and 4 chunks.
-    assert exported.files == 1 + 16 + 4 + 4 + 24
+    # The page and its 27 files (10 modules, the stylesheet, 2 pictures, three.js's 6 and
+    # Nunito's 2, with a licence and SHA256SUMS each), 4 data files, and 4 scenes of 7, 9,
+    # 4 and 4 chunks.
+    assert exported.files == 1 + 27 + 4 + 4 + 24
     ids = [models[key] for key in ("arc", "mep", "ele", "plu")]
     assert [model["model_id"] for model in read(export.MODELS)["models"]] == ids
     scenes = [read(export.SCENE.format(model_id=model_id)) for model_id in ids]

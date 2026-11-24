@@ -13,6 +13,7 @@ import pytest
 from ifc_sql_mcp.viewer.http import MEDIA_TYPES, PAGE, STATIC
 
 VENDOR = STATIC / "vendor" / "three"
+NUNITO = STATIC / "vendor" / "nunito"
 OWN_SCRIPTS = sorted(STATIC.glob("*.js"))
 
 BANNED = {
@@ -56,11 +57,15 @@ def test_each_banned_call_is_found(source: str, found: str) -> None:
 def test_the_page_has_its_own_modules() -> None:
     assert [path.name for path in OWN_SCRIPTS] == [
         "api.js",
+        "ask.js",
+        "card.js",
         "details.js",
         "dom.js",
-        "feed.js",
+        "explainer.js",
         "main.js",
+        "model.js",
         "scene.js",
+        "words.js",
     ]
 
 
@@ -125,17 +130,22 @@ def test_every_module_the_page_imports_is_one_of_its_files() -> None:
             assert resolve(specifier, module).is_file(), (module.name, specifier)
 
 
-def test_the_vendored_files_match_their_sha256sums() -> None:
+def _sums(folder: Path) -> tuple[dict[str, str], dict[str, str]]:
+    """The SHA256SUMS of ``folder``, and the sums of the files in it."""
     listed = {}
-    for line in (VENDOR / "SHA256SUMS").read_text(encoding="ascii").splitlines():
+    for line in (folder / "SHA256SUMS").read_text(encoding="ascii").splitlines():
         digest, name = line.split("  ")
         listed[name] = digest
-
     on_disk = {
-        path.relative_to(VENDOR).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in VENDOR.rglob("*")
+        path.relative_to(folder).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in folder.rglob("*")
         if path.is_file() and path.name != "SHA256SUMS"
     }
+    return listed, on_disk
+
+
+def test_the_vendored_files_match_their_sha256sums() -> None:
+    listed, on_disk = _sums(VENDOR)
 
     assert on_disk == listed
     assert sorted(listed) == [
@@ -149,6 +159,34 @@ def test_the_vendored_files_match_their_sha256sums() -> None:
     ]
 
 
+def test_every_vendored_folder_has_a_licence_and_sha256sums() -> None:
+    folders = sorted(path.name for path in (STATIC / "vendor").iterdir())
+
+    assert folders == ["nunito", "three"]
+    for name in folders:
+        listed, on_disk = _sums(STATIC / "vendor" / name)
+        assert on_disk == listed, name
+        assert "LICENSE" in listed, name
+
+
+def test_nunito_is_release_5_3_0_under_the_open_font_licence() -> None:
+    listed, on_disk = _sums(NUNITO)
+    licence = (NUNITO / "LICENSE").read_text(encoding="utf-8")
+
+    assert on_disk == listed
+    # The upright variable font of @fontsource-variable/nunito 5.3.0, two of its subsets.
+    assert sorted(listed) == [
+        "LICENSE",
+        "nunito-latin-ext-wght-normal.woff2",
+        "nunito-latin-wght-normal.woff2",
+    ]
+    assert licence.startswith("Copyright 2014 The Nunito Project Authors")
+    assert "SIL OPEN FONT LICENSE Version 1.1" in licence
+    for name in listed:
+        if name.endswith(".woff2"):
+            assert (NUNITO / name).read_bytes()[:4] == b"wOF2", name
+
+
 def test_three_js_is_release_187_under_its_mit_licence() -> None:
     licence = (VENDOR / "LICENSE").read_text(encoding="utf-8")
     core = (VENDOR / "three.core.js").read_text(encoding="utf-8")
@@ -156,6 +194,24 @@ def test_three_js_is_release_187_under_its_mit_licence() -> None:
     assert licence.startswith("The MIT License")
     assert "three.js authors" in licence
     assert "const REVISION = '187';" in core
+
+
+def test_every_picture_of_the_page_has_its_licence_and_sha256_sum() -> None:
+    images = STATIC / "images"
+    listed, on_disk = _sums(images)
+    licence = (images / "LICENSE").read_text(encoding="utf-8")
+
+    assert on_disk == listed
+    for name in listed:
+        if name != "LICENSE":
+            assert f"\n{name}\n" in licence, name  # each picture has its paragraph
+    # No picture lies outside images/, and none comes from the network.
+    pictures = {".svg", ".png", ".webp", ".jpg"}
+    assert {
+        path.relative_to(STATIC).as_posix()
+        for path in STATIC.rglob("*")
+        if path.suffix in pictures and path.is_file()
+    } == {f"images/{name}" for name in listed if Path(name).suffix in pictures}
 
 
 def test_every_file_of_the_page_has_a_media_type() -> None:

@@ -11,7 +11,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const BACKGROUND = 0xeef0f3;
-const ACCENT = '#ff5722';
+/** A clicked element: the page's teal, which no group of an answer uses (selection.py). */
+export const ACCENT = '#0e8192';
 const GHOST = new THREE.Color(0xd5d9de);
 const SPACE_ALPHA = 0.25;
 const TINT_WEIGHT = 0.6;
@@ -78,7 +79,9 @@ export class SceneView extends EventTarget {
     this.models = new Map(); // model id → { group, tint }
     this.chunks = []; // { modelId, kind, storey, group, batches, instances }
     this.elements = new Map(); // "model id/GlobalId" → [{ batch, id }]
+    this.classes = new Map(); // "model id/GlobalId" → its IFC class, from the node's extras
     this.selected = [];
+    this.lit = { drawn: 0, classes: new Set() }; // what the last highlight drew
     this.ghosted = false;
     this.only = false;
     this.moved = false;
@@ -120,7 +123,9 @@ export class SceneView extends EventTarget {
       // its children. GLTFLoader keeps a node's own name in userData.name.
       const owners = [];
       for (let node = object; node; node = node.parent) {
-        if (node.userData.ifc_class !== undefined) owners.push(node.userData.name);
+        if (node.userData.ifc_class === undefined) continue;
+        owners.push(node.userData.name);
+        this.classes.set(elementKey(modelId, node.userData.name), String(node.userData.ifc_class));
       }
       if (owners.length === 0) return;
       materials.add(object.material);
@@ -197,17 +202,21 @@ export class SceneView extends EventTarget {
    * colour. With `ghost`, everything else is drawn opaque light grey, so the selection
    * stands out without see-through walls; without it, the rest keeps its colours.
    * Returns how many of the keys are drawn: an aggregate counts once, through its parts.
+   * `lit` keeps that count and the drawn objects' classes, for the answer's wording.
    */
   highlight(groups, ghost = false) {
     this.restore();
     const colour = new THREE.Vector4();
     let drawn = 0;
+    const classes = new Set();
     for (const group of groups) {
       const tint = new THREE.Color(group.colour);
       for (const [modelId, globalId] of group.keys) {
-        const instances = this.elements.get(elementKey(modelId, globalId));
+        const key = elementKey(modelId, globalId);
+        const instances = this.elements.get(key);
         if (!instances) continue;
         drawn += 1;
+        if (this.classes.has(key)) classes.add(this.classes.get(key));
         for (const instance of instances) {
           const { batch, id } = instance;
           colour.set(tint.r, tint.g, tint.b, Math.max(batch.userData.colours[id].w, 0.85));
@@ -226,6 +235,7 @@ export class SceneView extends EventTarget {
       });
     }
     this.showOnly(this.only && this.selected.length > 0);
+    this.lit = { drawn, classes };
     return drawn;
   }
 
@@ -294,7 +304,10 @@ export class SceneView extends EventTarget {
     const direction = this.camera.position.clone().sub(this.controls.target);
     if (direction.lengthSq() === 0) direction.set(1, 0.75, 1);
     direction.normalize();
-    const distance = (radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2))) * 1.05;
+    // The narrower of the two angles of view: on a phone held upright, the horizontal one.
+    const vertical = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    const horizontal = Math.atan(Math.tan(vertical) * this.camera.aspect);
+    const distance = (radius / Math.sin(Math.min(vertical, horizontal))) * 1.05;
     this.camera.position.copy(centre).addScaledVector(direction, distance);
     this.camera.near = Math.max(distance / 1000, 0.01);
     this.camera.far = distance + radius * 20;

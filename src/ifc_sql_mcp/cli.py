@@ -784,7 +784,12 @@ def demo(
     ] = False,
     pause: Annotated[
         float,
-        typer.Option("--pause", min=0, metavar="SECONDS", help="Seconds between two questions."),
+        typer.Option(
+            "--pause",
+            min=0,
+            metavar="SECONDS",
+            help="Seconds between two questions, on the page it serves.",
+        ),
     ] = 5.0,
     check: Annotated[
         bool,
@@ -810,7 +815,7 @@ def demo(
             metavar="DIR",
             help="Serve no page: play and compare every question as --check does, then "
             "write the page, the scenes and the calls into DIR, a new or empty folder, as a "
-            "static site that plays them back --pause seconds apart. The Duplex only.",
+            "static site where the visitor picks the questions. The Duplex only.",
             show_default=False,
         ),
     ] = None,
@@ -859,7 +864,7 @@ def demo(
                 if not agreed:
                     raise typer.Exit(1)
                 if export is not None:
-                    _export(reader, played, steps, models, export, pause)
+                    _export(reader, played, steps, models, export)
                 return
             with _bound(port) as sock:
                 server = _serving(
@@ -926,11 +931,10 @@ def _export(
     played: list[demo_play.Played],
     models: dict[str, int],
     folder: Path,
-    pause: float,
 ) -> None:
     """Write the static copy of the demo that played; exit 1 if it cannot be."""
     try:
-        exported = demo_export.export(reader, script, played, models, folder, pause_seconds=pause)
+        exported = demo_export.export(reader, script, played, models, folder)
     except demo_export.ExportError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(1) from exc
@@ -963,6 +967,9 @@ async def _show(
         await wait()
 
     async def steps() -> None:
+        # The page lists the questions from the start, as the scripted demo's, not the
+        # local app's empty box; play() announces them again, unchanged.
+        feed.announce(demo_play.questions_of(script))
         await wait()  # the page loads the models meanwhile
         played = await demo_play.play(script, client, feed, models, between=between)
         _, agreed = demo_play.report(script, played)

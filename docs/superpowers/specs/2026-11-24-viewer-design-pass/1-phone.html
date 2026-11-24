@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ---------- the thread around the mockups (T3 theme) ---------- */
+  .intro { margin: 0 0 16px; color: var(--muted-foreground, var(--foreground)); font-size: 13px; line-height: 1.5; }
+  .cap { margin: 0 0 6px; font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; color: var(--muted-foreground, var(--foreground)); }
+  .row { display: flex; gap: 22px; margin-top: 18px; align-items: flex-start; }
+  .notes { margin-top: 18px; font-size: 13px; line-height: 1.55; color: var(--foreground); }
+  .notes ul { margin: 0; padding-left: 18px; }
+  .notes li { margin: 0 0 5px; }
+
+  /* ---------- the app, in the CV's tokens ---------- */
+  .frame { position: relative; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); }
+  .frame.desk { width: 696px; height: 400px; }
+  .frame.phone { width: 234px; height: 468px; border-radius: 22px; border-width: 2px; }
+  .frame.cut { width: 438px; height: 468px; }
+  .screen {
+    --bg: #ffffff; --surface: #f7f8f9; --surface-alt: #fafbfc; --hover: #f0f2f4;
+    --ink: #1a1f24; --ink-2: #586069; --ink-3: #6b7480;
+    --teal: #0E8192; --teal-dark: #0a6473; --teal-ink: #0a6b7a;
+    --teal-08: rgba(14,129,146,.08); --teal-15: rgba(14,129,146,.15); --teal-20: rgba(14,129,146,.2);
+    --line: #d1d5da; --line-2: #e1e4e8; --line-3: #f0f3f6;
+    --canvas: #eef0f3;
+    --shadow-sm: 0 1px 3px 0 rgba(0,0,0,.06), 0 1px 2px 0 rgba(0,0,0,.04);
+    --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.08), 0 4px 6px -2px rgba(0,0,0,.04);
+    --shadow-xl: 0 20px 25px -5px rgba(0,0,0,.10), 0 10px 10px -5px rgba(0,0,0,.04);
+    position: relative; overflow: hidden;
+    font-family: 'Nunito', -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 15px; line-height: 1.5; color: var(--ink); background: var(--canvas);
+    -webkit-font-smoothing: antialiased;
+  }
+  .desk .screen { width: 1200px; height: 690px; zoom: .58; }
+  .phone .screen { width: 390px; height: 780px; zoom: .6; }
+  .cut .screen { width: 584px; height: 624px; zoom: .75; }
+
+  /* the real Duplex, cropped from docs/images/demo-duplex.png */
+  .crop { position: absolute; width: 850px; height: 550px; overflow: hidden;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+    -webkit-mask-composite: source-in;
+            mask-image: linear-gradient(to right, transparent, #000 7%, #000 93%, transparent), linear-gradient(to bottom, transparent, #000 7%, #000 93%, transparent);
+            mask-composite: intersect; }
+  .crop img { position: absolute; left: -400px; top: -200px; width: 1440px; height: 900px; max-width: none; }
+  .crop.sm { width: 425px; height: 275px; }
+  .crop.sm img { left: -200px; top: -100px; width: 720px; height: 450px; }
+
+  /* brand */
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .mark { width: 30px; height: 30px; flex: none; }
+  .who { min-width: 0; flex: 1; }
+  .who b { display: block; font-size: 15px; font-weight: 700; line-height: 1.25; }
+  .who span { display: block; font-size: 13px; color: var(--ink-2); line-height: 1.25; }
+  .info { width: 34px; height: 34px; flex: none; border-radius: 99px; border: 1px solid var(--line-2); background: var(--bg);
+    display: grid; place-items: center; color: var(--teal); font-weight: 700; font-size: 15px; box-shadow: var(--shadow-sm); }
+  .ghost { width: 34px; height: 34px; flex: none; border-radius: 8px; display: grid; place-items: center; color: var(--ink-3); font-size: 16px; }
+
+  /* the floating panel */
+  .panel { position: absolute; left: 16px; top: 16px; bottom: 16px; width: 400px; background: var(--bg); border-radius: 14px;
+    box-shadow: var(--shadow-xl), 0 0 0 1px var(--line-2); display: flex; flex-direction: column; overflow: hidden; }
+  .p-head { padding: 14px 16px; border-bottom: 1px solid var(--line-3); }
+  .thread { flex: 1; min-height: 0; overflow: hidden; padding: 14px 16px 10px; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; }
+  .earlier { font-size: 12px; color: var(--ink-3); text-align: center; margin-bottom: 2px; }
+
+  /* history items */
+  .past { display: flex; gap: 10px; align-items: flex-start; padding: 9px 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-3); }
+  .num { width: 22px; height: 22px; flex: none; border-radius: 99px; display: grid; place-items: center; font-size: 11px; font-weight: 700; }
+  .past .num { border: 1.5px solid var(--line); color: var(--ink-3); }
+  .past .q { font-size: 14px; font-weight: 600; line-height: 1.3; }
+  .past .a { font-size: 13px; color: var(--ink-3); line-height: 1.3; }
+
+  /* the current question */
+  .current { position: relative; padding: 10px 0 0 16px; }
+  .current::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 4px; width: 4px; border-radius: 99px; background: linear-gradient(180deg, #0E8192, #0a6473); }
+  .current .num { background: var(--teal); color: #fff; }
+  .qline { display: flex; gap: 10px; align-items: center; font-weight: 700; font-size: 15px; }
+  .big { font-size: 26px; font-weight: 700; line-height: 1.2; letter-spacing: -.01em; margin-top: 10px; }
+  .big small { display: block; font-size: 15px; font-weight: 500; color: var(--ink-2); letter-spacing: 0; margin-top: 2px; }
+  .legend { list-style: none; margin: 10px 0 0; padding: 0; }
+  .legend li { display: flex; align-items: center; gap: 10px; padding: 5px 8px; margin: 0 -8px; border-radius: 6px; font-size: 14px; }
+  .legend li:first-child { background: var(--hover); }
+  .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+  .legend .t { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .legend .c { font-weight: 700; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .how { display: flex; align-items: center; justify-content: space-between; gap: 8px; white-space: nowrap; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--line-3); font-size: 13px; color: var(--teal-ink); font-weight: 600; }
+  .how span { color: var(--ink-3); font-weight: 500; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line-3); font-size: 13px; }
+  .chip b { font-weight: 700; color: var(--ink-2); }
+
+  /* the question box */
+  .composer { padding: 10px 14px 12px; border-top: 1px solid var(--line-2); background: var(--surface-alt); }
+  .try { display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; margin-bottom: 8px; align-items: center; }
+  .try em { font-style: normal; font-size: 12px; color: var(--ink-3); flex: none; }
+  .sugg { flex: none; padding: 3px 10px; border-radius: 99px; font-size: 13px; font-weight: 600; color: var(--teal-ink); background: var(--teal-08); white-space: nowrap; }
+  .box { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+  .box.focus { border-color: var(--teal); box-shadow: 0 0 0 4px var(--teal-20); }
+  .box .ph { flex: 1; color: var(--ink-3); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .box .caret { display: inline-block; width: 1.5px; height: 18px; background: var(--ink); vertical-align: -3px; margin-right: 2px; }
+  .box .list { font-size: 13px; font-weight: 600; color: var(--ink-2); padding: 5px 10px; border-radius: 8px; background: var(--surface); white-space: nowrap; }
+  .send { width: 34px; height: 34px; flex: none; border-radius: 10px; background: var(--teal); color: #fff; display: grid; place-items: center; font-weight: 700; font-size: 16px; }
+  .send.off { background: var(--line-2); color: var(--ink-3); }
+  .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 99px; background: var(--teal); opacity: .6; }
+
+  /* the list of questions, opened from the box */
+  .pop { position: absolute; left: 14px; right: 14px; bottom: 74px; background: var(--bg); border-radius: 12px; box-shadow: var(--shadow-xl), 0 0 0 1px var(--line-2); padding: 8px; }
+  .pop h4 { margin: 4px 8px 6px; font-size: 13px; font-weight: 700; color: var(--ink-2); }
+  .pop ol { list-style: none; margin: 0; padding: 0; }
+  .pop li { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 8px; font-size: 14px; }
+  .pop li .num { border: 1.5px solid var(--line); color: var(--ink-3); width: 20px; height: 20px; font-size: 10px; }
+  .pop li.done { color: var(--ink-3); }
+  .pop li.done::after { content: "✓ asked"; margin-left: auto; font-size: 12px; color: var(--ink-3); }
+  .pop li.hover { background: var(--teal-08); color: var(--teal-ink); font-weight: 600; }
+  .pop li.hover .num { border-color: var(--teal); color: var(--teal-ink); }
+  .pop .own { margin: 6px 0 0; padding: 10px 8px 4px; border-top: 1px solid var(--line-3); font-size: 13px; color: var(--ink-2); line-height: 1.4; }
+  .pop .own a { color: var(--teal-ink); font-weight: 600; text-decoration: none; }
+
+  /* controls over the model */
+  .pill { position: absolute; display: flex; gap: 2px; padding: 4px; border-radius: 99px; background: rgba(255,255,255,.92); border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); }
+  .pill span { padding: 6px 14px; border-radius: 99px; font-size: 13px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+  .pill span.on { background: var(--teal-08); color: var(--teal-ink); }
+  .fab { position: absolute; height: 40px; min-width: 40px; padding: 0 14px; border-radius: 99px; background: #fff; border: 1px solid var(--line-2); box-shadow: var(--shadow-lg); display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 14px; font-weight: 600; color: var(--ink-2); }
+  .fab.round { padding: 0; width: 44px; height: 44px; font-size: 18px; }
+
+  /* phone */
+  .p-top { position: absolute; left: 12px; right: 12px; top: 12px; height: 52px; padding: 0 8px 0 12px; background: rgba(255,255,255,.95); border-radius: 99px; box-shadow: var(--shadow-lg), 0 0 0 1px var(--line-2); display: flex; align-items: center; gap: 10px; }
+  .sheet { position: absolute; left: 0; right: 0; bottom: 0; background: #fff; border-radius: 18px 18px 0 0; box-shadow: 0 -8px 24px -6px rgba(0,0,0,.14), 0 0 0 1px var(--line-2); display: flex; flex-direction: column; }
+  .grab { width: 40px; height: 5px; border-radius: 99px; background: var(--line); margin: 8px auto 6px; }
+</style>
+</head>
+<body>
+
+<p class="intro">Layout B, with a box to ask a question and the questions you asked kept as a history above it, like a chat. Newest at the bottom, next to the box; an earlier question lights its answer again when you click it.</p>
+
+<!-- ============================================================ desktop -->
+<p class="cap">Desktop</p>
+<div class="frame desk"><div class="screen">
+  <div class="crop" style="left:391px;top:40px"><img src="../../../images/demo-duplex.png" alt=""></div>
+
+  <div class="panel">
+    <div class="p-head">
+      <div class="brand">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 10v12l-12 7L4 22V10z" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/><path d="M4 10l12 7 12-7M16 17v12" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/></svg>
+        <div class="who"><b>ifc-sql</b><span>Ask questions of your building models</span></div>
+        <div class="info" title="How it works">?</div>
+        <div class="ghost" title="Fold the panel away">«</div>
+      </div>
+    </div>
+
+    <div class="thread">
+      <div class="past"><span class="num">1</span><div><div class="q">What is loaded?</div><div class="a">4 models, 1,795 elements</div></div></div>
+      <div class="past"><span class="num">2</span><div><div class="q">Which walls are on Level 1?</div><div class="a">21 walls, in the architectural model</div></div></div>
+      <div class="current">
+        <div class="qline"><span class="num">3</span>Which walls are external, by type?</div>
+        <div class="big">23 walls<small>are external, of four types</small></div>
+        <ul class="legend">
+          <li><span class="sw" style="background:#e64a19"></span><span class="t">Exterior · Brick on Block</span><span class="c">12</span></li>
+          <li><span class="sw" style="background:#1e88e5"></span><span class="t">Foundation · Concrete 417 mm</span><span class="c">4</span></li>
+          <li><span class="sw" style="background:#43a047"></span><span class="t">Party wall · CMU dividing wall</span><span class="c">4</span></li>
+          <li><span class="sw" style="background:#8e24aa"></span><span class="t">Foundation · Concrete 435 mm</span><span class="c">3</span></li>
+        </ul>
+        <div class="how">▸ How it was answered <span>1 read-only query</span></div>
+      </div>
+    </div>
+
+    <div class="composer">
+      <div class="try"><em>Next:</em><span class="sugg">What does the door schedule say?</span><span class="sugg">Which rooms are there?</span></div>
+      <div class="box"><span class="ph">Ask a question…</span><span class="list">☰ 9 questions</span><span class="send off">↑</span></div>
+      <span class="badge">Recorded answers · no live AI on this page</span>
+    </div>
+  </div>
+
+  <div class="fab" style="right:20px;top:20px">☰ Model</div>
+  <div class="pill" style="left:652px;bottom:22px"><span>⤢ Fit all</span><span class="on">◎ Fit answer</span><span>◐ Only the answer</span></div>
+</div></div>
+
+<div class="row">
+  <!-- ============================================================ phone -->
+  <div>
+    <p class="cap">Phone</p>
+    <div class="frame phone"><div class="screen">
+      <div class="crop sm" style="left:-17px;top:70px"><img src="../../../images/demo-duplex.png" alt=""></div>
+      <div class="p-top">
+        <svg class="mark" viewBox="0 0 32 32" aria-hidden="true" style="width:26px;height:26px"><path d="M16 3 28 10v12l-12 7L4 22V10z" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/><path d="M4 10l12 7 12-7M16 17v12" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/></svg>
+        <div class="who"><b>ifc-sql</b></div>
+        <div class="fab" style="position:static;height:36px;box-shadow:none">☰ Model</div>
+        <div class="info">?</div>
+      </div>
+      <div class="fab round" style="right:14px;bottom:432px">⤢</div>
+      <div class="sheet" style="height:418px">
+        <div class="grab"></div>
+        <div class="earlier">▴ 2 earlier questions</div>
+        <div style="flex:1;padding:6px 16px 0">
+          <div class="current" style="padding-top:4px">
+            <div class="qline" style="font-size:14px"><span class="num">3</span>Which walls are external, by type?</div>
+            <div class="big" style="font-size:22px;margin-top:8px">23 walls<small>are external, of four types</small></div>
+            <div class="chips">
+              <span class="chip"><span class="sw" style="background:#e64a19"></span>Exterior <b>12</b></span>
+              <span class="chip"><span class="sw" style="background:#1e88e5"></span>Foundation 417 <b>4</b></span>
+              <span class="chip"><span class="sw" style="background:#43a047"></span>Party wall <b>4</b></span>
+              <span class="chip"><span class="sw" style="background:#8e24aa"></span>Foundation 435 <b>3</b></span>
+            </div>
+            <div class="how">▸ How it was answered</div>
+          </div>
+        </div>
+        <div class="composer" style="padding-bottom:18px">
+          <div class="box"><span class="ph">Ask a question…</span><span class="list">☰ 9</span><span class="send off">↑</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- ============================================================ the box, opened -->
+  <div>
+    <p class="cap">Clicking the question box</p>
+    <div class="frame cut"><div class="screen">
+      <div class="crop" style="left:250px;top:10px;opacity:.9"><img src="../../../images/demo-duplex.png" alt=""></div>
+      <div class="panel" style="width:420px">
+        <div class="p-head">
+          <div class="brand">
+            <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 10v12l-12 7L4 22V10z" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/><path d="M4 10l12 7 12-7M16 17v12" fill="none" stroke="#0E8192" stroke-width="2.4" stroke-linejoin="round"/></svg>
+            <div class="who"><b>ifc-sql</b><span>Ask questions of your building models</span></div>
+            <div class="info">?</div>
+          </div>
+        </div>
+        <div class="thread" style="opacity:.35">
+          <div class="past"><span class="num">2</span><div><div class="q">Which walls are on Level 1?</div><div class="a">21 walls</div></div></div>
+        </div>
+        <div class="pop">
+          <h4>Questions this demo can answer</h4>
+          <ol>
+            <li class="done"><span class="num">1</span>What is loaded?</li>
+            <li class="done"><span class="num">2</span>Which walls are on Level 1?</li>
+            <li class="done"><span class="num">3</span>Which walls are external, by type?</li>
+            <li class="hover"><span class="num">4</span>What does the door schedule say?</li>
+            <li><span class="num">5</span>Which rooms are there, and how big?</li>
+            <li><span class="num">6</span>Are any rooms counted twice?</li>
+            <li><span class="num">7</span>What lacks a fire rating?</li>
+            <li><span class="num">8</span>What is stored about one wall?</li>
+            <li><span class="num">9</span>Can it change the model?</li>
+          </ol>
+          <p class="own">Want to ask your own? Install ifc-sql and ask Claude about your own models. <a>How it works ›</a></p>
+        </div>
+        <div class="composer">
+          <div class="box focus"><span class="ph"><span class="caret"></span>Ask a question…</span><span class="send off">↑</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<div class="notes">
+  <ul>
+    <li><b>In the demo</b>, typing filters the nine questions; a question outside them gets the "ask your own" line instead of an answer.</li>
+    <li><b>In the local app</b>, before the Claude Code box exists, the history lists what Claude looked up while you asked it in Claude Desktop or Claude Code, and the box says how to connect.</li>
+    <li><b>«</b> folds the panel away to give the model the whole screen. On a phone, the sheet drags up to show the earlier questions.</li>
+  </ul>
+</div>
+
+</body>
+</html>

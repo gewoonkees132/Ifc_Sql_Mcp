@@ -13,6 +13,7 @@ import hashlib
 import re
 import sys
 from collections.abc import Callable
+from typing import Any
 
 import anyio
 import make_revit_quirks
@@ -46,6 +47,8 @@ def _fixture_script(total: int = 2) -> Script:
                 tool="find_elements",
                 arguments={"model_id": Model("arc"), "ifc_class": "IfcFlowTerminal"},
                 figure="2 panelboards",
+                answer="2 panelboards",
+                headline="2 panelboards",
                 measure=lambda result, _: result["total"],
                 expected=total,
                 lit=(2,),
@@ -56,6 +59,8 @@ def _fixture_script(total: int = 2) -> Script:
                 arguments={},
                 sql="DELETE FROM ifc.property WHERE object_id = {arc}",
                 figure="refused",
+                answer="No: refused",
+                headline="No",
                 measure=lambda result, _: result["error"][:14],
                 expected="query refused:",
                 lit=(),
@@ -66,6 +71,8 @@ def _fixture_script(total: int = 2) -> Script:
                 tool="list_models",
                 arguments={},
                 figure="2 models",
+                answer="2 models",
+                headline="2 models",
                 measure=lambda result, models: (
                     [m["model_id"] for m in result["models"]] == sorted(models.values())
                 ),
@@ -117,6 +124,25 @@ def _serving(
 
     monkeypatch.setattr(uvicorn.Server, "serve", serve)
     return served
+
+
+def _reported(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """A list that gets an item once the demo has reported how its questions went.
+
+    The steps call ``report`` and print its verdict with no ``await`` between, so a
+    ``serve`` that returns once this list holds an item ends the demo after the verdict
+    is printed. Ending it once the feed holds every call instead races the steps: they
+    may still be comparing the last call when ``alongside`` cancels them.
+    """
+    reported: list[bool] = []
+    report = cli.demo_play.report
+
+    def recording(*arguments: Any, **keywords: Any) -> Any:
+        reported.append(True)
+        return report(*arguments, **keywords)
+
+    monkeypatch.setattr(cli.demo_play, "report", recording)
+    return reported
 
 
 # --------------------------------------------------------------------------- --check
@@ -248,7 +274,8 @@ def test_an_unreachable_database_is_reported_without_its_password(
 def test_the_demo_serves_the_page_while_it_plays(monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[str] = []
     monkeypatch.setattr(cli.webbrowser, "open", opened.append)
-    served = _serving(monkeypatch, lambda feed: len(feed.entries()) == 3)
+    reported = _reported(monkeypatch)
+    served = _serving(monkeypatch, lambda feed: bool(reported))
 
     result = _demo("--pause", "0")
 
@@ -285,12 +312,35 @@ def test_the_page_shows_first_the_models_the_script_names(
     assert route.endpoint.__self__.model_ids == (2,)  # type: ignore[attr-defined]
 
 
+@pytest.mark.usefixtures("database", "script")
+def test_the_page_lists_the_questions_before_the_first_is_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Ctrl+C as soon as the page could read the questions: during the first wait, before
+    # any call, so that it opens as the scripted demo and not as the local app.
+    seen: list[tuple[list[str], int]] = []
+
+    def listed(feed: Feed) -> bool:
+        questions = feed.status().questions
+        if questions:
+            seen.append(([q.title for q in questions], len(feed.entries())))
+        return bool(questions)
+
+    _serving(monkeypatch, listed)
+
+    result = _demo("--no-open", "--pause", "30")
+
+    assert result.exit_code == 0, result.output
+    assert seen[0] == (["The panelboards", "A write is refused", "What is loaded?"], 0)
+
+
 @pytest.mark.usefixtures("database")
 def test_the_demo_says_when_it_differs_and_waits_for_enter_with_step(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(cli.SCRIPTS, "duplex", _fixture_script(total=3))
-    _serving(monkeypatch, lambda feed: len(feed.entries()) == 3)
+    reported = _reported(monkeypatch)
+    _serving(monkeypatch, lambda feed: bool(reported))
 
     result = _demo("--step", "--no-open", stdin="\n\n\n")
 
