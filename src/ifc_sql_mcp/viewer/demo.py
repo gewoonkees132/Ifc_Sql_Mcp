@@ -125,15 +125,14 @@ async def play(
     """
     played: list[Played] = []
     demo_source: Source | None = None
+    questions = questions_of(script)
+    feed.announce(questions)
     for index, step in enumerate(script.steps, start=1):
         after = max((entry.id for entry in feed.entries()), default=0)
         arguments = step.call_arguments(models)
         mine = _matcher(step, arguments, demo_source)
         # Before the call: its notification can arrive before its result does.
-        feed.expect(
-            mine,
-            DemoStep(index=index, steps=len(script.steps), title=step.title, figure=step.figure),
-        )
+        feed.expect(mine, questions[index - 1])
         result = await client.call_tool(step.tool, arguments)
         text_content = " ".join(getattr(block, "text", "") for block in result.content)
         structured: Mapping[str, Any] = (
@@ -147,6 +146,22 @@ async def play(
         if between is not None and index < len(script.steps):
             await between(played[-1])
     return played
+
+
+def questions_of(script: Script) -> list[DemoStep]:
+    """The script's steps as the page shows them: question, answer, number."""
+    return [
+        DemoStep(
+            index=index,
+            steps=len(script.steps),
+            title=step.title,
+            figure=step.figure,
+            answer=step.answer,
+            headline=step.headline,
+            detail=step.detail,
+        )
+        for index, step in enumerate(script.steps, start=1)
+    ]
 
 
 async def alongside(

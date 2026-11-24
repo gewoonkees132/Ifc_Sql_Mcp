@@ -31,6 +31,9 @@ from ifc_sql_mcp.viewer.http import STATIC, page_files, page_text
 
 CREDIT = Credit(
     text="The scene fixture, MIT; converted to glTF by IfcOpenShell triangulation.",
+    work="The scene fixture",
+    author="the tests",
+    licence="MIT",
     source_url="https://example.org/scene-fixture",
     licence_url="https://example.org/mit",
 )
@@ -70,6 +73,8 @@ def _script(engine: Engine, *, walls: int = 1, with_ele: bool = False) -> Script
                 tool="find_elements",
                 arguments={"model_id": Model("arc"), "ifc_class": "IfcWall"},
                 figure=f"{walls} wall",
+                answer=f"{walls} wall, in the fixture",
+                headline=f"{walls} wall",
                 measure=lambda result, _: result["total"],
                 expected=walls,
                 lit=(1,),
@@ -79,6 +84,8 @@ def _script(engine: Engine, *, walls: int = 1, with_ele: bool = False) -> Script
                 tool="get_element",
                 arguments={"model_id": Model("arc"), "global_id": _global_id(engine, 1, WALL)},
                 figure="the wall",
+                answer="Everything about the wall",
+                headline="Everything",
                 measure=lambda result, _: result["name"],
                 expected=WALL,
                 lit=(1,),
@@ -88,6 +95,8 @@ def _script(engine: Engine, *, walls: int = 1, with_ele: bool = False) -> Script
                 tool="list_models",
                 arguments={},
                 figure="3 models",
+                answer="3 models",
+                headline="3 models",
                 measure=lambda result, _: len(result["models"]),
                 expected=3,
                 lit=None,

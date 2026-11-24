@@ -49,12 +49,24 @@ DEMO = "scripted demo, no LLM"
 type State = Literal["off", "connecting", "live", "interrupted", "recorded"]
 
 
+class DemoStep(BaseModel):
+    """A question of the scripted demo, as the page shows it: one a call answers."""
+
+    index: int = Field(description="Its number, from 1.")
+    steps: int = Field(description="How many steps the script has.")
+    title: str = Field(description="What it asks, e.g. 'What lacks a fire rating?'.")
+    figure: str = Field(description="What the answer shows, as the docs cite it.")
+    answer: str = Field(description="The answer in one line, e.g. '78 walls and slabs'.")
+    headline: str = Field(description="The start of the answer that the card shows big.")
+    detail: str = Field(description="The rest of the answer, the sentence below; may be ''.")
+
+
 class Status(BaseModel):
     """Whether events arrive, and what was dropped."""
 
     state: State = Field(
         description="off: no feed. connecting, live, or interrupted (the listener "
-        "reconnects by itself). recorded: the static demo, played back from its file."
+        "reconnects by itself). recorded: the static demo, read from its file."
     )
     database: str | None = Field(description="Where the listener listens: host, port, database.")
     since: str | None = Field(description="When the state began, ISO 8601, UTC.")
@@ -62,15 +74,11 @@ class Status(BaseModel):
     received: int = Field(description="Events accepted since view started.")
     dropped: dict[str, int] = Field(description="Notifications refused, by reason.")
     demo: bool = Field(description="This view plays the scripted demo.")
-
-
-class DemoStep(BaseModel):
-    """The step of the scripted demo a call answers, for the page's caption."""
-
-    index: int = Field(description="Its number, from 1.")
-    steps: int = Field(description="How many steps the script has.")
-    title: str = Field(description="What it asks, e.g. 'What lacks a fire rating?'.")
-    figure: str = Field(description="What the answer shows, as the docs cite it.")
+    questions: list[DemoStep] = Field(
+        default_factory=list,
+        description="The scripted demo's questions, in order, those not yet asked too, so "
+        "that the page can list what comes; empty when no script plays.",
+    )
 
 
 class Entry(BaseModel):
@@ -250,6 +258,12 @@ class Feed:
         """
         with self._changed:
             self._expected = [(match, step)]
+
+    def announce(self, questions: list[DemoStep]) -> None:
+        """Tell the page the scripted demo's questions before the first is asked."""
+        with self._changed:
+            self._status = self._status.model_copy(update={"questions": list(questions)})
+            self._changed.notify_all()
 
     def mark_demo(self, source: Source) -> None:
         """Label the events of ``source``, the demo's own serve, as the scripted demo's.

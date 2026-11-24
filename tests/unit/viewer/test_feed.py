@@ -16,6 +16,8 @@ from sqlalchemy import Engine
 from ifc_sql_mcp.config import Settings
 from ifc_sql_mcp.db.engine import make_reader_engine
 from ifc_sql_mcp.server.app import argument_checks, build_server
+from ifc_sql_mcp.viewer import demo
+from ifc_sql_mcp.viewer.demo_script import DUPLEX
 from ifc_sql_mcp.viewer.event import Call, Source, encode
 from ifc_sql_mcp.viewer.feed import (
     BURST,
@@ -248,7 +250,10 @@ def test_a_closed_feed_says_so(feed: Feed) -> None:
 
 
 def test_a_step_labels_only_the_call_it_expects(feed: Feed) -> None:
-    feed.expect(lambda entry: entry.n == 2, DemoStep(index=1, steps=1, title="t", figure="f"))
+    feed.expect(
+        lambda entry: entry.n == 2,
+        DemoStep(index=1, steps=1, title="t", figure="f", answer="a", headline="a", detail=""),
+    )
 
     other = feed.receive(_payload(n=1))
     mine = feed.receive(_payload(n=2))
@@ -269,3 +274,13 @@ def test_a_process_with_an_odd_start_is_labelled_by_it(feed: Feed) -> None:
 
     assert entry is not None
     assert entry.source == "serve 7, started today"
+
+
+def test_the_demo_announces_its_questions_before_it_asks_one(feed: Feed) -> None:
+    questions = demo.questions_of(DUPLEX)
+
+    assert feed.status().questions == []
+    feed.announce(questions)
+
+    assert [q.title for q in feed.status().questions] == [s.title for s in DUPLEX.steps]
+    assert feed.entries() == []

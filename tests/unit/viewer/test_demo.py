@@ -149,7 +149,7 @@ def test_a_step_that_plays_as_written_has_no_differences() -> None:
 
     assert played.differences == []
     assert played.line(9) == (
-        "2/9 The architectural walls on Level 1 [find_elements, ok, 8,189 characters]: 21 walls; "
+        "2/9 Which walls are on Level 1? [find_elements, ok, 8,189 characters]: 21 walls; "
         "lights 21 objects: ok"
     )
 
@@ -219,7 +219,7 @@ def test_a_call_is_matched_by_its_tool_and_arguments() -> None:
 
 
 def test_a_query_is_matched_by_its_text() -> None:
-    step = Step("q", "run_sql", {}, "f", lambda r, m: 0, 0, (), sql="SELECT {arc}")
+    step = Step("q", "run_sql", {}, "f", "a", "a", lambda r, m: 0, 0, (), sql="SELECT {arc}")
     arguments = step.call_arguments(MODELS)
     sql = SqlText(text="SELECT 1", chars=9, sha256_16="0" * 16)
 
@@ -496,3 +496,89 @@ def test_the_duplex_figures_are_read_from_the_results() -> None:
 
     assert loaded.measure({"models": models}, MODELS) == [268, 926, None, None]
     assert doors.measure(schedule, MODELS) == (14, 2, ["EI 30", "Fire Rating"])
+
+
+def test_the_duplex_questions_are_questions_each_with_its_one_line_answer() -> None:
+    assert [(step.title, step.answer) for step in DUPLEX.steps] == [
+        ("What is loaded?", "4 models, 1,795 elements"),
+        ("Which walls are on Level 1?", "21 walls, in the architectural model"),
+        ("Which walls are external, by type?", "23 walls are external, of four types"),
+        (
+            "What does the door schedule say?",
+            '14 doors of 4 types; every fire rating is the placeholder "Fire Rating"',
+        ),
+        ("Which rooms are there, and how big?", "21 rooms, 422.0 m² in all"),
+        ("Are any rooms counted twice?", "Yes: 21 of the 42 spaces are MEP spaces over a room"),
+        ("What lacks a fire rating?", "78 walls and slabs"),
+        (
+            "What is stored about one wall?",
+            "Everything about one wall: its properties, materials and findings",
+        ),
+        ("Can it change the model?", "No: a delete is refused before it reaches the database"),
+    ]
+
+
+def test_each_duplex_answer_agrees_with_what_the_script_checks() -> None:
+    loaded, walls, external, doors, rooms, twice, fire, wall, write = DUPLEX.steps
+
+    counts = loaded.expected
+    assert isinstance(counts, list)
+    assert loaded.answer == f"{len(counts)} models, {sum(counts):,} elements"
+    assert walls.answer == f"{walls.expected} walls, in the architectural model"
+    assert walls.call_arguments(MODELS)["model_id"] == MODELS["arc"]
+    by_type = external.expected
+    assert isinstance(by_type, list)
+    assert len(by_type) == 4
+    assert external.answer == f"{sum(by_type)} walls are external, of four types"
+    elements, types, ratings = doors.expected
+    assert doors.answer == (
+        f'{elements} doors of {types} types; every fire rating is the placeholder "{ratings[0]}"'
+    )
+    assert len(ratings) == 1
+    spaces, area = rooms.expected
+    assert rooms.answer == f"{spaces} rooms, {area:.1f} m² in all"
+    total, copies = twice.expected
+    assert twice.answer == f"Yes: {copies} of the {total} spaces are MEP spaces over a room"
+    # The 14 doors hold the placeholder (above), which the rule does not count as missing.
+    assert fire.expected == [78]
+    assert fire.answer == "78 walls and slabs"
+    assert wall.expected[0] == "IfcWallStandardCase"
+    assert wall.answer.startswith("Everything about one wall")
+    assert write.outcome == "refused"
+    assert str(write.expected).endswith("this is a DELETE statement")
+    assert write.answer.startswith("No: a delete is refused")
+
+
+def test_the_card_shows_the_headline_big_and_the_rest_of_the_answer_below() -> None:
+    assert [(step.headline, step.detail) for step in DUPLEX.steps] == [
+        ("4 models", "1,795 elements"),
+        ("21 walls", "in the architectural model"),
+        ("23 walls", "are external, of four types"),
+        ("14 doors", 'of 4 types; every fire rating is the placeholder "Fire Rating"'),
+        ("21 rooms", "422.0 m² in all"),
+        ("Yes", "21 of the 42 spaces are MEP spaces over a room"),
+        ("78 walls and slabs", ""),
+        ("Everything about one wall", "its properties, materials and findings"),
+        ("No", "a delete is refused before it reaches the database"),
+    ]
+    for step in AUDIT.steps:
+        assert step.answer.startswith(step.headline), step.title
+
+
+def test_a_headline_that_is_not_the_start_of_the_answer_is_refused() -> None:
+    with pytest.raises(ValueError, match="the headline must be the start of the answer"):
+        Step("q", "list_models", {}, "f", "21 walls", "22 walls", lambda r, m: 0, 0, None)
+    with pytest.raises(ValueError, match="the headline must be the start of the answer"):
+        Step("q", "list_models", {}, "f", "21 walls", "", lambda r, m: 0, 0, None)
+
+
+def test_the_page_gets_every_question_of_the_script_numbered() -> None:
+    questions = demo.questions_of(DUPLEX)
+
+    assert [(q.index, q.steps, q.title) for q in questions[:2]] == [
+        (1, 9, "What is loaded?"),
+        (2, 9, "Which walls are on Level 1?"),
+    ]
+    assert questions[2].headline == "23 walls"
+    assert questions[2].detail == "are external, of four types"
+    assert questions[6].figure == "78 walls and slabs without a fire rating"

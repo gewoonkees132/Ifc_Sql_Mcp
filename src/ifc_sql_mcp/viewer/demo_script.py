@@ -40,11 +40,17 @@ class Credit:
 
     Attributes:
         text: The work, its author, its licence and what was changed, in one sentence.
+        work: The work's short name, for the page's credit line: "Duplex Apartment".
+        author: Who made it, as briefly: "buildingSMART".
+        licence: The licence's short name: "CC BY 4.0".
         source_url: Where the files come from.
         licence_url: The licence's text.
     """
 
     text: str
+    work: str
+    author: str
+    licence: str
     source_url: str
     licence_url: str
 
@@ -66,22 +72,41 @@ class Step:
         arguments: Its arguments; a :class:`Model` stands for a model's id.
         sql: For ``run_sql``: the query, with ``{arc}`` for the id of the model ``arc``.
         figure: What the result shows, in words, as the docs cite it.
+        answer: The answer in one line, as the page's history shows it: "23 walls are
+            external, of four types". It agrees with ``expected``.
+        headline: The start of ``answer`` that the page's answer card shows big: "23
+            walls"; the rest is the sentence below it (:attr:`detail`).
         measure: Reads that figure from the result: ``(result, model ids)``.
         expected: What ``measure`` must return.
         lit: The selection's count, group by group; empty for a call that lights
             nothing, ``None`` for one that lights nothing by nature (``list_models``).
         outcome: How the call must end.
+
+    Raises:
+        ValueError: ``headline`` is not the start of ``answer``.
     """
 
     title: str
     tool: str
     arguments: Mapping[str, object]
     figure: str
+    answer: str
+    headline: str
     measure: Callable[[Result, Mapping[str, int]], object]
     expected: object
     lit: tuple[int, ...] | None
     sql: str | None = None
     outcome: str = "ok"
+
+    def __post_init__(self) -> None:
+        """Refuse a headline that is not where the answer begins."""
+        if not self.headline or not self.answer.startswith(self.headline):
+            raise ValueError(f"{self.title!r}: the headline must be the start of the answer")
+
+    @property
+    def detail(self) -> str:
+        """The answer after its headline: the sentence below it, "" when there is none."""
+        return self.answer.removeprefix(self.headline).lstrip(" ,:;")
 
     def call_arguments(self, models: Mapping[str, int]) -> dict[str, Any]:
         """The arguments as the client sends them: model ids filled in, and the SQL."""
@@ -180,6 +205,9 @@ DUPLEX = Script(
     credit=Credit(
         text='"Duplex Apartment Test Files", buildingSMART International (2020), CC BY 4.0; '
         "converted to glTF by IfcOpenShell triangulation, openings cut.",
+        work="Duplex Apartment",
+        author="buildingSMART",
+        licence="CC BY 4.0",
         source_url="https://github.com/buildingsmart-community/Community-Sample-Test-Files",
         licence_url="https://creativecommons.org/licenses/by/4.0/",
     ),
@@ -189,15 +217,19 @@ DUPLEX = Script(
             tool="list_models",
             arguments={},
             figure="4 models: 268, 926, 103 and 498 elements",
+            answer="4 models, 1,795 elements",
+            headline="4 models",
             measure=_elements,
             expected=[268, 926, 103, 498],
             lit=None,
         ),
         Step(
-            title="The architectural walls on Level 1",
+            title="Which walls are on Level 1?",
             tool="find_elements",
             arguments={"model_id": Model("arc"), "ifc_class": "IfcWall", "storey_name": "Level 1"},
             figure="21 walls",
+            answer="21 walls, in the architectural model",
+            headline="21 walls",
             measure=lambda result, _: result["total"],
             expected=21,
             lit=(21,),
@@ -208,12 +240,14 @@ DUPLEX = Script(
             arguments={},
             sql=EXTERNAL_WALLS,
             figure="12, 4, 4 and 3 walls of four types",
+            answer="23 walls are external, of four types",
+            headline="23 walls",
             measure=lambda result, _: [row[1] for row in result["rows"]],
             expected=[12, 4, 4, 3],
             lit=(12, 4, 4, 3),
         ),
         Step(
-            title="The door schedule",
+            title="What does the door schedule say?",
             tool="schedule",
             arguments={
                 "model_id": Model("arc"),
@@ -222,24 +256,30 @@ DUPLEX = Script(
                 "fields": ["width_m", FIRE_RATING],
             },
             figure="14 doors in 4 types, every fire rating the placeholder 'Fire Rating'",
+            answer='14 doors of 4 types; every fire rating is the placeholder "Fire Rating"',
+            headline="14 doors",
             measure=_door_schedule,
             expected=(14, 4, ["Fire Rating"]),
             lit=(6, 4, 2, 2),
         ),
         Step(
-            title="The rooms",
+            title="Which rooms are there, and how big?",
             tool="space_schedule",
             arguments={"model_id": Model("arc")},
             figure="21 spaces, 422.0 m²",
+            answer="21 rooms, 422.0 m² in all",
+            headline="21 rooms",
             measure=lambda result, _: (result["space_count"], round(result["total_area_m2"], 1)),
             expected=(21, 422.0),
             lit=(21,),
         ),
         Step(
-            title="Rooms counted twice",
+            title="Are any rooms counted twice?",
             tool="space_schedule",
             arguments={"model_id": Model("mep")},
             figure="42 spaces, 21 of them an MEP Space over a room",
+            answer="Yes: 21 of the 42 spaces are MEP spaces over a room",
+            headline="Yes",
             measure=lambda result, _: (result["space_count"], result["duplicate_spaces"]),
             expected=(42, 21),
             lit=(21, 21),
@@ -248,26 +288,34 @@ DUPLEX = Script(
             title="What lacks a fire rating?",
             tool="data_quality_report",
             arguments={"model_id": Model("arc"), "rule_id": "missing_fire_rating"},
-            figure="78 walls, doors and slabs without a fire rating",
+            # 57 walls and 21 slabs: the 14 doors hold the placeholder 'Fire Rating' (step
+            # 4), which the rule does not count as missing (docs/data-quality.md).
+            figure="78 walls and slabs without a fire rating",
+            answer="78 walls and slabs",
+            headline="78 walls and slabs",
             measure=lambda result, _: [rule["findings"] for rule in result["rules"]],
             expected=[78],
             lit=(78,),
         ),
         Step(
-            title="One wall in full",
+            title="What is stored about one wall?",
             tool="get_element",
             arguments={"model_id": Model("arc"), "global_id": "0iEHWY1$XA8eQeeULq4jDb"},
             figure="everything stored about one wall: its properties, materials and findings",
+            answer="Everything about one wall: its properties, materials and findings",
+            headline="Everything about one wall",
             measure=lambda result, _: (result["ifc_class"], result["name"]),
             expected=("IfcWallStandardCase", "Basic Wall:Interior - Furring (152 mm Stud):190774"),
             lit=(1,),
         ),
         Step(
-            title="A write is refused",
+            title="Can it change the model?",
             tool="run_sql",
             arguments={},
             sql="DELETE FROM ifc.property",
             figure="refused before it reaches the database",
+            answer="No: a delete is refused before it reaches the database",
+            headline="No",
             measure=lambda result, _: result["error"],
             expected=(
                 "query refused: only a query that reads data is allowed (SELECT, WITH … "
@@ -334,6 +382,8 @@ AUDIT = Script(
             arguments={"model_id": Model("c")},
             figure="163 spaces, 75 of them copies of rooms: 8,090.7 m² with them, 4,721.4 m² "
             "without",
+            answer="163 spaces, 75 of them copies of rooms: 4,721.4 m² without them",
+            headline="163 spaces",
             measure=lambda result, _: (
                 result["space_count"],
                 result["duplicate_spaces"],
@@ -348,6 +398,8 @@ AUDIT = Script(
             tool="space_schedule",
             arguments={"model_id": Model("e")},
             figure="25 Revit Areas of 22,905.9 m², beside 7,438.8 m² of rooms",
+            answer="25 Revit Areas of 22,905.9 m², beside 7,438.8 m² of rooms",
+            headline="25 Revit Areas",
             measure=lambda result, _: (
                 result["revit_area_spaces"],
                 round(result["revit_area_total_m2"], 1),
@@ -367,6 +419,8 @@ AUDIT = Script(
                 "fields": ["width_m", "height_m", "Pset_DoorCommon.FireRating"],
             },
             figure=f"159 doors in 6 types on {L01}, none with a fire rating",
+            answer=f"159 doors of 6 types on {L01}, none with a fire rating",
+            headline="159 doors",
             measure=lambda result, _: (result["elements"], result["group_count"]),
             expected=(159, 6),
             lit=(77, 25, 21, 15, 14, 7),
@@ -377,6 +431,8 @@ AUDIT = Script(
             arguments={"new_model_id": Model("d")},
             figure="4 openings with new GlobalIds, and fire ratings added to 42 walls and 9 "
             "curtain walls",
+            answer="51 walls and curtain walls got a fire rating; 4 openings got new GlobalIds",
+            headline="51 walls and curtain walls",
             measure=_property_changes,
             expected=(
                 4,

@@ -46,6 +46,8 @@ def _fixture_script(total: int = 2) -> Script:
                 tool="find_elements",
                 arguments={"model_id": Model("arc"), "ifc_class": "IfcFlowTerminal"},
                 figure="2 panelboards",
+                answer="2 panelboards",
+                headline="2 panelboards",
                 measure=lambda result, _: result["total"],
                 expected=total,
                 lit=(2,),
@@ -56,6 +58,8 @@ def _fixture_script(total: int = 2) -> Script:
                 arguments={},
                 sql="DELETE FROM ifc.property WHERE object_id = {arc}",
                 figure="refused",
+                answer="No: refused",
+                headline="No",
                 measure=lambda result, _: result["error"][:14],
                 expected="query refused:",
                 lit=(),
@@ -66,6 +70,8 @@ def _fixture_script(total: int = 2) -> Script:
                 tool="list_models",
                 arguments={},
                 figure="2 models",
+                answer="2 models",
+                headline="2 models",
                 measure=lambda result, models: (
                     [m["model_id"] for m in result["models"]] == sorted(models.values())
                 ),
