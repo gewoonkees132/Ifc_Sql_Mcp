@@ -489,6 +489,60 @@ Aim for WCAG 2.1 AA.
 - Errors appear as a toast.
 - The hero uses a Duplex still.
 
+### While building (2026-11-24)
+
+Where the build differs from this document, or decides what it left open:
+
+- **An untrue answer made true.** Question 7's approved answer, "78 walls, doors and
+  slabs", was untrue: the 78 are 57 walls and 21 slabs, and the 14 doors hold the
+  placeholder "Fire Rating", which `missing_fire_rating` does not count. The answer and
+  the figure now say "78 walls and slabs".
+- **`answer` and `headline` beside `figure`** (`Step`, `DemoStep`), not `figure`
+  rewritten: `--check` keeps citing the figures the docs cite. `pause_seconds` left
+  `events.json`: the static copy no longer paces anything. The audit's four titles were
+  kept, each given an answer.
+- **Shape.** 6 px radius for the tinted pills (tabs, chips), as the CV has them; the
+  controls that float over the model (Ask Claude, ☰ Model, the view pill, the round
+  buttons) fully round, as the mockups draw them.
+- **Wording this document did not give.** Beside the closed Ask Claude button in the
+  demo, "Recorded answers" (the anti-goal: say so wherever Ask Claude appears). The
+  scripted demo's line below the box, "Asked by ifc-sql demo through the real tools ·
+  Claude doesn't run on this page.", and its empty card, "No question yet: the script
+  asks its first in a moment." The diagram's key in the demo, "Each call Claude makes
+  lights up on this page; in this demo, the calls are recorded." The hero's subtitle per
+  tab, from the mockups. The local sentence per tool ("Found walls on Level 1", `words.js`).
+  In `view`'s header, "Off" alone; the reason is in the line below the box.
+- **What stays lit.** In the demos each question stands alone: "What is loaded?" clears
+  the view. In `view`, a call that lights nothing by nature leaves the view and the card
+  as they were, as the feed did. A click on a legend group lights that group alone.
+- **The history and the answer scroll as one**, like a chat, with the answer's top kept
+  in view; two scrollbars side by side read badly.
+- **The credit line sits flush in the bottom-right corner**, as a map credits its tiles,
+  below the pill's row: wherever the pill moves (the panel open, a side panel open, a
+  narrow window), it never covers the credit.
+- **Esc closes one thing**: the list of questions; the panel when the focus is in it;
+  otherwise the newest of a clicked element, the Model panel, the panel, and what an
+  answer lit. The focus goes back to the button or box it came from.
+- **A click on nothing** clears a clicked element but leaves an answer lit; today's page
+  cleared everything. On a phone a stray tap would otherwise throw the answer away.
+- **The fit uses the narrower angle of view**, so the building fits a phone held upright,
+  and on a phone the model is drawn above the sheet, so that it is fitted to what can be
+  seen of it.
+- **On a phone**, the legend's chips are two to a row, 34 px to see and 44 px to touch;
+  there is no "Next:" row, as mockup 1 draws it (the list and ‹ › remain); the round
+  button is Fit all.
+- **The teal stays.** In Edge, a clicked plumbing boiler in `#0e8192` beside its twin in
+  the plumbing's tint (`#16a085`, 60 %) is told apart at once: saturated and dark against
+  pale sage.
+- **The hero still** is a fresh render, not a crop: the page itself, question 3 lit, the
+  building set on the canvas's grey at the right of a 1,560 × 300 WebP (9 KB). Its credit
+  sits on a dark backing, and the hero's text keeps to the dark side of its gradient, for
+  4.9:1 or more. `DATA_ATTRIBUTION.md` now says the repository ships this one picture
+  made from the Duplex.
+- **Every count of the explainer is tested**, "four models" in "About this demo"
+  included; "0 changes to your models" holds because every tool is annotated read-only
+  and not destructive.
+
 ## Left to the builder
 
 - Exact component structure and file split in `static/`.

@@ -5,8 +5,11 @@
   decisions 4 and 5 (Phase 3: the feed and the scripted demo) and decision 7 (Phase 5:
   the static demo on GitHub Pages). Phase 4 added the audit's script to decision 5; the
   colours of a fixed kind, and a `run_sql` with no id column among the calls that light
-  nothing by nature, to decision 4; and the page following the calls to decision 6.
-- Date: 2026-11-22; accepted 2026-11-23; Phases 4 and 5's additions 2026-11-23
+  nothing by nature, to decision 4; and the page following the calls to decision 6. The
+  design pass added decision 8 (the page's design), and amended decision 3 (the font),
+  decision 6 (its modules) and decision 7 (nothing plays by itself).
+- Date: 2026-11-22; accepted 2026-11-23; Phases 4 and 5's additions 2026-11-23; the
+  design pass 2026-11-24 ([its design](../superpowers/specs/2026-11-24-viewer-design-pass-design.md))
 - Amends: [ADR 1](0001-postgresql.md) (a second schema, `ifc_viewer`);
   [ADR 6](0006-mcp-server.md) decisions 2 and 10 (the feed's notification, decision 4);
   [ADR 13](0013-embedded-postgresql.md) decision 3 (`view` and `demo` attach to the
@@ -330,8 +333,9 @@ handling, so that a 500 carries the headers too:
   needs it (401 otherwise); `/` and `/static/` hold no data and do not. No cookie, and no
   `?t=`, which Phase 3's SSE route alone will take.
 - **Headers on every response:** a content security policy of `default-src 'none';
-  script-src 'self' 'sha256-<import map>'; style-src 'self'; img-src 'self'; connect-src
-  'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`, whose hash
+  script-src 'self' 'sha256-<import map>'; style-src 'self'; img-src 'self'; font-src
+  'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action
+  'none'` (`font-src 'self'` since the design pass, for the vendored Nunito), whose hash
   `create_app` computes from the `index.html` it serves; `X-Content-Type-Options:
   nosniff`; `Referrer-Policy: no-referrer`; `Cache-Control: no-store` on the JSON, and
   `private, no-cache` with the chunk's `glb_sha256` as `ETag` on a chunk, so a reload
@@ -342,7 +346,8 @@ handling, so that a 500 carries the headers too:
 - **The page's files** are read once and served from memory, by an explicit list of
   suffixes and media types: no listing, no path outside the folder, and `.js` as
   `text/javascript` whatever the Windows registry says (with `nosniff`, a module served
-  as `text/plain` would not run).
+  as `text/plain` would not run). Since the design pass, `.woff2` as `font/woff2` and
+  `.webp` as `image/webp` too.
 - **IFC text stays data.** The page sets it with `textContent` only, through one helper
   (`dom.js`) that refuses `on…` attributes. A unit test fails on `innerHTML`,
   `outerHTML`, `insertAdjacentHTML`, `document.write`, `srcdoc`,
@@ -458,7 +463,9 @@ SDK's client, as `scripts/mcp_smoke.py` does, with `IFC_SQL_VIEWER_FEED=1`, list
 take the path a real client's take, `serve` → `NOTIFY` → listener → selection → page, so
 the demo checks that path. The page says "scripted demo, no LLM" and numbers the
 questions: the demo tells the feed which step it expects before it asks, and labels the
-events of its own `serve` once the first arrives.
+events of its own `serve` once the first arrives. Since the design pass (decision 8) it
+also announces the script's questions before the first, so the page lists them from the
+start, "coming up" until asked, under "Scripted demo · no LLM".
 
 **The scripts are data** (`viewer/demo_script.py`): each step has a title, a tool, its
 arguments, a figure in words with a function that reads it from the result and the value
@@ -508,13 +515,21 @@ because A "is already replaced".
 
 ### 6. The page
 
+Decision 8 changed how the page looks and reads: the sidebar, the chips, the caption, the
+drawer and the feed's list gave way to the answer card, Ask Claude, the Model panel and
+Element details. What follows holds for what the page does; decision 8 says where.
+
 - **Plain ES modules, no build step, no npm**: `index.html`, `viewer.css`, `main.js`,
-  `scene.js`, `details.js`, `api.js` (the one seam for data) and `dom.js`. three.js r187
+  `scene.js`, `details.js`, `api.js` (the one seam for data) and `dom.js`; since the design
+  pass also `card.js`, `ask.js`, `model.js`, `explainer.js` and `words.js`, and `feed.js`
+  is gone. three.js r187
   is vendored unminified in `viewer/static/vendor/three/` (P5): `three.module.js`,
   `three.core.js`, `GLTFLoader` with the two addons it imports, `OrbitControls`, the MIT
-  licence and `SHA256SUMS`. Tests check the sums, that every module the page imports is
-  vendored, and that the wheel holds every file. `.gitattributes` keeps git from
-  converting the vendored files' line endings.
+  licence and `SHA256SUMS`; Nunito in `vendor/nunito/`, and the page's pictures in
+  `images/`, each with its licence and `SHA256SUMS`. Tests check the sums, that every
+  module the page imports is vendored, and that the wheel holds every file.
+  `.gitattributes` keeps git from converting the vendored files' and the pictures' line
+  endings.
 - **Rendering.** `api.js` fetches a chunk and `GLTFLoader.parseAsync` parses it;
   `scene.js` puts its primitives into two BatchedMeshes, one opaque and one transparent,
   one instance per primitive with its colour (alpha included), and frees the parsed
@@ -560,21 +575,24 @@ starts loading, in 76 draw calls, at 144.1 frames per second (the display's cap)
 is as the script says, writes a static copy of the demo into DIR, a new or empty folder:
 `view`'s page, marked `data-source="static"`, with its files and three.js; the script's
 models as `GET /api/models` would list them were they alone, their manifests and chunks;
-`events.json`, the script's calls as the feed resolved them, with the status "recorded",
-the pause between two calls and the credit; `elements.json`, the class, name and storey
+`events.json`, the script's calls as the feed resolved them, with the status "recorded"
+(and, since the design pass, the script's questions) and the credit; `elements.json`, the class, name and storey
 of every element and space a scene can draw; and `details.json`, `get_element` of the
 objects the calls looked up. The files are named by fixed names and ids only; every value
 of an IFC file is a JSON value.
 
 **The page is `view`'s.** `api.js` has a second source, which reads those files by paths
-relative to the page, so that it works below the repository's folder on Pages, and plays
-the recorded calls back one every `--pause` seconds; `main.js` takes it when the page is
-marked static, and otherwise nothing changes. The page's paths are relative for `view`
-too: served at `/`, they are the same addresses. The content security policy is `view`'s,
-as a `<meta>` tag, without `frame-ancestors`, which browsers ignore there; `no-referrer`
-is a `<meta>` tag too. The sidebar names the script and credits its files with links to
-their source and licence, `https` only. A click names any element from `elements.json`;
-the drawer holds everything for the objects in `details.json`, and says so for the rest.
+relative to the page, so that it works below the repository's folder on Pages; `main.js`
+takes it when the page is marked static, and otherwise nothing changes. It played the
+recorded calls back one every `--pause` seconds until the design pass; since then it
+hands over every recorded call at once, and the visitor picks the questions: nothing
+plays by itself (decision 8), and `events.json` keeps no pause. The page's paths are
+relative for `view` too: served at `/`, they are the same addresses. The content security
+policy is `view`'s, as a `<meta>` tag, without `frame-ancestors`, which browsers ignore
+there; `no-referrer` is a `<meta>` tag too. A credit line and the explainer credit the
+script's files with links to their source and licence, `https` only. A click names any
+element from `elements.json`; Element details hold everything for the objects in
+`details.json`, and say so for the rest.
 
 **Only the Duplex.** It is CC BY 4.0; files A, C and D of the audit state no licence, and
 B and E were posted to web-ifc's issues. A script names how its files must be credited
@@ -594,7 +612,54 @@ an artifact, so a pull request shows the copy before `main` publishes it.
 Phase 0 machine: 49 files, 13.0 MB, of which 10.3 MB are the 24 chunks and 2.3 MB
 three.js; `elements.json` is 245 KB. Served below a folder in Microsoft Edge 158, the nine
 calls played back light what `--check` resolved, and the browser reports no violation of
-the policy.
+the policy. After the design pass: 60 files, 13.2 MB, Nunito 79 KB and the explainer's
+still 9 KB of them; the nine questions, picked one by one, light what `--check` resolved,
+at 1,440 × 900 and at 390 × 844, with no violation of the policy.
+
+### 8. The page's design: one page for the app and the demo, built around asking
+
+The page is also the public demo, byte for byte (decision 7), and it read as a
+developer's tool: a sidebar of setup controls, lines such as "run_sql: 402 characters of
+SQL", and a demo that played its nine questions by itself. The design pass
+([its design](../superpowers/specs/2026-11-24-viewer-design-pass-design.md), approved by
+Kees on 2026-11-24, with mockups) makes it work first and explain on request:
+
+- **The model fills the window**, and everything floats over it: the answer card at the
+  top left, "☰ Model" at the top right, the view pill at the bottom centre, "Ask Claude"
+  at the bottom left, and in the demo a credit line in the corner. No splash screen
+  stands between the visitor and the model.
+- **The answer card** shows the question and the answer in words first (the script's
+  `answer` and `headline` in the demos; the call in a sentence and its count in `view`,
+  which has Claude's calls but not the question typed into Claude), the legend of its
+  groups, and "How it was answered", one click away: the tool and its arguments in words,
+  and the SQL of a `run_sql` call. The fixed tools' own SQL is not shown: it would need a
+  new data path from `server/tools.py` through `view` and the export.
+- **Ask Claude** is one panel that changes shape: the card grows down to the button, the
+  button becomes the question box, and the history slides in above the answer. The page's
+  mode follows the feed's status: the static copy (recorded) offers the nine questions to
+  pick, and nothing plays by itself; `ifc-sql demo` (a status with questions, which the
+  demo announces before its first) lists the script's, "coming up" until asked; `view`
+  lists Claude's calls, and its box says to ask in Claude Desktop or Claude Code. Claude
+  does not run on the page in any of them, and the page says so wherever Ask Claude
+  appears. Asking Claude from the page, through the user's own Claude Code, is the next
+  project.
+- **The Model panel** holds what the sidebar held: the project, each discipline with a
+  switch and its models (a model without a scene keeps the command that builds it), the
+  storeys and the rooms. Element details share the right side with it.
+- **The "?" explainer** says what the tool does and how it is built, with a diagram from
+  a Revit export to the page, and one wall followed through it. Its counts are marked
+  `data-count`, and `tests/unit/viewer/test_explainer.py` compares them with the code: the
+  server's tools, the rule catalogue, the demo's script, and every tool read-only.
+- **The look of Kees's CV site**: Nunito, vendored (`font-src 'self'`, decision 3), the
+  teal `#0e8192`, soft greys, tinted pills, calm motion that reduced motion turns off. A
+  clicked element lights in that teal, which no answer's group uses (orange is the first
+  of them), and which stands apart from the plumbing's green in the browser. A cube mark
+  stands beside "ifc-sql"; neither Kees's logo nor his name is on the page.
+- **A phone layout** below 760 px: the model above a sheet that holds the answer and the
+  box, in thumb reach. `view` still listens on 127.0.0.1 alone.
+- **The rules of decision 3 hold**: no framework and no build step, no inline style or
+  handler, text set as text, and every file of the page vendored and pinned, the
+  explainer's still of the Duplex included (CC BY 4.0, credited beside it).
 
 ## Alternatives considered
 
@@ -724,3 +789,19 @@ Decision 7 rejected:
   `pages.yml` alone holds them, and only on `main`.
 - **`actions/configure-pages` with `enablement`.** It needs a token that may change the
   repository's settings; Pages is switched to GitHub Actions once, by hand.
+
+Decision 8 rejected:
+
+- **An "Ask" panel beside the model** (mockup A, which Claude recommended). Kees picked
+  cards floating over a full-screen model, with the card and the ask control apart until
+  the panel opens.
+- **A framework such as React or Vue.** It brings back the build step decision 6
+  rejected.
+- **A separate page for the demo.** It breaks "the demo is `view`'s page", and the two
+  pages would drift apart (decision 7).
+- **Keeping the demo's playback.** A page that plays by itself takes the choice from the
+  visitor, and fails WCAG 2.2.2 unless it can be paused; with every question one click
+  away, nothing needs to play.
+- **Showing the fixed tools' own SQL under "How it was answered".** A new data path from
+  the server through `view` and the export; the tool and its arguments say how, and
+  `run_sql`'s query, the one an LLM writes, is shown.
