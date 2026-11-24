@@ -312,11 +312,27 @@ def test_every_file_the_page_links_is_written(exported: Exported) -> None:
     imports = json.loads(re.search(r'type="importmap">(.*?)</script>', page, re.DOTALL)[1])  # type: ignore[index]
 
     linked = re.findall(r'(?:href|src)="([^"]+)"', page)
-    assert linked == ["static/favicon.svg", "static/viewer.css", "static/main.js"]
-    for path in linked:
+    # The page's own files, by relative paths; every other link leaves the page, by https.
+    own = [path for path in linked if not path.startswith("https://")]
+    assert own == [
+        "static/images/favicon.svg",
+        "static/viewer.css",
+        "static/main.js",
+        "static/images/duplex.webp",
+    ]
+    for path in own:
         assert (exported.site / path).is_file(), path
     for target in imports["imports"].values():
         assert (exported.site / target).exists(), target
+    # The fonts the stylesheet loads, by paths relative to it.
+    style = (exported.site / "static/viewer.css").read_text(encoding="utf-8")
+    fonts = re.findall(r'url\("([^"]+)"\)', style)
+    assert fonts == [
+        "vendor/nunito/nunito-latin-ext-wght-normal.woff2",
+        "vendor/nunito/nunito-latin-wght-normal.woff2",
+    ]
+    for font in fonts:
+        assert (exported.site / "static" / font).is_file(), font
 
 
 # --------------------------------------------------------------------------- refusals
