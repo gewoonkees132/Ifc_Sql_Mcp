@@ -220,7 +220,6 @@ def test_a_play_that_differs_from_the_script_is_not_exported(tmp_path: Path) -> 
             played,
             {},
             tmp_path / "site",
-            pause_seconds=5,
         )
 
     assert not (tmp_path / "site").exists()
@@ -229,16 +228,17 @@ def test_a_play_that_differs_from_the_script_is_not_exported(tmp_path: Path) -> 
 # --------------------------------------------------------------------------- the recording
 
 
-def test_the_recording_says_when_and_how_it_plays_back_and_labels_every_call() -> None:
+def test_the_recording_says_when_it_was_made_and_labels_every_call() -> None:
     # The demo knows its serve only once the first call has arrived, and labels it after.
     first, second = _entry("list_models", demo=False), _entry("find_elements", demo=True)
 
     recorded = export.recording(
-        DUPLEX, [_played(first), _played(second, 2)], pause_seconds=4, recorded_at=RECORDED_AT
+        DUPLEX, [_played(first), _played(second, 2)], recorded_at=RECORDED_AT
     )
 
     assert recorded.title == "The Duplex, step by step"
-    assert recorded.pause_seconds == 4
+    # Nothing plays by itself: the copy keeps no pause between calls.
+    assert "pause_seconds" not in recorded.model_dump()
     assert recorded.credit == DUPLEX.credit
     assert [(entry.demo, entry.source) for entry in recorded.entries] == [
         (True, "scripted demo, no LLM (serve 5)"),
@@ -256,7 +256,10 @@ def test_the_recording_says_when_and_how_it_plays_back_and_labels_every_call() -
     assert status.message.startswith(
         "Recorded on 2026-11-23 10:00 UTC by ifc-sql demo --export (ifc-sql-mcp "
     )
-    assert status.message.endswith("and played back from this copy's files, one call every 4 s.")
+    assert status.message.endswith("): the answers of the real tools, kept in this copy's files.")
+    # The page lists the questions to pick from, every one of the script's.
+    assert [question.title for question in status.questions] == [s.title for s in DUPLEX.steps]
+    assert status.questions[2].headline == "23 walls"
 
 
 def test_the_details_are_those_of_the_objects_get_element_looked_up() -> None:

@@ -213,7 +213,7 @@ async def test_the_duplex_demo_exports_as_the_static_copy_pages_publishes(
     models = demo.find_models(reader, DUPLEX)
     site = tmp_path / "site"
 
-    exported = export.export(reader, DUPLEX, played, models, site, pause_seconds=5)
+    exported = export.export(reader, DUPLEX, played, models, site)
 
     def read(path: str) -> Any:
         return json.loads((site / path).read_text(encoding="utf-8"))

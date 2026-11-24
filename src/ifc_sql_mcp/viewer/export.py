@@ -3,7 +3,8 @@
 The demo plays as with ``--check``. When every step is as the script says, :func:`export`
 writes the page and everything it reads into a folder, which any static server can
 serve: the page's ``api.js`` reads these files in place of ``ifc-sql view``'s routes, and
-plays the calls back a pause apart.
+hands the page every recorded call at once. The page lights none by itself: the visitor
+picks the questions.
 
 ==========================================  ============================================
 File                                        Holds
@@ -17,8 +18,7 @@ File                                        Holds
 ``data/scenes/{model_id}.json``             ``GET /api/models/{id}/scene``: a manifest.
 ``data/scenes/{model_id}/{chunk_no}.glb``   A chunk.
 ``data/events.json``                        The script's calls, as the feed resolved them,
-                                            and how to play them back: a
-                                            :class:`Recording`.
+                                            and its questions: a :class:`Recording`.
 ``data/elements.json``                      Every object a scene can draw: its class, name
                                             and storey, for a click (:class:`Elements`).
 ``data/details.json``                       ``get_element`` of each object a call of the
@@ -44,7 +44,7 @@ from sqlalchemy import Connection, text
 from ifc_sql_mcp import __version__
 from ifc_sql_mcp.server import tools
 from ifc_sql_mcp.server.tools import IfcText
-from ifc_sql_mcp.viewer.demo import Played
+from ifc_sql_mcp.viewer.demo import Played, questions_of
 from ifc_sql_mcp.viewer.demo_script import Credit, Script
 from ifc_sql_mcp.viewer.feed import Entry, Status, demo_entry
 from ifc_sql_mcp.viewer.http import (
@@ -102,12 +102,13 @@ class ExportError(Exception):
 
 
 class Recording(BaseModel):
-    """``data/events.json``: the script's calls, to play back."""
+    """``data/events.json``: the script's calls, for the visitor to pick."""
 
     title: str = Field(description="The script's title.")
-    status: Status = Field(description="The feed as the page shows it: recorded.")
+    status: Status = Field(
+        description="The feed as the page shows it: recorded, with the script's questions."
+    )
     entries: list[Entry] = Field(description="The script's calls, as the feed resolved them.")
-    pause_seconds: float = Field(description="Seconds between two calls played back.")
     credit: Credit = Field(description="What the page says of the files, as their licence asks.")
 
 
@@ -210,21 +211,14 @@ def static_page(page: str, title: str) -> str:
     return _once(page, _CHARSET, tags)
 
 
-def recording(
-    script: Script,
-    played: Sequence[Played],
-    *,
-    pause_seconds: float,
-    recorded_at: datetime,
-) -> Recording:
+def recording(script: Script, played: Sequence[Played], *, recorded_at: datetime) -> Recording:
     """The script's calls as the feed resolved them, and the status the page shows."""
     # The first call arrives before the demo knows its serve, and is labelled after.
     entries = [demo_entry(item.entry) for item in played if item.entry is not None]
     when = recorded_at.astimezone(UTC)
     message = (
         f"Recorded on {when:%Y-%m-%d %H:%M} UTC by ifc-sql demo --export (ifc-sql-mcp "
-        f"{__version__}), and played back from this copy's files, one call every "
-        f"{pause_seconds:g} s."
+        f"{__version__}): the answers of the real tools, kept in this copy's files."
     )
     status = Status(
         state="recorded",
@@ -234,13 +228,10 @@ def recording(
         received=len(entries),
         dropped={},
         demo=True,
+        questions=questions_of(script),
     )
     return Recording(
-        title=script.title,
-        status=status,
-        entries=entries,
-        pause_seconds=pause_seconds,
-        credit=check_script(script),
+        title=script.title, status=status, entries=entries, credit=check_script(script)
     )
 
 
@@ -263,7 +254,6 @@ def export(
     models: Mapping[str, int],
     folder: Path,
     *,
-    pause_seconds: float,
     recorded_at: datetime | None = None,
 ) -> Exported:
     """Write the static copy of ``script``'s demo, played as ``played``, into ``folder``.
@@ -274,7 +264,6 @@ def export(
         played: How each step played: every step as the script says.
         models: The model of each of the script's files.
         folder: A new or empty folder.
-        pause_seconds: Seconds between two calls played back.
         recorded_at: When the demo played; now by default.
 
     Raises:
@@ -285,12 +274,7 @@ def export(
     differing = [item.index for item in played if item.differences]
     if differing:
         raise ExportError(f"steps {differing} differ from the script: nothing exported")
-    recorded = recording(
-        script,
-        played,
-        pause_seconds=pause_seconds,
-        recorded_at=recorded_at or datetime.now(UTC),
-    )
+    recorded = recording(script, played, recorded_at=recorded_at or datetime.now(UTC))
     ids = list(dict.fromkeys(models[sample.key] for sample in script.samples))
     data = reader.read(
         lambda connection: _read(connection, ids, script.first_models(models), recorded.entries)

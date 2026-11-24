@@ -265,12 +265,20 @@ def test_events_json_is_what_the_check_resolved(exported: Exported) -> None:
         "What is loaded?",
     ]
     assert recording["title"] == "The scene fixture"
-    assert recording["pause_seconds"] == 3
+    assert "pause_seconds" not in recording
     assert recording["credit"] == {
         "text": CREDIT.text,
+        "work": CREDIT.work,
+        "author": CREDIT.author,
+        "licence": CREDIT.licence,
         "source_url": CREDIT.source_url,
         "licence_url": CREDIT.licence_url,
     }
+    assert [q["title"] for q in recording["status"]["questions"]] == [
+        "The walls",
+        "One wall in full",
+        "What is loaded?",
+    ]
     assert recording["status"]["state"] == "recorded"
     assert recording["status"]["database"] is None
 

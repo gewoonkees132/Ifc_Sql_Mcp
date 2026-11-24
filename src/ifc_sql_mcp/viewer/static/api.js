@@ -1,12 +1,10 @@
 // The page's one seam for data, with two sources. The live source reads `ifc-sql view`'s
 // routes with the token, and its feed of calls as server-sent events. The static source
-// reads the files `ifc-sql demo --export` wrote beside the page, and plays the recorded
-// calls back a pause apart (ADR 14, decision 7). Both give the page the same objects.
+// reads the files `ifc-sql demo --export` wrote beside the page, and hands over the
+// recorded calls all at once, to pick from (ADR 14, decision 7). Both give the page the
+// same objects.
 
 const TOKEN_KEY = 'ifc-sql-view-token';
-
-/** Seconds from the models drawn to the first call played back. */
-const FIRST_CALL_S = 1.5;
 
 /** True on the static copy: `ifc-sql demo --export` marks its page so. */
 export function isStatic() {
@@ -118,20 +116,17 @@ export function staticSource() {
     /** The recording's title and credit, for the sidebar. */
     about: () => recording().then(({ title, credit }) => ({ title, credit })),
     feed: () => recording().then(({ status, entries }) => ({ status, entries })),
-    /** The recorded calls, played back one every `pause_seconds`, as the demo asked them. */
+    /** The recorded calls, all at once: nothing plays by itself, the visitor picks. */
     events(handlers) {
-      const timers = [];
       recording().then(
-        ({ status, entries, pause_seconds: pause }) => {
+        ({ status, entries }) => {
           handlers.open();
           handlers.status(status);
-          entries.forEach((entry, index) => {
-            timers.push(setTimeout(() => handlers.call(entry), (FIRST_CALL_S + index * pause) * 1000));
-          });
+          for (const entry of entries) handlers.call(entry);
         },
         (error) => handlers.error(true, `the recorded calls could not be read: ${error.message ?? error}`),
       );
-      return { close: () => timers.forEach(clearTimeout) };
+      return { close: () => {} };
     },
   };
 }
