@@ -3,10 +3,11 @@
 - Status: revised after review ([the review](2026-11-ifc-viewer-review.md)), again
   after Phases 0 and 1 ([Changes after Phases 0 and 1](#changes-after-phases-0-and-1)),
   after Phase 2 ([Changes after Phase 2](#changes-after-phase-2)), after Phase 3
-  ([Changes after Phase 3](#changes-after-phase-3)) and after Phase 4
-  ([Changes after Phase 4](#changes-after-phase-4)). Phase 0 is done
+  ([Changes after Phase 3](#changes-after-phase-3)), after Phase 4
+  ([Changes after Phase 4](#changes-after-phase-4)) and after Phase 5
+  ([Changes after Phase 5](#changes-after-phase-5)). Phase 0 is done
   ([ADR 14](../adr/0014-viewer.md), accepted with Phase 3); Phase 1 is PR 1, Phase 2
-  PR 2, Phase 3 PR 3, Phase 4 PR 4.
+  PR 2, Phase 3 PR 3, Phase 4 PR 4, Phase 5 PR 5. Phase 6 is optional.
 - Date: 2026-11-22
 - For: a separate session that implements it, one pull request per phase. This plan is
   complete on its own; the review records why it changed.
@@ -1180,3 +1181,44 @@ where the plan estimated, and followed the files where the plan did not fit them
   before npm's `claude.ps1` sees it, and `claude mcp add` then fails with "unknown option
   '--directory'". Found by running the documented command.
 - **Still open**: Claude Desktop's live check, and the laptop's frames per second.
+
+## Changes after Phase 5
+
+Phase 5 (PR 5; [docs/viewer.md](../viewer.md#the-demo-on-github-pages), ADR 14 decision 7)
+followed the code where the plan did not fit it:
+
+- **The page's paths are relative**, `static/…` and `./static/…` in the import map, for
+  `view` too: Pages serves the copy below `/Ifc_Sql_Mcp/`, where `/static/…` would miss.
+  Served at `/`, they are the same addresses as before.
+- **One page, marked static.** The export writes `view`'s page with `data-source="static"`,
+  the policy and `no-referrer` as `<meta>` tags, and the script's title; `main.js` takes
+  `api.js`'s static source on that mark. The `<meta>` policy leaves out
+  `frame-ancestors`, which browsers ignore there.
+- **The data files are under `data/`**: `models.json`, `scenes/{id}.json` and
+  `scenes/{id}/{n}.glb`, `events.json`, `elements.json`, and `details.json` in place of
+  `details/<GlobalId>.json`. GlobalIds are unique per model only, and differ by case alone
+  where Windows and macOS file names do not; `details.json` is keyed by model id and
+  GlobalId. `elements.json` holds every element a scene can draw and every space, not only
+  the elements, since a click can pick a room.
+- **`events.json` is a recording**: the calls, the status the page shows ("recorded", a
+  new state of the feed), the pause between two calls and the credit. The first call is
+  labelled as the demo's too: the demo learns its `serve` from that call, after the feed
+  has kept it (`feed.demo_entry`).
+- **Only the script's models** are written, whatever else the database holds, and not the
+  database's address. The plan said "the four Duplex models"; a local database may hold
+  others.
+- **The rule "only the Duplex" is data**: `Script.credit` (text, source, licence), which
+  the page shows with links; the audit's script has none, and `--export` refuses a script
+  without one, with exit 2, as it refuses a folder that is not empty. A model without a
+  scene stops it with exit 1, before anything is written.
+- **The copy plays the calls back by itself**, one every `--pause` seconds from 1.5 s
+  after the models are drawn: the plan said "plays the nine steps", not how.
+- **CI's `samples` job exports** in place of `--check`, which the export includes, and
+  uploads the copy as an artifact: `pages.yml` deploys only from `main`, so a pull request
+  shows the copy that way. `make demo-export` makes it locally; `_site/` is ignored.
+- **Pages must be switched to GitHub Actions once**, in the repository's settings:
+  `actions/configure-pages` with `enablement` would need a token that may change them.
+- **The README's screenshot** is of the static copy, step 3, and names the command and the
+  commit it was taken at.
+- **Still open**: Claude Desktop's live check and the laptop's frames per second (Phase 4),
+  and Phase 6's browser test, which would regenerate the screenshot.

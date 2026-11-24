@@ -64,6 +64,7 @@ from ifc_sql_mcp.logging_config import configure_logging
 from ifc_sql_mcp.server import tools
 from ifc_sql_mcp.server.app import Limits, argument_checks, build_server
 from ifc_sql_mcp.viewer import demo as demo_play
+from ifc_sql_mcp.viewer import export as demo_export
 from ifc_sql_mcp.viewer.demo_script import SCRIPTS, Script
 from ifc_sql_mcp.viewer.feed import Feed, Resolver
 from ifc_sql_mcp.viewer.http import create_app
@@ -802,6 +803,17 @@ def demo(
     no_open: Annotated[
         bool, typer.Option("--no-open", help="Print the URL, but do not open the browser.")
     ] = False,
+    export: Annotated[
+        Path | None,
+        typer.Option(
+            "--export",
+            metavar="DIR",
+            help="Serve no page: play and compare every question as --check does, then "
+            "write the page, the scenes and the calls into DIR, a new or empty folder, as a "
+            "static site that plays them back --pause seconds apart. The Duplex only.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
     """Play a scripted demo through the MCP server, and light each answer in the viewer.
 
@@ -810,15 +822,23 @@ def demo(
     view lights what each call found. Its files must be loaded with --viewer and checked:
     scripts/demo.py (--script audit for the audit's) does that, then runs this. The page
     follows the calls: one that lights a model of another project shows that project.
-    With --check it serves no page and exits
-    1 when a step differs from the script. Exit codes: 0 when stopped (or checked); 1
-    when the database is unreachable, not at the latest migration or lacks the files, the
-    feed or the MCP server does not start, a step differs, or the port is taken.
+    With --check it serves no page and exits 1 when a step differs from the script; with
+    --export DIR it checks the same, then writes the static copy of the demo into DIR.
+    Exit codes: 0 when stopped (or checked, or exported); 1 when the database is
+    unreachable, not at the latest migration or lacks the files or their scenes, the feed
+    or the MCP server does not start, a step differs, or the port is taken; 2 for an
+    --export folder that is not empty, or a script whose files may not be published.
     """
     settings = _database_settings(ctx)
     database = redact(reader_database_url(settings.database_url, settings.reader_password))
-    engine = make_reader_engine(settings, application="viewer")
     played = SCRIPTS[script]
+    if export is not None:
+        try:
+            demo_export.check_script(played)
+            demo_export.check_folder(export)
+        except demo_export.ExportError as exc:
+            raise typer.BadParameter(str(exc), param_hint="'--export'") from exc
+    engine = make_reader_engine(settings, application="viewer")
     try:
         _require_latest_revision_as_reader(engine, database, "demo")
         with _listening(engine, database) as (reader, feed):
@@ -834,10 +854,12 @@ def demo(
                     err=True,
                 )
                 raise typer.Exit(1)
-            if check:
-                agreed = _play(lambda client: _check(played, client, feed, models))
+            if check or export is not None:
+                steps, agreed = _play(lambda client: _check(played, client, feed, models))
                 if not agreed:
                     raise typer.Exit(1)
+                if export is not None:
+                    _export(reader, played, steps, models, export, pause)
                 return
             with _bound(port) as sock:
                 server = _serving(
@@ -888,12 +910,34 @@ def _play[T](run: Callable[[Client], Awaitable[T]]) -> T:
             raise typer.Exit(1) from exc
 
 
-async def _check(script: Script, client: Client, feed: Feed, models: dict[str, int]) -> bool:
+async def _check(
+    script: Script, client: Client, feed: Feed, models: dict[str, int]
+) -> tuple[list[demo_play.Played], bool]:
     played = await demo_play.play(script, client, feed, models)
     lines, agreed = demo_play.report(script, played)
     for line in lines:
         typer.echo(line)
-    return agreed
+    return played, agreed
+
+
+def _export(
+    reader: Reader,
+    script: Script,
+    played: list[demo_play.Played],
+    models: dict[str, int],
+    folder: Path,
+    pause: float,
+) -> None:
+    """Write the static copy of the demo that played; exit 1 if it cannot be."""
+    try:
+        exported = demo_export.export(reader, script, played, models, folder, pause_seconds=pause)
+    except demo_export.ExportError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(
+        f"exported the demo to {folder}: {exported.files} files, {exported.bytes / 1e6:.1f} MB; "
+        f"to look at it, serve the folder: uv run python -m http.server -d {folder}"
+    )
 
 
 async def _show(

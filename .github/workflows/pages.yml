@@ -1,0 +1,83 @@
+name: Pages
+
+# The scripted Duplex demo as a static site on GitHub Pages (ADR 14, decision 7): the four
+# Duplex models loaded with --viewer into a throwaway PostgreSQL, the nine questions asked
+# through ifc-sql serve and compared with the script, then exported by
+# `ifc-sql demo --export` and deployed. Only the Duplex, which is CC BY 4.0, is published.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Least privilege: the build only reads the repository. The deploy job alone may write to
+# Pages, and asks for an OIDC token to prove where the artifact comes from.
+permissions:
+  contents: read
+
+# One deployment at a time; a newer push waits rather than cancelling one under way.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Duplex demo → static site
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ifc
+          POSTGRES_PASSWORD: ifc-dev-only  # throwaway CI container, not a secret
+          POSTGRES_DB: ifc
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ifc -d ifc"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+    env:
+      IFC_SQL_DATABASE_URL: postgresql+psycopg://ifc:ifc-dev-only@localhost:5432/ifc
+      IFC_SQL_READER_PASSWORD: ifc-reader-dev-only
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Install (exactly as locked)
+        run: uv sync --locked
+
+      # As from a fresh clone (scripts/demo.py): download the four files, migrate, load
+      # them with --viewer, check them, play the nine questions and compare each with the
+      # script; only when all agree, write the page, the scenes and the calls into _site.
+      - name: Play the scripted Duplex demo and export it
+        run: uv run python scripts/demo.py --export _site
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9  # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    name: deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346  # v5.0.1

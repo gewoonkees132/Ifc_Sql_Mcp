@@ -29,7 +29,10 @@ questions through the real MCP server, a few seconds apart, and the page lights 
 one found: the walls on Level 1, the external walls by type, the doors, the rooms, what
 lacks a fire rating ([viewer.md](viewer.md#the-scripted-demo)). Stop it with Ctrl+C.
 `--step` waits for Enter before each question; `--check` compares each answer with the
-script and opens nothing. A second run downloads and loads nothing again.
+script and opens nothing; `--export _site` compares them too, then writes the static copy
+that GitHub Pages publishes into the new folder `_site`
+([viewer.md](viewer.md#the-demo-on-github-pages)). A second run downloads and loads
+nothing again.
 
 `uv run python scripts/demo.py --script audit` plays four questions on the audit's Revit
 exports instead (about 187 MB to download; [viewer.md](viewer.md#the-audits-script)).

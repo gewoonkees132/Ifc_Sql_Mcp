@@ -18,6 +18,9 @@ htmlcov/
 .env.*
 !.env.example
 
+# The static demo, written by `make demo-export` (ifc-sql demo --export _site)
+_site/
+
 # Downloaded sample data (CC BY 4.0, fetched by scripts/download_samples.py; not redistributed)
 data/
 *.ifc

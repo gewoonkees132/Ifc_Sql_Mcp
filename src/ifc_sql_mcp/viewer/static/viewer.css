@@ -86,6 +86,15 @@ code {
   margin: 2px 0 0;
 }
 
+.brand .credit {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.brand .credit a {
+  color: inherit;
+}
+
 .panel {
   padding: 12px 16px;
   border-bottom: 1px solid var(--line);
@@ -283,6 +292,10 @@ input[type="checkbox"] {
 
 .feed-state[data-state="interrupted"]::before {
   background: var(--error);
+}
+
+.feed-state[data-state="recorded"]::before {
+  background: #1565c0;
 }
 
 .feed-note {

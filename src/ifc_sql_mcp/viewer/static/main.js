@@ -2,9 +2,10 @@
 // toggles, an element's details on a click, and what each MCP call found (ADR 14,
 // decisions 4 and 6). The server decides what can be decided there (the projects, the
 // set shown first, the counts and their wording, what a call lights and in which
-// colours); this module only lays it out.
+// colours); this module only lays it out. The static copy of the demo (decision 7) reads
+// the same from files: api.js is the one seam.
 
-import { ApiError, liveSource, takeToken } from './api.js';
+import { ApiError, isStatic, liveSource, staticSource, takeToken } from './api.js';
 import { Details } from './details.js';
 import { el, metres, number } from './dom.js';
 import { FeedPanel } from './feed.js';
@@ -64,12 +65,17 @@ function fail(error) {
 }
 
 async function start() {
-  const token = takeToken();
-  if (!token) {
-    fail(new Error('This page needs the token in the URL that ifc-sql view printed. Open that URL.'));
-    return;
+  if (isStatic()) {
+    api = staticSource();
+    about();
+  } else {
+    const token = takeToken();
+    if (!token) {
+      fail(new Error('This page needs the token in the URL that ifc-sql view printed. Open that URL.'));
+      return;
+    }
+    api = liveSource(token);
   }
-  api = liveSource(token);
   try {
     catalogue = await api.models();
   } catch (error) {
@@ -79,6 +85,28 @@ async function start() {
   fillProjects(catalogue.shown);
   await show(catalogue.shown);
   feed.listen(api);
+}
+
+/** The static copy: the recording's title, and the credit its files' licence asks for. */
+async function about() {
+  let recorded;
+  try {
+    recorded = await api.about();
+  } catch {
+    return; // the feed says the recording could not be read
+  }
+  $('tagline').textContent = recorded.title;
+  const { text, source_url: source, licence_url: licence } = recorded.credit;
+  // replaceChildren would turn a null into the text "null".
+  const links = [link('source', source), link('licence', licence)].filter(Boolean);
+  $('credit').replaceChildren(text, ...links.flatMap((a, index) => [index ? ' · ' : ' ', a]));
+  $('credit').hidden = false;
+}
+
+/** A link to an https address, opened without telling it where from; null for any other. */
+function link(text, href) {
+  if (!/^https:\/\//.test(href)) return null;
+  return el('a', { text, attrs: { href, rel: 'noopener noreferrer' } });
 }
 
 let sets = []; // the picker's sets of models, in its order

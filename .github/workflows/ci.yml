@@ -126,9 +126,17 @@ jobs:
 
       # The scripted Duplex demo, as from a fresh clone (scripts/demo.py): the four files
       # loaded with --viewer into the service's database and checked, then the nine
-      # questions asked through ifc-sql serve over stdio, each compared with the script.
-      - name: The scripted Duplex demo, checked
-        run: uv run python scripts/demo.py --check
+      # questions asked through ifc-sql serve over stdio, each compared with the script,
+      # and exported as the static site pages.yml deploys from main. The artifact is that
+      # site, to look at before it is published (docs/viewer.md, "The demo on GitHub Pages").
+      - name: The scripted Duplex demo, checked and exported
+        run: uv run python scripts/demo.py --export _site
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: duplex-demo-site
+          path: _site
+          if-no-files-found: error
 
   # The Windows quick start (docs/windows.md), step by step, on the embedded PostgreSQL:
   # no Docker and no database server, as for one architect on a Windows laptop (audit

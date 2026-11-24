@@ -10,7 +10,7 @@ group). ``ifc-sql demo --check`` compares every one; ``tests/samples`` pins them
 """
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 type Result = Mapping[str, Any]
@@ -32,6 +32,21 @@ class Sample:
     file_name: str
     sha256: str
     discipline: str
+
+
+@dataclass(frozen=True, slots=True)
+class Credit:
+    """What a published copy of a script's demo must say of its files, as their licence asks.
+
+    Attributes:
+        text: The work, its author, its licence and what was changed, in one sentence.
+        source_url: Where the files come from.
+        licence_url: The licence's text.
+    """
+
+    text: str
+    source_url: str
+    licence_url: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +99,9 @@ class Script:
     """A demo: its files and its questions, in order.
 
     Attributes:
+        credit: How a published copy credits the files: ``ifc-sql demo --export`` writes
+            only a script that has one, since only those files' licence allows it. None:
+            the files stay local.
         shown_first: The keys of the models the page shows when it opens; empty, all of
             the script's. The page shows the project of each call's selection when it lies
             outside the models shown, so a script on several projects names one here.
@@ -93,7 +111,7 @@ class Script:
     title: str
     samples: tuple[Sample, ...]
     steps: tuple[Step, ...]
-    credit: str = field(default="")
+    credit: Credit | None = None
     shown_first: tuple[str, ...] = ()
 
     def first_models(self, models: Mapping[str, int]) -> list[int]:
@@ -159,9 +177,11 @@ DUPLEX = Script(
     name="duplex",
     title="The Duplex, step by step",
     samples=DUPLEX_SAMPLES,
-    credit=(
-        'The "Duplex Apartment" models, buildingSMART International, CC BY 4.0; converted '
-        "to glTF by IfcOpenShell triangulation, openings cut."
+    credit=Credit(
+        text='"Duplex Apartment Test Files", buildingSMART International (2020), CC BY 4.0; '
+        "converted to glTF by IfcOpenShell triangulation, openings cut.",
+        source_url="https://github.com/buildingsmart-community/Community-Sample-Test-Files",
+        licence_url="https://creativecommons.org/licenses/by/4.0/",
     ),
     steps=(
         Step(
