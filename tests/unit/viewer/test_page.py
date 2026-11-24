@@ -62,6 +62,7 @@ def test_the_page_has_its_own_modules() -> None:
         "feed.js",
         "main.js",
         "scene.js",
+        "words.js",
     ]
 
 
