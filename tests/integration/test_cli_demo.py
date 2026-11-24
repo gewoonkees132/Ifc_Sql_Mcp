@@ -13,6 +13,7 @@ import hashlib
 import re
 import sys
 from collections.abc import Callable
+from typing import Any
 
 import anyio
 import make_revit_quirks
@@ -123,6 +124,25 @@ def _serving(
 
     monkeypatch.setattr(uvicorn.Server, "serve", serve)
     return served
+
+
+def _reported(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """A list that gets an item once the demo has reported how its questions went.
+
+    The steps call ``report`` and print its verdict with no ``await`` between, so a
+    ``serve`` that returns once this list holds an item ends the demo after the verdict
+    is printed. Ending it once the feed holds every call instead races the steps: they
+    may still be comparing the last call when ``alongside`` cancels them.
+    """
+    reported: list[bool] = []
+    report = cli.demo_play.report
+
+    def recording(*arguments: Any, **keywords: Any) -> Any:
+        reported.append(True)
+        return report(*arguments, **keywords)
+
+    monkeypatch.setattr(cli.demo_play, "report", recording)
+    return reported
 
 
 # --------------------------------------------------------------------------- --check
@@ -254,7 +274,8 @@ def test_an_unreachable_database_is_reported_without_its_password(
 def test_the_demo_serves_the_page_while_it_plays(monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[str] = []
     monkeypatch.setattr(cli.webbrowser, "open", opened.append)
-    served = _serving(monkeypatch, lambda feed: len(feed.entries()) == 3)
+    reported = _reported(monkeypatch)
+    served = _serving(monkeypatch, lambda feed: bool(reported))
 
     result = _demo("--pause", "0")
 
@@ -318,7 +339,8 @@ def test_the_demo_says_when_it_differs_and_waits_for_enter_with_step(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setitem(cli.SCRIPTS, "duplex", _fixture_script(total=3))
-    _serving(monkeypatch, lambda feed: len(feed.entries()) == 3)
+    reported = _reported(monkeypatch)
+    _serving(monkeypatch, lambda feed: bool(reported))
 
     result = _demo("--step", "--no-open", stdin="\n\n\n")
 
