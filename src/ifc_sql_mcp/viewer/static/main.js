@@ -1,21 +1,39 @@
-// The page: the models of a project, every discipline together, storey and discipline
-// toggles, an element's details on a click, and what each MCP call found (ADR 14,
-// decisions 4 and 6). The server decides what can be decided there (the projects, the
-// set shown first, the counts and their wording, what a call lights and in which
-// colours); this module only lays it out. The static copy of the demo (decision 7) reads
-// the same from files: api.js is the one seam.
+// The page: the models of a project full screen, every discipline together, an answer card
+// over them, Ask Claude, the Model panel, an element's details on a click, and what each
+// MCP call found (ADR 14, decisions 4, 6 and 8). One page serves ifc-sql view, ifc-sql
+// demo and the static copy of the demo (decision 7): api.js is the one seam for data, and
+// the page's mode follows the feed's status:
+// - demo: the static copy. The visitor picks the recorded questions; nothing plays itself.
+// - scripted: ifc-sql demo. The script asks, at its own pace; the page follows.
+// - local: ifc-sql view. Claude's calls arrive from the feed and light up as they come.
+// The server decides what can be decided there (the projects, the set shown first, what a
+// call lights and in which colours); this module lays it out.
 
 import { ApiError, isStatic, liveSource, staticSource, takeToken } from './api.js';
+import { AskPanel } from './ask.js';
+import { renderCurrent } from './card.js';
 import { Details } from './details.js';
-import { el, metres, number } from './dom.js';
-import { FeedPanel } from './feed.js';
-import { SceneView, TINTS } from './scene.js';
+import { el, number } from './dom.js';
+import { Explainer } from './explainer.js';
+import { renderDisciplines, renderStoreys } from './model.js';
+import { SceneView } from './scene.js';
+import { headline, sentence } from './words.js';
 
 const LOADS_AT_ONCE = 4;
+const ZOOM_MARGIN_M = 4;
 
 const $ = (id) => document.getElementById(id);
+const phone = window.matchMedia('(max-width: 759px)');
 const view = new SceneView($('canvas'));
-const details = new Details($('drawer'), () => select(null));
+const details = new Details(
+  $('drawer'),
+  () => {
+    select(null);
+    home().focus();
+  },
+  () => sides(),
+);
+const explainer = new Explainer();
 
 /**
  * For a browser test and for measuring: `ready` turns true once the shown models are drawn,
@@ -27,6 +45,7 @@ const viewer = {
   error: null,
   highlighted: 0,
   call: null, // the feed's id of the call lit last
+  mode: null,
   stats: () => view.stats(),
   measure: (seconds) => view.measure(seconds),
 };
@@ -35,24 +54,46 @@ window.ifcViewer = viewer;
 let api;
 let catalogue;
 let generation = 0; // a newer show() makes the loads of an older one stop
-const shown = { models: [], manifests: [], loaded: new Set(), layers: new Set(), bytes: 0 };
+const shown = { set: null, models: [], manifests: [], loaded: new Set(), layers: new Set(), bytes: 0 };
 const hiddenDisciplines = new Set();
 const hiddenStoreys = new Set();
-const storeyBoxes = new Map(); // storey name → { elevation, box }
-let selection = null;
-let lastCall = null;
+let storeyBoxes = new Map(); // storey name → { elevation, box }
+let picked = null; // the element clicked
 let zoomed = false; // the last call moved the camera to one object
-const ZOOM_MARGIN_M = 4;
-const feed = new FeedPanel({ state: $('feed-state'), note: $('feed-note'), list: $('feed') }, (entry) => lightCall(entry));
 
-function status(text) {
-  $('status').textContent = text;
+/** What the card and the panel show: the calls, the questions, the one shown, what is lit. */
+const state = {
+  mode: 'local',
+  status: null,
+  entries: new Map(), // id → call
+  order: [], // the ids asked, in order: the history
+  current: null, // the call the card shows
+  lit: null, // the call whose answer the view shows now
+  group: null, // the legend's group shown alone
+  hidden: [], // the storeys hidden above the answer
+  opened: false, // the demo has shown its first question
+  how: null, // the call whose "How it was answered" is open
+};
+
+const ask = new AskPanel({
+  pick: (index) => pick(index),
+  show: (entry) => (entry.step && state.mode !== 'local' ? pick(entry.step.index) : show(entry)),
+  help: (section) => explain(section),
+  toggled: () => {},
+});
+
+// --------------------------------------------------------------------------- start
+
+function status(text, ...more) {
+  $('status').replaceChildren(text ?? '', ...more);
 }
 
-function message(text) {
-  $('message').hidden = !text;
-  $('message').textContent = text ?? '';
+function toast(text) {
+  $('toast-text').textContent = text ?? '';
+  $('toast').hidden = !text;
 }
+
+$('toast-close').addEventListener('click', () => toast(null));
 
 function fail(error) {
   const text =
@@ -60,14 +101,15 @@ function fail(error) {
       ? 'The token is missing or wrong: ifc-sql view was probably started again. Open the URL it printed.'
       : String(error.message ?? error);
   viewer.error = text;
-  message(text);
-  status('Stopped.');
+  toast(text);
+  status('');
 }
 
 async function start() {
   if (isStatic()) {
     api = staticSource();
-    about();
+    setMode('demo');
+    credit();
   } else {
     const token = takeToken();
     if (!token) {
@@ -76,6 +118,8 @@ async function start() {
     }
     api = liveSource(token);
   }
+  render();
+  status('Reading the models…');
   try {
     catalogue = await api.models();
   } catch (error) {
@@ -83,31 +127,229 @@ async function start() {
     return;
   }
   fillProjects(catalogue.shown);
-  await show(catalogue.shown);
-  feed.listen(api);
+  listen();
+  await showModels(catalogue.shown);
 }
 
-/** The static copy: the recording's title, and the credit its files' licence asks for. */
-async function about() {
+/** The static copy: the credit its files' licence asks for, linked, at the bottom right. */
+async function credit() {
   let recorded;
   try {
     recorded = await api.about();
   } catch {
-    return; // the feed says the recording could not be read
+    return; // the toast says the recording could not be read
   }
-  $('tagline').textContent = recorded.title;
-  const { text, source_url: source, licence_url: licence } = recorded.credit;
+  const { work, author, licence, text, source_url: source, licence_url: licenceUrl } = recorded.credit;
   // replaceChildren would turn a null into the text "null".
-  const links = [link('source', source), link('licence', licence)].filter(Boolean);
-  $('credit').replaceChildren(text, ...links.flatMap((a, index) => [index ? ' · ' : ' ', a]));
+  $('credit').replaceChildren(link(work, source) ?? work, ` · ${author} · `, link(licence, licenceUrl) ?? licence);
+  $('credit').title = text;
   $('credit').hidden = false;
+  $('explainer-credit').textContent = text;
 }
 
 /** A link to an https address, opened without telling it where from; null for any other. */
 function link(text, href) {
   if (!/^https:\/\//.test(href)) return null;
-  return el('a', { text, attrs: { href, rel: 'noopener noreferrer' } });
+  return el('a', { text, attrs: { href, rel: 'noopener noreferrer', target: '_blank' } });
 }
+
+// --------------------------------------------------------------------------- the feed's calls
+
+function setMode(mode) {
+  if (state.mode === mode && viewer.mode) return;
+  state.mode = mode;
+  viewer.mode = mode;
+  document.body.dataset.mode = mode;
+}
+
+/** Listen to the calls: live, as they arrive; on the static copy, every recorded one at once. */
+function listen() {
+  api.events({
+    open: () => {},
+    status: (next) => {
+      state.status = next;
+      if (next.state === 'recorded') setMode('demo');
+      else if (next.questions?.length) setMode('scripted');
+      else setMode('local');
+      render();
+    },
+    call: (entry) => arrive(entry),
+    error: (closed, message) => {
+      if (!closed) return;
+      state.status = { ...(state.status ?? {}), state: 'off', message: message ?? 'the page lost the server: reload it, or open the URL ifc-sql view printed' };
+      if (state.mode === 'demo') toast(state.status.message);
+      render();
+    },
+  });
+}
+
+function arrive(entry) {
+  state.entries.set(entry.id, entry);
+  if (state.mode === 'demo') {
+    // The recorded calls are the answers to pick from; the demo opens on question 1.
+    if (!state.opened && entry.step?.index === 1) {
+      state.opened = true;
+      pick(1);
+    }
+    render();
+    return;
+  }
+  state.order.push(entry.id);
+  if (state.mode === 'scripted' && entry.step) {
+    show(entry); // the script asks: each question stands alone
+  } else if (entry.selection) {
+    show(entry); // the newest call is lit as it arrives
+  } else if (!state.current) {
+    show(entry); // nothing lit yet: the card says what came
+  } else {
+    render(); // it lights nothing by nature: the view stays as it is
+  }
+}
+
+/** The questions of the script, and the call that answers each, by number. */
+function questions() {
+  const listed = state.status?.questions ?? [];
+  const byStep = new Map();
+  for (const entry of state.entries.values()) {
+    if (entry.step) byStep.set(entry.step.index, entry);
+  }
+  return { listed, byStep };
+}
+
+/** In a demo, show the answer to question `index`, if it has one yet. */
+function pick(index) {
+  const { byStep } = questions();
+  const entry = byStep.get(index);
+  if (!entry) return;
+  if (state.mode === 'demo' && !state.order.includes(entry.id)) state.order.push(entry.id);
+  show(entry);
+}
+
+/** Show a call in the card, and light its answer. */
+function show(entry) {
+  state.current = entry;
+  state.group = null;
+  const step = state.mode !== 'local' ? entry.step : null;
+  if (entry.selection) {
+    light(entry).then(() => announce(entry));
+  } else if (state.mode !== 'local') {
+    unlight(); // in a demo each question stands alone: "What is loaded?" lights nothing
+  }
+  if (step || !entry.selection) announce(entry);
+  render();
+}
+
+/** Say a new answer to a screen reader, politely. */
+function announce(entry) {
+  const step = state.mode !== 'local' ? entry.step : null;
+  if (step) {
+    $('announce').textContent = `Question ${step.index}: ${step.title} ${step.answer}.`;
+    return;
+  }
+  const big = headline(entry, view.lit);
+  $('announce').textContent = big ? `${sentence(entry)}: ${big}.` : `${sentence(entry)}.`;
+}
+
+/**
+ * Draw the card and the panel again. The focus stays on the button it was on, which the
+ * new one replaces (each carries its data-key).
+ */
+function render() {
+  const focused = $('panel').contains(document.activeElement) ? document.activeElement.dataset.key : undefined;
+  draw();
+  if (focused) $('panel').querySelector(`[data-key="${CSS.escape(focused)}"]`)?.focus({ preventScroll: true });
+  if (state.current !== revealed) {
+    revealed = state.current;
+    reveal();
+  }
+}
+
+let revealed = null; // the call the thread last scrolled to
+
+/**
+ * Scroll the history and the answer, which scroll as one, to the answer: its top in view,
+ * and as much of the history above it as fits.
+ */
+function reveal() {
+  $('thread').scrollTop = $('current').offsetTop - 8;
+}
+
+// Again once the panel has opened or closed, or the phone's sheet shown the history.
+$('panel').addEventListener('transitionend', (event) => {
+  if (event.propertyName === 'height' && (event.target === $('panel') || event.target === $('history'))) reveal();
+});
+
+function draw() {
+  const { listed, byStep } = questions();
+  const asked = new Set();
+  for (const id of state.order) {
+    const step = state.entries.get(id)?.step;
+    if (step) asked.add(step.index);
+  }
+  if (state.current?.step && state.mode !== 'local') asked.add(state.current.step.index);
+  const history = state.order.filter((id) => id !== state.current?.id).map((id) => state.entries.get(id));
+  ask.render({ mode: state.mode, status: state.status, questions: listed, byStep, history, asked, current: state.current });
+  renderCard(listed, byStep);
+  pillLabels();
+}
+
+function renderCard(listed, byStep) {
+  const entry = state.current;
+  const step = state.mode !== 'local' ? entry?.step : null;
+  let stepper = null;
+  if (step) {
+    const pickable = listed.map((q) => q.index).filter((index) => byStep.has(index));
+    const at = pickable.indexOf(step.index);
+    stepper = { index: step.index, total: step.steps, previous: at > 0, next: at >= 0 && at < pickable.length - 1, pickable, at };
+  }
+  const empty = {
+    local: 'No question yet. Ask Claude in Claude Desktop or Claude Code, and what it finds lights up here.',
+    scripted: 'No question yet: the script asks its first in a moment.',
+    demo: 'Reading the recorded answers…',
+  }[state.mode];
+  const lit = state.lit !== null && state.lit === entry;
+  renderCurrent(
+    $('current'),
+    {
+      entry,
+      mode: state.mode,
+      empty,
+      lit,
+      drawn: lit ? view.lit : { drawn: 0, classes: new Set() },
+      hidden: state.hidden,
+      group: state.group,
+      howOpen: state.how !== null && state.how === entry?.id,
+      elsewhere: lit ? elsewhereOf(entry.selection) : [],
+      stepper,
+    },
+    {
+      previous: () => pick(stepper.pickable[stepper.at - 1]),
+      next: () => pick(stepper.pickable[stepper.at + 1]),
+      group: (index) => lightGroup(index),
+      how: (open) => {
+        state.how = open ? entry.id : null;
+      },
+      relight: () => light(entry).then(render),
+      showAll: () => {
+        showAllStoreys();
+        render();
+      },
+    },
+  );
+}
+
+/** The labels of the view pill follow what is lit: an answer, or one element clicked. */
+function pillLabels() {
+  const element = picked !== null;
+  $('fit-selection-label').textContent = element ? 'Fit element' : 'Fit answer';
+  $('only-selection-label').textContent = element ? 'Only this element' : 'Only the answer';
+  const any = viewer.highlighted > 0;
+  $('fit-selection').disabled = !any;
+  $('only-selection').disabled = !any;
+  if (!any) $('only-selection').setAttribute('aria-pressed', 'false');
+}
+
+// --------------------------------------------------------------------------- the models
 
 let sets = []; // the picker's sets of models, in its order
 
@@ -126,7 +368,7 @@ function fillProjects(current) {
   picker.disabled = sets.length < 2;
 }
 
-$('project').addEventListener('change', () => show(sets[Number($('project').value)]));
+$('project').addEventListener('change', () => showModels(sets[Number($('project').value)]));
 
 /** Two sets of the same models, in the same order: the picker names them as the project. */
 function sameSet(a, b) {
@@ -134,39 +376,42 @@ function sameSet(a, b) {
 }
 
 /** Show one set of models: the scenes of those that have one, each at its offset. */
-async function show(set) {
+async function showModels(set) {
   const mine = ++generation;
   viewer.ready = false;
   viewer.ready_ms = null;
   viewer.highlighted = 0;
-  select(null);
+  select(null, { keep: true });
   view.clear();
-  message(null);
+  toast(null);
+  state.lit = null;
   hiddenDisciplines.clear();
   hiddenStoreys.clear();
   $('spaces').checked = false;
   const byId = new Map(catalogue.models.map((model) => [model.model_id, model]));
+  shown.set = set;
   shown.models = set.model_ids.map((id) => byId.get(id)).filter(Boolean);
   shown.manifests = [];
   shown.loaded = new Set();
   shown.layers = new Set();
   shown.bytes = 0;
-  listModels();
+  listDisciplines();
+  listStoreys();
 
   const drawn = shown.models.filter((model) => model.scene);
   if (drawn.length === 0) {
-    listDisciplines();
-    listStoreys();
-    message(
-      shown.models.length === 0
-        ? 'No model to show. Load one with ifc-sql ingest <file> --discipline ARC --viewer.'
-        : 'None of these models has a scene yet: the list on the left says how to build one.',
-    );
-    status('Nothing to draw.');
+    if (shown.models.length === 0) {
+      status('No model is loaded yet: load one with ifc-sql ingest <file> --discipline ARC --viewer.');
+    } else {
+      const open = el('button', { className: 'link', text: 'Open the Model panel', attrs: { type: 'button' } });
+      open.addEventListener('click', () => openModel());
+      status('None of these models has 3D yet: the Model panel says how to build it. ', open);
+    }
     ready();
+    render();
     return;
   }
-  status(`Reading ${drawn.length} scene${drawn.length === 1 ? '' : 's'}…`);
+  status(`Reading ${set.label}…`);
   try {
     shown.manifests = await Promise.all(drawn.map((model) => api.scene(model.model_id)));
   } catch (error) {
@@ -181,7 +426,6 @@ async function show(set) {
     const [x, y, z] = manifest.origin_m;
     view.addModel(manifest.model_id, manifest.discipline, [x - x0, y - y0, z - z0]);
   }
-  listDisciplines();
   listStoreys();
   try {
     shown.loaded.add('elements');
@@ -192,9 +436,10 @@ async function show(set) {
   }
   if (mine !== generation) return;
   if (!view.moved) view.fit();
-  summarise();
+  status('');
   ready();
-  if (lastCall) await lightCall(lastCall);
+  if (state.current?.selection) await light(state.current);
+  render();
 }
 
 function ready() {
@@ -223,99 +468,30 @@ async function load(kind, mine) {
         first = false;
         view.fit();
       }
-      status(`Loading: ${done} of ${queue.length} chunks.`);
+      if (kind === 'elements') status(`Drawing ${shown.set.label}… ${done} of ${queue.length} parts`);
     }
   };
   await Promise.all(Array.from({ length: Math.min(LOADS_AT_ONCE, queue.length) }, worker));
 }
 
-function summarise() {
-  const drawn = shown.manifests.reduce((sum, manifest) => sum + manifest.element_count, 0);
-  status(
-    `${shown.manifests.length} of ${shown.models.length} models drawn: ${number(drawn)} elements, ` +
-      `${view.chunks.length} chunks, ${number(shown.bytes / 1e6, 1)} MB.`,
-  );
-}
-
-function listModels() {
-  $('models').replaceChildren(
-    ...shown.models.map((model) => {
-      const item = el(
-        'li',
-        { className: model.scene ? 'model' : 'model no-scene' },
-        el('div', { className: 'model-head' }, badge(model.discipline), el('span', { className: 'file', text: model.file_name, title: `model ${model.model_id}` })),
-      );
-      if (model.scene) {
-        item.append(el('div', { className: 'muted', text: model.scene.summary }));
-      } else {
-        item.append(el('div', { className: 'muted' }, 'No scene: ', el('code', { className: 'hint', text: model.scene_hint.replace(/^run /, '') })));
-      }
-      return item;
-    }),
-  );
-}
-
-function badge(discipline) {
-  const node = el('span', { className: 'badge', text: discipline });
-  if (Object.hasOwn(TINTS, discipline)) node.style.setProperty('--swatch', TINTS[discipline]);
-  return node;
-}
-
 function listDisciplines() {
-  const disciplines = [...new Set(shown.manifests.map((manifest) => manifest.discipline))];
-  $('disciplines').replaceChildren(
-    ...disciplines.map((discipline) => {
-      const chip = el('button', { className: 'chip', attrs: { type: 'button', 'aria-pressed': 'true' } }, badge(discipline), Object.hasOwn(TINTS, discipline) ? ' tinted' : ' own colours');
-      chip.addEventListener('click', () => {
-        const hidden = hiddenDisciplines.has(discipline);
-        if (hidden) hiddenDisciplines.delete(discipline);
-        else hiddenDisciplines.add(discipline);
-        chip.setAttribute('aria-pressed', String(hidden));
-        applyVisibility();
-      });
-      return chip;
-    }),
-  );
+  renderDisciplines($('disciplines'), shown.models, hiddenDisciplines, (code, visible) => {
+    if (visible) hiddenDisciplines.delete(code);
+    else hiddenDisciplines.add(code);
+    applyVisibility();
+    listDisciplines();
+    $(`discipline-${code}`)?.focus();
+  });
 }
 
-/** The storeys of every shown model, by name, highest first: "Level 1" is one row for all. */
 function listStoreys() {
-  const storeys = new Map();
-  for (const manifest of shown.manifests) {
-    for (const chunk of manifest.chunks) {
-      const key = chunk.storey_name ?? '';
-      if (!storeys.has(key)) storeys.set(key, { key, elevation: chunk.storey_elevation_m, elements: 0 });
-      if (chunk.kind === 'elements') storeys.get(key).elements += chunk.element_count;
-    }
-  }
-  const rows = [...storeys.values()].sort(
-    (a, b) => (a.key === '') - (b.key === '') || (b.elevation ?? -Infinity) - (a.elevation ?? -Infinity) || a.key.localeCompare(b.key),
-  );
-  storeyBoxes.clear();
-  $('storeys').replaceChildren(
-    ...rows.map((storey) => {
-      const box = el('input', { attrs: { type: 'checkbox' } });
-      box.checked = true;
-      storeyBoxes.set(storey.key, { elevation: storey.elevation, box });
-      box.addEventListener('change', () => {
-        if (box.checked) hiddenStoreys.delete(storey.key);
-        else hiddenStoreys.add(storey.key);
-        applyVisibility();
-      });
-      return el(
-        'li',
-        {},
-        el(
-          'label',
-          { className: 'storey' },
-          box,
-          el('span', { className: 'storey-name', text: storey.key || 'no storey' }),
-          el('span', { className: 'muted count', text: number(storey.elements) }),
-          el('span', { className: 'elevation', text: storey.elevation === null ? '' : metres(storey.elevation) }),
-        ),
-      );
-    }),
-  );
+  storeyBoxes = renderStoreys($('storeys'), shown.manifests, hiddenStoreys, (key, visible) => {
+    if (visible) hiddenStoreys.delete(key);
+    else hiddenStoreys.add(key);
+    state.hidden = state.hidden.filter((name) => hiddenStoreys.has(name));
+    applyVisibility();
+    render();
+  });
 }
 
 function applyVisibility() {
@@ -331,18 +507,21 @@ function applyVisibility() {
 
 function showAllStoreys() {
   hiddenStoreys.clear();
+  state.hidden = [];
   for (const { box } of storeyBoxes.values()) box.checked = true;
   applyVisibility();
 }
 
-$('all-storeys').addEventListener('click', showAllStoreys);
+$('all-storeys').addEventListener('click', () => {
+  showAllStoreys();
+  render();
+});
 
 /** Load the chunks of `kind` (spaces, their copies, Revit Areas) once, for every shown model. */
 async function ensureLoaded(kind) {
   if (shown.loaded.has(kind)) return;
   shown.loaded.add(kind);
   await load(kind, generation);
-  summarise();
 }
 
 $('spaces').addEventListener('change', async () => {
@@ -354,43 +533,41 @@ $('spaces').addEventListener('change', async () => {
   applyVisibility();
 });
 
-// --------------------------------------------------------------------------- the feed's calls
+// --------------------------------------------------------------------------- lighting an answer
 
 /**
  * Light what one call found: its groups in their colours and the rest grey, the layers of
- * spaces it holds, the storeys above a selection on one storey hidden, and a caption.
+ * spaces it holds, and the storeys above a selection on one storey hidden.
  */
-async function lightCall(entry) {
-  lastCall = entry;
+async function light(entry) {
   const found = entry.selection;
-  if (!found || !viewer.ready) return;
-  // A call about a model that is not shown shows its project; show() then lights the call.
-  const elsewhere = await projectOf(found);
-  if (lastCall !== entry) return;
-  if (elsewhere) {
-    fillProjects(elsewhere);
-    await show(elsewhere);
+  if (!found || !viewer.ready) {
+    state.lit = found ? entry : null;
     return;
   }
-  select(null);
+  // A call about a model that is not shown shows its project; showModels() then lights the call.
+  const elsewhere = await projectOf(found);
+  if (state.current !== entry) return;
+  if (elsewhere) {
+    fillProjects(elsewhere);
+    await showModels(elsewhere);
+    return;
+  }
+  select(null, { keep: true });
   try {
     for (const kind of found.layers) await ensureLoaded(kind);
   } catch (error) {
     fail(error);
     return;
   }
-  if (lastCall !== entry) return;
+  if (state.current !== entry) return;
   shown.layers = new Set(found.layers);
-  const groups = found.groups.map((group) => ({
-    colour: group.colour,
-    keys: group.models.flatMap((model) => model.global_ids.map((globalId) => [model.model_id, globalId])),
-  }));
-  const drawn = view.highlight(groups, true);
-  const hidden = hideAbove(found);
+  state.lit = entry;
+  state.group = null;
+  const drawn = view.highlight(groupsOf(found), true);
+  state.hidden = hideAbove(found);
   viewer.highlighted = drawn;
   viewer.call = entry.id;
-  $('fit-selection').disabled = drawn === 0;
-  $('only-selection').disabled = drawn === 0;
   // Rooms are inside the walls: a call that lights only spaces shows nothing else.
   const only = drawn > 0 && found.spaces === found.count;
   view.showOnly(only);
@@ -398,14 +575,53 @@ async function lightCall(entry) {
   if (found.zoom && drawn) {
     view.fitSelection(ZOOM_MARGIN_M);
     zoomed = true;
-    const [group] = groups;
-    const [modelId, globalId] = group.keys[0];
+    const [modelId, globalId] = groupsOf(found)[0].keys[0];
     showDetails(modelId, globalId);
   } else if (zoomed && drawn) {
     view.fit();
     zoomed = false;
   }
-  callCaption(entry, drawn, hidden);
+  render();
+}
+
+/** The groups of a selection, as the view lights them. */
+function groupsOf(found) {
+  return found.groups.map((group) => ({
+    colour: group.colour,
+    keys: group.models.flatMap((model) => model.global_ids.map((globalId) => [model.model_id, globalId])),
+  }));
+}
+
+/** The legend: show only one group of the answer, or all of them again. */
+function lightGroup(index) {
+  const entry = state.lit;
+  if (!entry) return;
+  state.group = state.group === index ? null : index;
+  const groups = groupsOf(entry.selection);
+  viewer.highlighted = view.highlight(state.group === null ? groups : [groups[state.group]], true);
+  render();
+}
+
+/** Clear what an answer lit: every element in its own colour, every storey shown. */
+function unlight() {
+  select(null, { keep: true });
+  state.lit = null;
+  viewer.highlighted = view.highlight([]);
+  view.showOnly(false);
+  if (shown.layers.size) {
+    shown.layers = new Set();
+  }
+  showAllStoreys();
+  if (zoomed) {
+    view.fit();
+    zoomed = false;
+  }
+}
+
+/** The models of a selection that the page does not show. */
+function elsewhereOf(found) {
+  const shownIds = new Set(shown.models.map((model) => model.model_id));
+  return [...new Set(found.groups.flatMap((group) => group.models.map((model) => model.model_id)))].filter((id) => !shownIds.has(id));
 }
 
 /**
@@ -438,16 +654,6 @@ async function projectOf(found) {
   );
 }
 
-/** Open the drawer with an object's details, as a click does, without changing the caption. */
-async function showDetails(modelId, globalId) {
-  details.loading(globalId);
-  try {
-    details.show(await api.element(modelId, globalId));
-  } catch (error) {
-    details.failed(globalId, String(error.message ?? error));
-  }
-}
-
 /**
  * Show every storey again, then hide those above a selection that lies on one storey;
  * return their names.
@@ -470,106 +676,142 @@ function hideAbove(found) {
   return above.map(([name]) => name);
 }
 
-function callCaption(entry, drawn, hidden) {
-  const found = entry.selection;
-  const shownIds = new Set(shown.models.map((model) => model.model_id));
-  const elsewhere = [...new Set(found.groups.flatMap((group) => group.models.map((model) => model.model_id)))].filter((id) => !shownIds.has(id));
-  const without = Math.max(found.count - drawn - found.openings - found.not_drawn, 0);
-  const counts = [`${number(found.count)} found`, `${number(drawn)} shown`, `${number(without)} without shape`];
-  if (found.openings) counts.push(`${number(found.openings)} openings not drawn`);
-  if (found.not_drawn) counts.push(`${number(found.not_drawn)} storeys or buildings, not drawn`);
-  if (found.truncated) counts.push('the first 20,000');
+// --------------------------------------------------------------------------- a click
 
-  const box = $('caption');
-  box.hidden = false;
-  const kicker = entry.step ? `Step ${entry.step.index} of ${entry.step.steps} · ${entry.source}` : entry.source;
-  const lines = [
-    el('div', { className: 'kicker', text: kicker }),
-    el('div', { className: 'name', text: entry.step ? entry.step.title : entry.summary }),
-  ];
-  if (entry.step) lines.push(el('div', { className: 'muted', text: entry.summary }));
-  if (entry.step) lines.push(el('div', { className: 'figure', text: entry.step.figure }));
-  lines.push(el('div', { className: 'counts', text: counts.join(' · ') }));
-  if (found.note) lines.push(el('div', { className: 'muted', text: found.note }));
-  if (elsewhere.length) {
-    lines.push(el('div', { className: 'muted', text: `Model ${elsewhere.join(', ')} is not shown here: pick its project above.` }));
+/** Open an object's details, as a click does, without changing the card. */
+async function showDetails(modelId, globalId) {
+  closeModel();
+  details.loading(globalId);
+  try {
+    details.show(await api.element(modelId, globalId));
+  } catch (error) {
+    details.failed(globalId, String(error.message ?? error));
   }
-  if (hidden.length) {
-    const all = el('button', { className: 'link', text: 'show all', attrs: { type: 'button' } });
-    all.addEventListener('click', showAllStoreys);
-    lines.push(el('div', { className: 'muted' }, `${hidden.join(', ')} hidden · `, all));
-  }
-  if (found.groups.length > 1 || (found.groups.length === 1 && found.groups[0].label)) {
-    lines.push(
-      el(
-        'ul',
-        { className: 'legend' },
-        ...found.groups.map((group) => {
-          const swatch = el('span', { className: 'swatch' });
-          swatch.style.setProperty('--swatch', group.colour);
-          return el('li', {}, swatch, el('span', { text: group.label ?? '(none)' }), el('span', { className: 'muted', text: number(group.count) }));
-        }),
-      ),
-    );
-  }
-  box.replaceChildren(...lines);
 }
 
-/** Light one element and open its details; null clears the selection. */
-async function select(picked) {
-  selection = picked;
+/**
+ * Light one element teal and open its details; null clears it. A click replaces an
+ * answer's highlight, and the card then says its answer is no longer lit. With `keep`,
+ * the answer's state is left to the caller (a new answer is about to be lit).
+ */
+async function select(element, { keep = false } = {}) {
+  picked = element;
   viewer.call = null;
+  if (!keep) state.lit = null;
   if (shown.layers.size) {
     shown.layers = new Set(); // the spaces a call showed go with its selection
     applyVisibility();
   }
-  viewer.highlighted = view.select(picked ? [[picked.modelId, picked.globalId]] : []);
-  $('fit-selection').disabled = !picked;
-  $('only-selection').disabled = !picked;
-  if (!picked) {
+  viewer.highlighted = view.select(element ? [[element.modelId, element.globalId]] : []);
+  if (!element) {
     view.showOnly(false);
     $('only-selection').setAttribute('aria-pressed', 'false');
     details.close();
-    $('caption').hidden = true;
+    if (!keep) render();
     return;
   }
-  caption(picked.globalId, null);
-  details.loading(picked.globalId);
+  render();
+  closeModel();
+  details.loading(element.globalId);
   try {
-    const detail = await api.element(picked.modelId, picked.globalId);
-    if (selection !== picked) return;
-    caption(picked.globalId, detail);
+    const detail = await api.element(element.modelId, element.globalId);
+    if (picked !== element) return;
     details.show(detail);
   } catch (error) {
-    if (selection === picked) details.failed(picked.globalId, String(error.message ?? error));
+    if (picked === element) details.failed(element.globalId, String(error.message ?? error));
   }
 }
 
-function caption(globalId, detail) {
-  const box = $('caption');
-  box.hidden = false;
-  if (!detail) {
-    box.replaceChildren(el('div', { className: 'kicker', text: 'Selected' }), el('div', { text: globalId }));
-    return;
-  }
-  const where = [detail.storey_name, detail.space_number && `room ${detail.space_number}`].filter(Boolean).join(', ');
-  box.replaceChildren(
-    el('div', { className: 'kicker', text: `${detail.ifc_class} · ${detail.discipline}` }),
-    el('div', { className: 'name', text: detail.name ?? globalId }),
-    where ? el('div', { className: 'muted', text: where }) : null,
-  );
-}
+// A click on nothing clears a clicked element, but leaves an answer lit: a stray tap on a
+// phone does not throw it away.
+view.addEventListener('pick', (event) => {
+  if (event.detail || picked) select(event.detail);
+});
 
-view.addEventListener('pick', (event) => select(event.detail));
+// --------------------------------------------------------------------------- the pill, the panels
+
 $('fit').addEventListener('click', () => view.fit());
+$('fit-round').addEventListener('click', () => view.fit());
 $('fit-selection').addEventListener('click', () => view.fitSelection());
 $('only-selection').addEventListener('click', () => {
   const only = !view.only;
   view.showOnly(only);
   $('only-selection').setAttribute('aria-pressed', String(only));
 });
+
+/** The right side holds one panel: the Model panel or an element's details. */
+function sides() {
+  const open = !$('model-panel').hidden || details.open;
+  document.body.classList.toggle('side-open', open);
+}
+
+function openModel() {
+  details.close();
+  $('model-panel').hidden = false;
+  for (const button of [$('model-open'), $('model-open-phone')]) button.setAttribute('aria-expanded', 'true');
+  sides();
+  $('model-close').focus();
+}
+
+function closeModel({ focus = false } = {}) {
+  if ($('model-panel').hidden) return;
+  $('model-panel').hidden = true;
+  for (const button of [$('model-open'), $('model-open-phone')]) button.setAttribute('aria-expanded', 'false');
+  sides();
+  if (focus) (phone.matches ? $('model-open-phone') : $('model-open')).focus();
+}
+
+for (const button of [$('model-open'), $('model-open-phone')]) {
+  button.addEventListener('click', () => ($('model-panel').hidden ? openModel() : closeModel({ focus: true })));
+}
+$('model-close').addEventListener('click', () => closeModel({ focus: true }));
+
+/** The explainer; `section` names a box to go to: how to connect, how to ask your own. */
+function explain(section) {
+  ask.closeList();
+  explainer.show(state.mode, section);
+}
+
+for (const button of [$('help'), $('help-phone')]) button.addEventListener('click', () => explain());
+
+/** Where the focus goes when the panel that had it closes: the Ask Claude button or box. */
+function home() {
+  if (!phone.matches && !ask.isOpen) return $('ask-open');
+  if (!ask.input.disabled) return ask.input;
+  return phone.matches ? $('help-phone') : $('ask-close');
+}
+
+/**
+ * Esc closes one thing: the list of questions; else the Ask Claude panel when the focus is
+ * in it; else, the newest first, a clicked element and its details, the Model panel, the
+ * Ask Claude panel, and last what an answer lit.
+ */
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') select(null);
+  if (event.key !== 'Escape' || event.defaultPrevented) return;
+  if (explainer.open) return; // the dialog closes itself
+  if (ask.listOpen || ($('panel').contains(document.activeElement) && ask.isOpen)) {
+    if (ask.escape()) return;
+  }
+  if (details.open || picked) {
+    const focus = $('drawer').contains(document.activeElement);
+    select(null);
+    if (focus) home().focus();
+    return;
+  }
+  if (!$('model-panel').hidden) {
+    closeModel({ focus: true });
+    return;
+  }
+  if (ask.escape()) return;
+  if (state.lit) {
+    unlight();
+    render();
+  }
 });
+
+// On a phone, the round fit button sits above the sheet.
+new ResizeObserver(() => {
+  document.documentElement.style.setProperty('--sheet-h', `${Math.round($('panel').getBoundingClientRect().height)}px`);
+}).observe($('panel'));
 
 start();

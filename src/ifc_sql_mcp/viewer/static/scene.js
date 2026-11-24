@@ -304,7 +304,10 @@ export class SceneView extends EventTarget {
     const direction = this.camera.position.clone().sub(this.controls.target);
     if (direction.lengthSq() === 0) direction.set(1, 0.75, 1);
     direction.normalize();
-    const distance = (radius / Math.sin(THREE.MathUtils.degToRad(this.camera.fov / 2))) * 1.05;
+    // The narrower of the two angles of view: on a phone held upright, the horizontal one.
+    const vertical = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    const horizontal = Math.atan(Math.tan(vertical) * this.camera.aspect);
+    const distance = (radius / Math.sin(Math.min(vertical, horizontal))) * 1.05;
     this.camera.position.copy(centre).addScaledVector(direction, distance);
     this.camera.near = Math.max(distance / 1000, 0.01);
     this.camera.far = distance + radius * 20;

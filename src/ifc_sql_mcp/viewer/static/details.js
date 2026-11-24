@@ -1,40 +1,60 @@
-// The drawer that opens on a click: everything `get_element` says about one element, or
-// on the static copy, for an element it holds no details of, its class, name and storey.
-// Every value from the IFC file is set as text (dom.js), never parsed as HTML.
+// Element details, on the right when an element is clicked: everything `get_element` says
+// about it, or on the static copy, for an element it holds no details of, its class, name
+// and storey. It shares the right side with the Model panel (main.js). Every value from
+// the IFC file is set as text (dom.js), never parsed as HTML.
 
 import { el, metres, number } from './dom.js';
 
 export class Details {
-  /** @param {HTMLElement} root The drawer: #drawer-title, #drawer-body and #drawer-close in it. */
-  constructor(root, onClose) {
+  /**
+   * @param {HTMLElement} root The panel: #drawer-title, #drawer-body and #drawer-close in it.
+   * @param {() => void} onClose Its ×.
+   * @param {(open: boolean) => void} onToggle Told when it opens or closes.
+   */
+  constructor(root, onClose, onToggle) {
     this.root = root;
+    this.onToggle = onToggle;
     this.title = root.querySelector('#drawer-title');
     this.body = root.querySelector('#drawer-body');
     root.querySelector('#drawer-close').addEventListener('click', onClose);
   }
 
+  get open() {
+    return !this.root.hidden;
+  }
+
   close() {
+    if (this.root.hidden) return;
     this.root.hidden = true;
+    this.onToggle(false);
+  }
+
+  reveal() {
+    if (!this.root.hidden) return;
+    this.root.hidden = false;
+    this.onToggle(true);
   }
 
   loading(globalId) {
-    this.root.hidden = false;
-    this.title.replaceChildren(el('div', { className: 'kicker', text: 'Loading' }), el('div', { text: globalId }));
-    this.body.replaceChildren(el('p', { className: 'muted', text: 'Reading the element…' }));
+    this.reveal();
+    this.title.replaceChildren(el('div', { className: 'kicker', text: 'Reading the element…' }), el('div', { className: 'name', text: globalId }));
+    this.body.replaceChildren();
   }
 
   failed(globalId, message) {
-    this.root.hidden = false;
-    this.title.replaceChildren(el('div', { className: 'kicker', text: 'Not found' }), el('div', { text: globalId }));
+    this.reveal();
+    this.title.replaceChildren(el('div', { className: 'kicker', text: 'Not found' }), el('div', { className: 'name', text: globalId }));
     this.body.replaceChildren(el('p', { className: 'error', text: message }));
   }
 
   /** Show `detail`, an ElementDetail of `get_element`, or the static copy's brief record. */
   show(detail) {
-    this.root.hidden = false;
+    this.reveal();
+    const where = [detail.storey_name, detail.space_number && `room ${detail.space_number}`].filter(Boolean).join(', ');
     this.title.replaceChildren(
       el('div', { className: 'kicker', text: `${detail.ifc_class} · ${detail.discipline}` }),
-      el('div', { className: 'name', text: detail.name ?? '(no name)' }),
+      el('h2', { className: 'name', text: detail.name ?? '(no name)' }),
+      where ? el('div', { className: 'where', text: where }) : '',
     );
     if (detail.brief) {
       const storey = section('Location', facts([['Storey', detail.storey_name]]));

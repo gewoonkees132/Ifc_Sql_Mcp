@@ -1,0 +1,7 @@
+The pictures of the page of ifc-sql view, and their licences. SHA256SUMS beside this file
+pins each of them; tests/unit/viewer/test_page.py checks both.
+
+favicon.svg
+    The cube mark of ifc-sql, the page's icon, drawn for this project.
+    MIT License, as the rest of ifc-sql-mcp (the LICENSE at the root of the repository):
+    Copyright (c) 2026 Kees Leemeijer.

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ifc-sql view</title>
-<link rel="icon" href="static/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="static/images/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="static/viewer.css">
 <!-- The page's one inline script. The policy allows it by its SHA-256 (ADR 14, decision 3).
      Its paths are relative: the static copy is served below a folder (decision 7). -->
@@ -18,65 +18,229 @@
 </script>
 <script type="module" src="static/main.js"></script>
 </head>
-<body>
-<aside class="sidebar" aria-label="What is shown">
-  <header class="brand">
-    <h1>ifc-sql view</h1>
-    <p id="tagline" class="muted">The loaded models, read-only, on this computer.</p>
-    <p id="credit" class="muted credit" hidden></p>
+<body data-mode="local">
+<!-- The model fills the window; everything else floats over it. -->
+<div id="canvas" class="canvas"></div>
+<p id="status" class="status" role="status">Starting…</p>
+
+<!-- On a phone: the brand, the Model panel and the explainer, in one pill at the top. -->
+<header class="topbar">
+  <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 10v12l-12 7L4 22V10z"/><path d="M4 10l12 7 12-7M16 17v12"/></svg>
+  <span class="brand-name">ifc-sql</span>
+  <button id="model-open-phone" class="fab" type="button" aria-expanded="false" aria-controls="model-panel">
+    <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>Model
+  </button>
+  <button id="help-phone" class="round help" type="button" aria-haspopup="dialog" aria-label="What this is, and how it is built">?</button>
+</header>
+
+<!-- The answer card; open, the Ask Claude panel: the history, the answer and the box. -->
+<section id="panel" class="panel" aria-labelledby="panel-name">
+  <header class="panel-head">
+    <svg class="mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 28 10v12l-12 7L4 22V10z"/><path d="M4 10l12 7 12-7M16 17v12"/></svg>
+    <div class="who">
+      <h1 id="panel-name" class="brand-name">ifc-sql</h1>
+      <p class="swap">
+        <span class="on-closed">Ask questions of your building models</span>
+        <span id="ask-state" class="on-open"></span>
+      </p>
+    </div>
+    <button id="help" class="round help" type="button" aria-haspopup="dialog" aria-label="What this is, and how it is built">?</button>
+    <button id="ask-close" class="x" type="button" aria-label="Close Ask Claude">×</button>
   </header>
 
-  <section class="panel">
-    <label class="panel-title" for="project">Project</label>
-    <select id="project" disabled></select>
-  </section>
-
-  <section class="panel">
-    <h2 class="panel-title">Models</h2>
-    <ul id="models" class="model-list"></ul>
-  </section>
-
-  <section class="panel">
-    <h2 class="panel-title">Disciplines</h2>
-    <div id="disciplines" class="chips"></div>
-  </section>
-
-  <section class="panel">
-    <h2 class="panel-title">Storeys <button id="all-storeys" class="link" type="button" hidden>show all</button></h2>
-    <ul id="storeys" class="storey-list"></ul>
-  </section>
-
-  <section class="panel">
-    <h2 class="panel-title">Layers</h2>
-    <label class="check"><input type="checkbox" id="spaces"> Rooms (IfcSpace)</label>
-  </section>
-
-  <section class="panel feed-panel" aria-label="The MCP server's calls">
-    <h2 class="panel-title">Feed <span id="feed-state" class="feed-state" data-state="off">off</span></h2>
-    <p id="feed-note" class="muted feed-note" hidden></p>
-    <ol id="feed" class="feed-list"></ol>
-  </section>
-
-  <footer id="status" class="status" role="status">Starting…</footer>
-</aside>
-
-<main class="stage">
-  <div id="canvas" class="canvas"></div>
-  <div id="caption" class="caption" hidden></div>
-  <div class="toolbar" role="toolbar" aria-label="View">
-    <button id="fit" type="button">fit</button>
-    <button id="fit-selection" type="button" disabled>fit selection</button>
-    <button id="only-selection" type="button" aria-pressed="false" disabled>only selection</button>
+  <button id="earlier" class="earlier" type="button" aria-expanded="false" aria-controls="history"></button>
+  <!-- One scroll for the history and the answer, like a chat: the answer at the bottom. -->
+  <div id="thread" class="thread">
+    <ol id="history" class="history" aria-label="Earlier questions"></ol>
+    <div id="current" class="current"></div>
   </div>
-  <div id="message" class="message" role="alert" hidden></div>
-</main>
 
-<aside id="drawer" class="drawer" aria-label="Element details" hidden>
-  <header class="drawer-head">
-    <div id="drawer-title" class="drawer-title"></div>
-    <button id="drawer-close" class="close" type="button" aria-label="Close the details">×</button>
+  <div id="composer" class="composer">
+    <p id="next" class="next"></p>
+    <div id="question-list" class="question-list" hidden>
+      <p id="question-list-title" class="list-title">Questions this demo can answer</p>
+      <ul id="question-options" class="options" role="listbox" aria-labelledby="question-list-title"></ul>
+      <p id="own" class="own">Want to ask your own? Install ifc-sql and ask Claude about your own models. <button id="own-more" class="link" type="button">How it works ›</button></p>
+    </div>
+    <div class="slot"></div>
+    <!-- The button that becomes the box: fixed on a desktop, so it moves between the two. -->
+    <div id="ask" class="ask">
+      <button id="ask-open" class="ask-open" type="button" aria-expanded="false" aria-controls="panel">
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2.5l2.1 6.4 6.4 2.1-6.4 2.1L12 19.5l-2.1-6.4L3.5 11l6.4-2.1z"/><path class="faint" d="M19 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/></svg>Ask Claude
+      </button>
+      <div class="box">
+        <input id="question" class="field" type="text" role="combobox" aria-expanded="false" aria-controls="question-options" aria-autocomplete="list" aria-describedby="badge" autocomplete="off" spellcheck="false" placeholder="Ask about this model…">
+        <button id="list-toggle" class="list-toggle" type="button" aria-expanded="false" aria-controls="question-list">
+          <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg><span id="list-count"></span>
+        </button>
+        <button id="send" class="send" type="button" aria-label="Ask" disabled>
+          <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 16V4M5 9l5-5 5 5"/></svg>
+        </button>
+      </div>
+    </div>
+    <p id="badge" class="badge"></p>
+  </div>
+
+  <p id="ask-note" class="ask-note" hidden>Recorded answers</p>
+</section>
+<p id="announce" class="visually-hidden" aria-live="polite"></p>
+
+<button id="model-open" class="fab model-open" type="button" aria-expanded="false" aria-controls="model-panel">
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14"/></svg>Model
+</button>
+
+<div class="pill" role="toolbar" aria-label="View">
+  <button id="fit" type="button">
+    <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5"/></svg>Fit all
+  </button>
+  <button id="fit-selection" type="button" disabled>
+    <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><circle cx="10" cy="10" r="2.2"/></svg><span id="fit-selection-label">Fit answer</span>
+  </button>
+  <button id="only-selection" type="button" aria-pressed="false" disabled>
+    <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path class="fill" d="M10 3.5a6.5 6.5 0 0 1 0 13z"/></svg><span id="only-selection-label">Only the answer</span>
+  </button>
+</div>
+<button id="fit-round" class="round fit-round" type="button" aria-label="Fit all">
+  <svg class="icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 8V3h5M12 3h5v5M17 12v5h-5M8 17H3v-5"/></svg>
+</button>
+
+<!-- The right side: the Model panel or an element's details, one at a time. -->
+<section id="model-panel" class="side" aria-labelledby="model-title" hidden>
+  <header class="side-head">
+    <h2 id="model-title" class="side-title">Model</h2>
+    <button id="model-close" class="x" type="button" aria-label="Close the Model panel">×</button>
   </header>
-  <div id="drawer-body" class="drawer-body"></div>
-</aside>
+  <div class="side-body">
+    <section class="sect">
+      <h3 class="sect-title"><label for="project">Project</label></h3>
+      <select id="project" class="select" disabled></select>
+    </section>
+    <section class="sect">
+      <h3 class="sect-title">Disciplines</h3>
+      <ul id="disciplines" class="disciplines"></ul>
+    </section>
+    <section class="sect">
+      <h3 class="sect-title">Storeys <button id="all-storeys" class="link" type="button" hidden>Show all</button></h3>
+      <ul id="storeys" class="storeys"></ul>
+    </section>
+    <section class="sect">
+      <div class="row-switch">
+        <label for="spaces">Rooms<span class="muted">See-through volumes of each room</span></label>
+        <input id="spaces" class="switch" type="checkbox" role="switch">
+      </div>
+    </section>
+  </div>
+</section>
+
+<section id="drawer" class="side details" aria-labelledby="drawer-title" hidden>
+  <header class="side-head">
+    <div id="drawer-title" class="drawer-title"></div>
+    <button id="drawer-close" class="x" type="button" aria-label="Close the details">×</button>
+  </header>
+  <div id="drawer-body" class="side-body"></div>
+</section>
+
+<p id="credit" class="credit" hidden></p>
+
+<!-- The "?" explainer: what the tool does, and how it is built. Its numbers are the code's:
+     tests/unit/viewer/test_explainer.py checks each data-count against the server's tools,
+     the rule catalogue and the demo's script. -->
+<dialog id="explainer" class="explainer" aria-labelledby="explainer-title">
+  <div class="hero">
+    <div class="hero-text">
+      <h2 id="explainer-title">Ask your building models</h2>
+      <p id="hero-does">Questions in plain language about Revit's IFC exports, answered from a database and shown in 3D.</p>
+      <p id="hero-built" hidden>From a Revit export to an answer you can see</p>
+    </div>
+    <button id="explainer-close" class="x hero-close" type="button" aria-label="Close">×</button>
+  </div>
+
+  <div class="tabs" role="tablist" aria-label="About ifc-sql">
+    <button id="tab-does" class="tab" type="button" role="tab" aria-selected="true" aria-controls="tab-does-panel">What it does</button>
+    <button id="tab-built" class="tab" type="button" role="tab" aria-selected="false" aria-controls="tab-built-panel" tabindex="-1">How it's built</button>
+  </div>
+
+  <div id="tab-does-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-does" tabindex="0">
+    <div class="stats">
+      <p class="stat"><b data-count="tools">11</b><span>tools Claude can use</span></p>
+      <p class="stat"><b data-count="rules">45</b><span>data-quality checks</span></p>
+      <p class="stat"><b data-count="changes">0</b><span>changes to your models</span></p>
+    </div>
+    <div class="inner">
+      <h3 class="eyebrow">How it works</h3>
+      <ol class="steps">
+        <li><span class="n" aria-hidden="true">1</span><b>Load</b><p>Your Revit IFC exports go into a database as they are. Mixed units and packed names are untangled on the way in.</p></li>
+        <li><span class="n" aria-hidden="true">2</span><b>Ask</b><p>Ask Claude in your own words. It answers with read-only queries, so it can't change a model.</p></li>
+        <li><span class="n" aria-hidden="true">3</span><b>See</b><p>Each answer lights up here: the walls, doors or rooms it found, and how it found them.</p></li>
+      </ol>
+      <h3 class="eyebrow">Why it helps</h3>
+      <ul class="why">
+        <li><b>Answers you can check.</b> Every answer shows how it was found: the tool Claude used, its settings, and the SQL whenever Claude wrote its own.</li>
+        <li><b>Problems surface early.</b> <span data-count="rules">45</span> checks flag missing fire ratings, rooms counted twice and placeholder values Revit leaves behind.</li>
+        <li><b>Your models stay on your computer.</b> Claude sees only the results of the queries it runs.</li>
+      </ul>
+      <div class="last-box" data-for="demo">
+        <p><b>About this demo.</b> The Duplex Apartment: four models (architecture, mechanical, electrical, plumbing) by <a href="https://github.com/buildingsmart-community/Community-Sample-Test-Files" rel="noopener noreferrer" target="_blank">buildingSMART</a>, <a href="https://creativecommons.org/licenses/by/4.0/" rel="noopener noreferrer" target="_blank">CC BY 4.0</a>. <span data-count="questions">Nine</span> questions, answered by the real tools and recorded. Claude doesn't run on this page.</p>
+        <p id="explainer-credit" class="fine"></p>
+        <div class="buttons">
+          <a class="button primary" href="https://github.com/gewoonkees132/Ifc_Sql_Mcp#quick-start" rel="noopener noreferrer" target="_blank">Try it on your own models →</a>
+          <a class="button" href="https://github.com/gewoonkees132/Ifc_Sql_Mcp" rel="noopener noreferrer" target="_blank">View on GitHub</a>
+        </div>
+      </div>
+      <div id="connect" class="last-box" data-for="local" tabindex="-1">
+        <p><b>Connect Claude.</b> Add ifc-sql to Claude Desktop or Claude Code once. Keep this page open and ask Claude there: whatever it looks up lights up here.</p>
+        <div class="buttons">
+          <a class="button primary" href="https://github.com/gewoonkees132/Ifc_Sql_Mcp/blob/main/docs/mcp.md#claude-desktop" rel="noopener noreferrer" target="_blank">Set up Claude Desktop</a>
+          <a class="button" href="https://github.com/gewoonkees132/Ifc_Sql_Mcp/blob/main/docs/mcp.md#claude-code" rel="noopener noreferrer" target="_blank">Set up Claude Code</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-built-panel" class="tab-panel" role="tabpanel" aria-labelledby="tab-built" tabindex="0" hidden>
+    <div class="inner">
+      <h3 class="eyebrow">From Revit to this page</h3>
+      <!-- A grid of the seven steps and the arrows between them; on a phone, a timeline. The
+           arrows are drawn by the CSS; each step says in words where it leads. -->
+      <div class="diagram" role="list">
+        <div class="node n1" role="listitem"><p class="node-head"><span class="n" aria-hidden="true">1</span>IFC export<small>Revit</small></p><p>Your model as Revit exports it: valid, but with mixed units and packed names.</p></div>
+        <span class="wire right w12" aria-hidden="true"></span>
+        <div class="node n2" role="listitem"><p class="node-head"><span class="n" aria-hidden="true">2</span>Read<small>IfcOpenShell</small></p><p>Every element is read with its properties and materials; its shape becomes 3D.</p></div>
+        <span class="wire right w23" aria-hidden="true"></span>
+        <div class="node n3" role="listitem"><p class="node-head"><span class="n" aria-hidden="true">3</span>Clean up</p><p>Units become metres; names split into family, type and Revit id. What doesn't fit is logged.</p></div>
+        <span class="wire down w34" aria-hidden="true"></span>
+        <div class="node store n4" role="listitem"><svg class="db" viewBox="0 0 26 30" aria-hidden="true"><ellipse cx="13" cy="5" rx="11" ry="4"/><path d="M2 5v20c0 2.2 4.9 4 11 4s11-1.8 11-4V5M2 15c0 2.2 4.9 4 11 4s11-1.8 11-4"/></svg><p class="node-head"><span class="n" aria-hidden="true">4</span>Store<small>PostgreSQL 16</small></p><p>One model in one go: elements, properties, quantities and materials in their own tables, and the 3D per storey, ready to draw.</p></div>
+        <span class="wire down both w45" aria-hidden="true"><i class="up"></i></span>
+        <span class="wire down w46" aria-hidden="true"><em>read-only</em></span>
+        <span class="wire down w47" aria-hidden="true"><em>read-only</em></span>
+        <div class="node n5" role="listitem"><p class="node-head"><span class="n" aria-hidden="true">5</span>Check<small><span data-count="rules">45</span> rules</small></p><p>Flags gaps like missing fire ratings or rooms counted twice. Every run is kept.</p></div>
+        <div class="node n6" role="listitem"><p class="node-head"><span class="n" aria-hidden="true">6</span>Claude asks<small>MCP</small></p><p>Through <span data-count="tools">11</span> read-only tools. A query that would change data is refused.</p></div>
+        <span class="wire right feed w67" aria-hidden="true"></span>
+        <div class="node out n7" role="listitem"><p class="node-head"><span class="n" aria-hidden="true">7</span>You see<small>three.js</small></p><p>This page draws the stored 3D and lights up what each answer found.</p></div>
+      </div>
+      <p class="key"><span class="dash" aria-hidden="true"></span><span data-for="local">Each call Claude makes lights up on this page.</span><span data-for="demo">Each call Claude makes lights up on this page; in this demo, the calls are recorded.</span></p>
+
+      <div class="follow">
+        <h4>Follow one wall</h4>
+        <div class="trail">
+          <p><em>In the IFC file</em><code>Basic Wall:Interior - Furring (152 mm Stud):190774</code></p>
+          <p><em>After clean-up</em>family <b>Basic Wall</b> · type <b>Interior - Furring (152 mm Stud)</b> · Revit id <b>190774</b></p>
+          <p><em>In the demo</em>Question 8 shows everything stored about it.</p>
+        </div>
+      </div>
+
+      <p class="built">
+        <span>Built with</span>
+        <span class="tech">Python</span><span class="tech">IfcOpenShell</span><span class="tech">PostgreSQL 16</span><span class="tech">MCP</span><span class="tech">three.js</span>
+        <a href="https://github.com/gewoonkees132/Ifc_Sql_Mcp#how-it-is-built" rel="noopener noreferrer" target="_blank">The full design on GitHub →</a>
+      </p>
+    </div>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" role="alert" hidden>
+  <span id="toast-text"></span>
+  <button id="toast-close" class="x" type="button" aria-label="Dismiss">×</button>
+</div>
 </body>
 </html>

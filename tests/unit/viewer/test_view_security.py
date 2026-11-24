@@ -316,7 +316,7 @@ def test_the_page_and_its_files_need_no_token(client: TestClient) -> None:
     three = client.get("/static/vendor/three/three.module.js")
     licence = client.get("/static/vendor/three/LICENSE")
     style = client.get("/static/viewer.css")
-    icon = client.get("/static/favicon.svg")
+    icon = client.get("/static/images/favicon.svg")
 
     assert page.status_code == 200
     assert page.headers["content-type"] == "text/html; charset=utf-8"

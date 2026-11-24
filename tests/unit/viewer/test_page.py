@@ -57,10 +57,13 @@ def test_each_banned_call_is_found(source: str, found: str) -> None:
 def test_the_page_has_its_own_modules() -> None:
     assert [path.name for path in OWN_SCRIPTS] == [
         "api.js",
+        "ask.js",
+        "card.js",
         "details.js",
         "dom.js",
-        "feed.js",
+        "explainer.js",
         "main.js",
+        "model.js",
         "scene.js",
         "words.js",
     ]
@@ -191,6 +194,24 @@ def test_three_js_is_release_187_under_its_mit_licence() -> None:
     assert licence.startswith("The MIT License")
     assert "three.js authors" in licence
     assert "const REVISION = '187';" in core
+
+
+def test_every_picture_of_the_page_has_its_licence_and_sha256_sum() -> None:
+    images = STATIC / "images"
+    listed, on_disk = _sums(images)
+    licence = (images / "LICENSE").read_text(encoding="utf-8")
+
+    assert on_disk == listed
+    for name in listed:
+        if name != "LICENSE":
+            assert f"\n{name}\n" in licence, name  # each picture has its paragraph
+    # No picture lies outside images/, and none comes from the network.
+    pictures = {".svg", ".png", ".webp", ".jpg"}
+    assert {
+        path.relative_to(STATIC).as_posix()
+        for path in STATIC.rglob("*")
+        if path.suffix in pictures and path.is_file()
+    } == {f"images/{name}" for name in listed if Path(name).suffix in pictures}
 
 
 def test_every_file_of_the_page_has_a_media_type() -> None:
