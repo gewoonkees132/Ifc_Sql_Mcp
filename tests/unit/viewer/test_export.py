@@ -109,6 +109,8 @@ def test_the_meta_policy_leaves_out_frame_ancestors_which_browsers_ignore_there(
 
     assert "frame-ancestors 'none'" in header
     assert meta == header.replace("; frame-ancestors 'none'", "")
+    # The font is a file of the page, in the copy as in view.
+    assert "font-src 'self'" in meta.split("; ")
 
 
 def test_a_page_without_a_tag_the_copy_rewrites_is_refused() -> None:
