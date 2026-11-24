@@ -346,6 +346,19 @@ def test_the_font_is_served_as_a_font_and_the_policy_allows_it_from_the_server_a
     assert "font-src 'self'" in font.headers["content-security-policy"].split("; ")
 
 
+def test_the_explainers_picture_is_served_as_an_image_of_the_page_itself(
+    client: TestClient,
+) -> None:
+    picture = client.get("/static/images/duplex.webp")
+
+    assert picture.status_code == 200
+    assert picture.headers["content-type"] == "image/webp"
+    assert picture.content[:4] == b"RIFF"
+    assert picture.content[8:12] == b"WEBP"
+    assert "img-src 'self'" in picture.headers["content-security-policy"].split("; ")
+    assert 'src="static/images/duplex.webp"' in client.get("/").text
+
+
 @pytest.mark.parametrize("path", ["/", "/static/main.js", "/static/vendor/three/LICENSE"])
 def test_a_file_the_browser_holds_gets_304(client: TestClient, path: str) -> None:
     etag = client.get(path).headers["etag"]

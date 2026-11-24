@@ -10,7 +10,8 @@ The sample building models used for development, documentation and the optional
 
 Licensed under [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/).
 
-**This repository does not contain or redistribute these files.** They are downloaded on
+**This repository does not contain or redistribute these files** (one picture made from
+them is the exception: see the explainer's picture below). They are downloaded on
 demand by [`scripts/download_samples.py`](scripts/download_samples.py) from a pinned
 upstream commit and verified byte-for-byte against the SHA-256 checksums below.
 
@@ -36,6 +37,17 @@ licence: "Duplex Apartment Test Files", buildingSMART International (2020), CC B
 converted to glTF by IfcOpenShell triangulation, openings cut. Only the Duplex is
 published: the audit's files below are never exported (`ifc-sql demo --export` refuses
 their script).
+
+### The explainer's picture
+
+The page of `ifc-sql view` (and so the demo on GitHub Pages, and the wheel) **ships one
+picture made from the four IFC files**: `src/ifc_sql_mcp/viewer/static/images/duplex.webp`,
+a still of the Duplex behind the title of the "?" explainer. Changes made: the models
+converted to glTF by IfcOpenShell triangulation, openings cut, drawn by the page with the
+external walls of the demo's question 3 in the colours of their types, and cropped. It is
+shared under CC BY 4.0, as the work it was made from; the explainer credits it beside the
+picture ("Picture: Duplex Apartment, buildingSMART, CC BY 4.0", linked), and
+`images/LICENSE` beside the file says the same. Its SHA-256 sum is in `images/SHA256SUMS`.
 
 ### Pinned files
 

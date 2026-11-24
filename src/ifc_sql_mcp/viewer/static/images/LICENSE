@@ -1,6 +1,16 @@
 The pictures of the page of ifc-sql view, and their licences. SHA256SUMS beside this file
 pins each of them; tests/unit/viewer/test_page.py checks both.
 
+duplex.webp
+    The explainer's picture: a still of "Duplex Apartment Test Files", buildingSMART
+    International (2020), https://github.com/buildingsmart-community/Community-Sample-Test-Files,
+    licensed under Creative Commons Attribution 4.0 International (CC BY 4.0),
+    https://creativecommons.org/licenses/by/4.0/. Changes made: its four models converted
+    to glTF by IfcOpenShell triangulation, openings cut, drawn by this page with the
+    external walls of the demo's question 3 in the colours of their types, and cropped.
+    The still is shared under the same licence, CC BY 4.0. The page credits it where it
+    is shown (DATA_ATTRIBUTION.md at the root of the repository says more).
+
 favicon.svg
     The cube mark of ifc-sql, the page's icon, drawn for this project.
     MIT License, as the rest of ifc-sql-mcp (the LICENSE at the root of the repository):

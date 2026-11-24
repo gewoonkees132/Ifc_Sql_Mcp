@@ -70,6 +70,7 @@ MEDIA_TYPES = {
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".svg": "image/svg+xml",
+    ".webp": "image/webp",  # the explainer's still of the Duplex
     ".woff2": "font/woff2",  # Nunito, vendored
     "": "text/plain; charset=utf-8",  # the vendored licences and the SHA256SUMS beside them
 }

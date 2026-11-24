@@ -1745,17 +1745,19 @@ body.side-open .credit {
   object-position: 60% 45%;
 }
 
+/* Dark where the text is (white on it: 4.9:1 or more up to 58 %), light over the building. */
 .hero::after {
   content: "";
   position: absolute;
   inset: 0;
-  background: linear-gradient(to right, rgb(0 0 0 / 0.78) 0%, rgb(0 0 0 / 0.45) 55%, rgb(0 0 0 / 0.12) 100%);
+  background: linear-gradient(to right, rgb(0 0 0 / 0.8) 0%, rgb(0 0 0 / 0.62) 50%, rgb(0 0 0 / 0.08) 100%);
 }
 
 .hero-text {
   position: relative;
   z-index: 1;
-  padding: 24px 80px 18px 28px;
+  max-width: 58%;
+  padding: 24px 0 22px 28px;
 }
 
 .hero-text h2 {
@@ -1794,12 +1796,16 @@ body.side-open .credit {
   transform: rotate(90deg);
 }
 
+/* On the light side of the picture: its own dark backing, for 5:1. */
 .hero-credit {
   position: absolute;
   right: 12px;
-  bottom: 6px;
+  bottom: 8px;
   z-index: 1;
-  color: rgb(255 255 255 / 0.85);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
   font-size: 11px;
 }
 
@@ -2645,8 +2651,18 @@ body.side-open .credit {
     min-height: 120px;
   }
 
+  /* The text spans the picture: dark all over, the building still seen on the right. */
+  .hero::after {
+    background: linear-gradient(to right, rgb(0 0 0 / 0.8), rgb(0 0 0 / 0.6));
+  }
+
+  .hero-picture {
+    object-position: 78% 50%;
+  }
+
   .hero-text {
-    padding: 20px 64px 16px 18px;
+    max-width: none;
+    padding: 20px 64px 34px 18px;
   }
 
   .hero-close {
