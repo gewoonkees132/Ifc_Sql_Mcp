@@ -967,6 +967,9 @@ async def _show(
         await wait()
 
     async def steps() -> None:
+        # The page lists the questions from the start, as the scripted demo's, not the
+        # local app's empty box; play() announces them again, unchanged.
+        feed.announce(demo_play.questions_of(script))
         await wait()  # the page loads the models meanwhile
         played = await demo_play.play(script, client, feed, models, between=between)
         _, agreed = demo_play.report(script, played)

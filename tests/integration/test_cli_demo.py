@@ -291,6 +291,28 @@ def test_the_page_shows_first_the_models_the_script_names(
     assert route.endpoint.__self__.model_ids == (2,)  # type: ignore[attr-defined]
 
 
+@pytest.mark.usefixtures("database", "script")
+def test_the_page_lists_the_questions_before_the_first_is_asked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Ctrl+C as soon as the page could read the questions: during the first wait, before
+    # any call, so that it opens as the scripted demo and not as the local app.
+    seen: list[tuple[list[str], int]] = []
+
+    def listed(feed: Feed) -> bool:
+        questions = feed.status().questions
+        if questions:
+            seen.append(([q.title for q in questions], len(feed.entries())))
+        return bool(questions)
+
+    _serving(monkeypatch, listed)
+
+    result = _demo("--no-open", "--pause", "30")
+
+    assert result.exit_code == 0, result.output
+    assert seen[0] == (["The panelboards", "A write is refused", "What is loaded?"], 0)
+
+
 @pytest.mark.usefixtures("database")
 def test_the_demo_says_when_it_differs_and_waits_for_enter_with_step(
     monkeypatch: pytest.MonkeyPatch,
